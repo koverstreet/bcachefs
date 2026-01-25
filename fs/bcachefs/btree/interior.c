@@ -1349,7 +1349,7 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 			if (!bch2_err_matches(ret, BCH_ERR_operation_blocked))
 				break;
 			bch2_trans_unlock(trans);
-			bch2_wait_on_allocator(c, watermark, &cl);
+			bch2_wait_on_allocator(c, req, ret, &cl);
 		} while (1);
 
 		/*

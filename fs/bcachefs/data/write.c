@@ -1604,7 +1604,7 @@ again:
 			if (!wait_on_allocator_sync)
 				break;
 
-			bch2_wait_on_allocator(c, op->watermark, &op->cl);
+			bch2_wait_on_allocator(c, req, ret, &op->cl);
 			__bch2_write_index(op);
 			op->wbio.failed.nr = 0;
 			continue;
@@ -1791,7 +1791,7 @@ err:
 		op->end_io(op);
 }
 
-static const char * const bch2_write_flags[] = {
+const char * const bch2_write_flags[] = {
 #define x(f)	#f,
 	BCH_WRITE_FLAGS()
 #undef x

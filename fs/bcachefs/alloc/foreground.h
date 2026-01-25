@@ -359,16 +359,15 @@ void bch2_fs_open_buckets_to_text(struct printbuf *, struct bch_fs *);
 void bch2_fs_alloc_debug_to_text(struct printbuf *, struct bch_fs *);
 void bch2_dev_alloc_debug_to_text(struct printbuf *, struct bch_dev *);
 
-void __bch2_wait_on_allocator(struct bch_fs *,
-			      enum bch_watermark,
-			      struct closure *);
+void __bch2_wait_on_allocator(struct bch_fs *, struct alloc_request *, int, struct closure *);
 
 static inline void bch2_wait_on_allocator(struct bch_fs *c,
-					  enum bch_watermark watermark,
+					  struct alloc_request *req,
+					  int err,
 					  struct closure *cl)
 {
 	if (closure_nr_remaining(cl) > 1)
-		__bch2_wait_on_allocator(c, watermark, cl);
+		__bch2_wait_on_allocator(c, req, err, cl);
 }
 
 #endif /* _BCACHEFS_ALLOC_FOREGROUND_H */

@@ -69,6 +69,8 @@ static inline struct bch_write_bio *wbio_init(struct bio *bio)
 	return wbio;
 }
 
+extern const char * const bch2_write_flags[];
+
 void __bch2_write_op_to_text(struct printbuf *, struct bch_write_op *);
 void bch2_write_op_to_text(struct printbuf *, struct bch_write_op *);
 

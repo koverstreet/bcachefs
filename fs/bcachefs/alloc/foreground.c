@@ -31,6 +31,7 @@
 #include "data/nocow_locking.h"
 #include "data/write.h"
 
+#include "init/dev.h"
 #include "init/error.h"
 
 #include "journal/journal.h"
@@ -1553,41 +1554,98 @@ void bch2_dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 		   should_invalidate_buckets(ca, bch2_dev_usage_read(ca)));
 }
 
-static noinline void bch2_print_allocator_stuck(struct bch_fs *c, enum bch_watermark watermark)
+static void dev_alloc_debug_header(struct printbuf *out, struct bch_dev *ca)
 {
-	struct bch_fs_allocator *a = &c->allocator;
+	prt_printf(out, "Dev %s (%u): %s",
+		   ca->name, ca->dev_idx,
+		   bch2_member_states[ca->mi.state]);
+	if (!bch2_dev_is_online(ca))
+		prt_str(out, " (offline)");
+	prt_newline(out);
+
+	prt_printf(out, "Data allowed:\t");
+	if (ca->mi.data_allowed)
+		prt_bitflags(out, __bch2_data_types, ca->mi.data_allowed);
+	else
+		prt_printf(out, "(none)");
+	prt_newline(out);
+	scoped_guard(printbuf_indent, out)
+		bch2_dev_alloc_debug_to_text(out, ca);
+	prt_newline(out);
+}
+
+static inline bool dev_may_alloc(struct bch_fs *c, struct bch_dev *ca, struct alloc_request *req)
+{
+	if ((req->flags & BCH_WRITE_only_specified_devs) &&
+	    req->target &&
+	    !test_bit(ca->dev_idx, bch2_target_to_mask(c, req->target)->d))
+		return false;
+
+	return ca->mi.state == BCH_MEMBER_STATE_rw &&
+		bch2_dev_is_online(ca) &&
+		(ca->mi.data_allowed & BIT(req->data_type));
+}
+
+static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_request *req, int err)
+{
 	CLASS(printbuf, buf)();
 
-	prt_printf(&buf, "Allocator stuck? Waited for %u seconds, watermark %s\n",
+	prt_printf(&buf, "Allocator stuck? Waited for %u seconds, err %s\n",
 		   c->opts.allocator_stuck_timeout,
-		   bch2_watermarks[watermark]);
+		   bch2_err_str(err));
 
-	prt_printf(&buf, "Allocator debug:\n");
-	scoped_guard(printbuf_indent, &buf)
-		bch2_fs_alloc_debug_to_text(&buf, c);
-	prt_newline(&buf);
+	if (req) {
+		printbuf_tabstop_push(&buf, 16);
+		prt_str(&buf, "Allocation:\n");
+		guard(printbuf_indent)(&buf);
+		prt_printf(&buf, "nr_replicas:\t%u\n", req->nr_replicas);
+		prt_str(&buf, "target:\t");
+		bch2_target_to_text(&buf, c, req->target);
+		prt_newline(&buf);
 
-	bch2_printbuf_make_room(&buf, 4096);
+		prt_printf(&buf, "watermark:\t%s\n", bch2_watermarks[req->watermark]);
+		prt_printf(&buf, "data_type:\t%s\n", __bch2_data_types[req->data_type]);
 
-	if (a->freelist_wait.list.first) {
-		scoped_guard(rcu) {
-			guard(printbuf_atomic)(&buf);
-			for_each_online_member_rcu(c, ca) {
-				prt_printf(&buf, "Dev %u:\n", ca->dev_idx);
-				scoped_guard(printbuf_indent, &buf)
-					bch2_dev_alloc_debug_to_text(&buf, ca);
-				prt_newline(&buf);
-			}
+		prt_str(&buf, "flags:\t");
+		prt_bitflags(&buf, bch2_write_flags, req->flags);
+		prt_newline(&buf);
+
+		if (req->devs_have && req->devs_have->nr) {
+			prt_printf(&buf, "devs_have:\t");
+			bch2_devs_list_to_text(&buf, c, req->devs_have);
+			prt_newline(&buf);
 		}
 	}
 
-	if (a->open_buckets_wait.list.first)
-		bch2_fs_open_buckets_to_text(&buf, c);
+	if (err == -BCH_ERR_bucket_alloc_blocked) {
+		prt_printf(&buf, "Allocator debug:\n");
+		scoped_guard(printbuf_indent, &buf)
+			bch2_fs_alloc_debug_to_text(&buf, c);
+		prt_newline(&buf);
 
-	prt_printf(&buf, "Copygc debug:\n");
-	scoped_guard(printbuf_indent, &buf)
-		bch2_copygc_wait_to_text(&buf, c);
-	prt_newline(&buf);
+		bch2_printbuf_make_room(&buf, 4096);
+
+		scoped_guard(rcu) {
+			guard(printbuf_atomic)(&buf);
+			prt_printf(&buf, "Devices elligible for allocation\n");
+			for_each_member_device_rcu(c, ca, NULL)
+				if (dev_may_alloc(c, ca, req))
+					dev_alloc_debug_header(&buf, ca);
+
+			prt_printf(&buf, "Devices inelligible for allocation\n");
+			for_each_member_device_rcu(c, ca, NULL)
+				if (!dev_may_alloc(c, ca, req))
+					dev_alloc_debug_header(&buf, ca);
+		}
+
+		prt_printf(&buf, "Copygc debug:\n");
+		scoped_guard(printbuf_indent, &buf)
+			bch2_copygc_wait_to_text(&buf, c);
+		prt_newline(&buf);
+	}
+
+	if (err == -BCH_ERR_open_bucket_alloc_blocked)
+		bch2_fs_open_buckets_to_text(&buf, c);
 
 	prt_printf(&buf, "Journal debug:\n");
 	scoped_guard(printbuf_indent, &buf)
@@ -1605,14 +1663,14 @@ static inline unsigned allocator_wait_timeout(struct bch_fs *c)
 	return c->opts.allocator_stuck_timeout * HZ;
 }
 
-void __bch2_wait_on_allocator(struct bch_fs *c, enum bch_watermark watermark,
-			      struct closure *cl)
+void __bch2_wait_on_allocator(struct bch_fs *c, struct alloc_request *req,
+			      int err, struct closure *cl)
 {
 	unsigned t = allocator_wait_timeout(c);
 
 	if (t && closure_sync_timeout(cl, t)) {
 		c->allocator.last_stuck = jiffies;
-		bch2_print_allocator_stuck(c, watermark);
+		bch2_print_allocator_stuck(c, req, err);
 	}
 
 	closure_sync(cl);

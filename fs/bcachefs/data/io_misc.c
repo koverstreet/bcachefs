@@ -86,16 +86,21 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 		e = bkey_extent_init(new.k);
 		e->k.p = iter->pos;
 
-		ret = bch2_alloc_sectors_start_trans(trans,
-				opts.foreground_target,
-				false,
-				write_point,
-				&devs_have,
-				opts.data_replicas,
-				opts.data_replicas,
-				BCH_WATERMARK_normal, 0, &cl, &wp);
-		if (bch2_err_matches(ret, BCH_ERR_operation_blocked))
+		struct alloc_request *req;
+		ret = PTR_ERR_OR_ZERO(req = alloc_request_get(trans,
+						opts.foreground_target,
+						false,
+						&devs_have,
+						opts.data_replicas,
+						opts.data_replicas,
+						BCH_WATERMARK_normal,
+						0, &cl)) ?:
+			bch2_alloc_sectors_req(trans, req, write_point, &wp);
+		if (bch2_err_matches(ret, BCH_ERR_operation_blocked)) {
+			bch2_trans_unlock_long(trans);
+			bch2_wait_on_allocator(c, req, ret, &cl);
 			ret = bch_err_throw(c, transaction_restart_nested);
+		}
 		if (ret)
 			goto err;
 
@@ -125,11 +130,6 @@ err:
 	}
 err_noprint:
 	bch2_open_buckets_put(c, &open_buckets);
-
-	if (closure_nr_remaining(&cl) != 1) {
-		bch2_trans_unlock_long(trans);
-		bch2_wait_on_allocator(c, BCH_WATERMARK_normal, &cl);
-	}
 
 	return ret;
 }

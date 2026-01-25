@@ -163,7 +163,7 @@ static int bch2_set_nr_journal_buckets_loop(struct bch_fs *c, struct bch_dev *ca
 		if (bch2_err_matches(ret, BCH_ERR_operation_blocked))
 			ret = 0; /* wait and retry */
 
-		bch2_wait_on_allocator(c, watermark, &cl);
+		bch2_wait_on_allocator(c, NULL, ret, &cl);
 	}
 
 	return ret;
