@@ -109,7 +109,7 @@ static const char * const __bch2_fs_usage_types[] = {
 };
 
 const char * const __bch2_reconcile_accounting_types[] = {
-	BCH_REBALANCE_ACCOUNTING()
+	BCH_RECONCILE_ACCOUNTING()
 	NULL
 };
 

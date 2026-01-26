@@ -716,7 +716,7 @@ static int btree_update_nodes_written_trans(struct btree_trans *trans,
 		bkey_strip_reconcile(c, bkey_i_to_s(&i->key));
 
 		try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, &i->key,
-						  SET_NEEDS_REBALANCE_foreground, 0));
+						  SET_NEEDS_RECONCILE_foreground, 0));
 
 		/*
 		 * This is not strictly the best way of doing this, what we

@@ -123,7 +123,7 @@ static int btree_node_write_update_key(struct btree_trans *trans,
 		struct bch_inode_opts opts;
 		try(bch2_bkey_get_io_opts(trans, NULL, bkey_i_to_s_c(n), &opts));
 		try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, n,
-						  SET_NEEDS_REBALANCE_opt_change, 0));
+						  SET_NEEDS_RECONCILE_opt_change, 0));
 	}
 
 	return bch2_btree_node_update_key(trans, &iter, b, n,

@@ -289,11 +289,11 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	 * existing extent
 	 */
 	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, &new->k_i,
-					  SET_NEEDS_REBALANCE_foreground,
+					  SET_NEEDS_RECONCILE_foreground,
 					  u->op.opts.change_cookie));
 	/* This is the real set_needs_reconcile() call */
 	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, insert,
-					  SET_NEEDS_REBALANCE_foreground,
+					  SET_NEEDS_RECONCILE_foreground,
 					  u->op.opts.change_cookie));
 
 	if (u->op.opts.change_cookie == c->opt_change_cookie) {

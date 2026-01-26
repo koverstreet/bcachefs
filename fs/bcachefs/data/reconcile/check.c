@@ -120,7 +120,7 @@ static int check_reconcile_work_one(struct btree_trans *trans,
 
 	try(bch2_bkey_get_io_opts(trans, snapshot_io_opts, data_k, &opts));
 	try(bch2_update_reconcile_opts(trans, snapshot_io_opts, &opts, data_iter, 0, data_k,
-				       SET_NEEDS_REBALANCE_other));
+				       SET_NEEDS_RECONCILE_other));
 	return 0;
 }
 
@@ -274,7 +274,7 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 	struct bch_inode_opts opts;
 	try(bch2_bkey_get_io_opts(trans, NULL, k, &opts));
 	try(bch2_update_reconcile_opts(trans, NULL, &opts, iter, level, k,
-				       SET_NEEDS_REBALANCE_other));
+				       SET_NEEDS_RECONCILE_other));
 
 	struct bpos bp_pos = bch2_bkey_get_reconcile_bp_pos(c, k);
 

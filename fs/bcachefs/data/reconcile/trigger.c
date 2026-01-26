@@ -30,7 +30,7 @@ int bch2_extent_reconcile_validate(struct bch_fs *c,
 			 c, extent_reconcile_bad_pending,
 			 "pending incorrectly set");
 
-	bkey_fsck_err_on(r->hipri && !(r->need_rb & BIT(BCH_REBALANCE_data_replicas)),
+	bkey_fsck_err_on(r->hipri && !(r->need_rb & BIT(BCH_RECONCILE_data_replicas)),
 			 c, extent_reconcile_bad_hipri,
 			 "hipri incorrectly set");
 
@@ -173,11 +173,11 @@ static inline unsigned rb_accounting_counters(const struct bch_extent_reconcile 
 
 	unsigned ret = r->need_rb;
 	if (r->pending) {
-		ret |=  BIT(BCH_REBALANCE_ACCOUNTING_pending);
-		ret &= ~BIT(BCH_REBALANCE_ACCOUNTING_target);
-		ret &= ~BIT(BCH_REBALANCE_ACCOUNTING_replicas);
+		ret |=  BIT(BCH_RECONCILE_ACCOUNTING_pending);
+		ret &= ~BIT(BCH_RECONCILE_ACCOUNTING_target);
+		ret &= ~BIT(BCH_RECONCILE_ACCOUNTING_replicas);
 	} else if (r->hipri) {
-		ret |=  BIT(BCH_REBALANCE_ACCOUNTING_high_priority);
+		ret |=  BIT(BCH_RECONCILE_ACCOUNTING_high_priority);
 	}
 	return ret;
 }
@@ -434,7 +434,7 @@ static inline bool bkey_should_have_rb_opts(struct bkey_s_c k,
 {
 	if (k.k->type == KEY_TYPE_reflink_v) {
 #define x(n)	if (new.n##_from_inode) return true;
-		BCH_REBALANCE_OPTS()
+		BCH_RECONCILE_OPTS()
 #undef x
 	}
 	return new.need_rb;
@@ -457,7 +457,7 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 #define x(_name)							\
 		._name			= opts->_name,			\
 		._name##_from_inode	= opts->_name##_from_inode,
-	BCH_REBALANCE_OPTS()
+	BCH_RECONCILE_OPTS()
 #undef x
 	};
 
@@ -483,24 +483,24 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 		if (!poisoned &&
 		    !btree &&
 		    p.crc.csum_type != csum_type)
-			r.need_rb |= BIT(BCH_REBALANCE_data_checksum);
+			r.need_rb |= BIT(BCH_RECONCILE_data_checksum);
 
 		if (!poisoned &&
 		    p.crc.compression_type != compression_type)
-			r.need_rb |= BIT(BCH_REBALANCE_background_compression);
+			r.need_rb |= BIT(BCH_RECONCILE_background_compression);
 
 		if (!poisoned &&
 		    !evacuating &&
 		    !p.ptr.cached &&
 		    r.background_target &&
 		    !bch2_dev_in_target(c, p.ptr.dev, r.background_target)) {
-			r.need_rb |= BIT(BCH_REBALANCE_background_target);
+			r.need_rb |= BIT(BCH_RECONCILE_background_target);
 			if (p.ptr.dev != BCH_SB_MEMBER_INVALID)
 				r.ptrs_moving |= ptr_bit;
 		}
 
 		if (evacuating) {
-			r.need_rb |= BIT(BCH_REBALANCE_data_replicas);
+			r.need_rb |= BIT(BCH_RECONCILE_data_replicas);
 			r.hipri = 1;
 			if (p.ptr.dev != BCH_SB_MEMBER_INVALID)
 				r.ptrs_moving |= ptr_bit;
@@ -527,21 +527,21 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 	}
 
 	if (unwritten || incompressible)
-		r.need_rb &= ~BIT(BCH_REBALANCE_background_compression);
+		r.need_rb &= ~BIT(BCH_RECONCILE_background_compression);
 
 	if (unwritten)
-		r.need_rb &= ~BIT(BCH_REBALANCE_data_checksum);
+		r.need_rb &= ~BIT(BCH_RECONCILE_data_checksum);
 
 	if (durability < r.data_replicas) {
-		r.need_rb |= BIT(BCH_REBALANCE_data_replicas);
+		r.need_rb |= BIT(BCH_RECONCILE_data_replicas);
 		r.hipri = 1;
 	}
 
 	if (durability >= r.data_replicas + min_durability)
-		r.need_rb |= BIT(BCH_REBALANCE_data_replicas);
+		r.need_rb |= BIT(BCH_RECONCILE_data_replicas);
 
 	if (!unwritten && r.erasure_code != ec)
-		r.need_rb |= BIT(BCH_REBALANCE_erasure_code);
+		r.need_rb |= BIT(BCH_RECONCILE_erasure_code);
 
 	*need_update_invalid_devs =
 		min_t(int, durability_acct + invalid - r.data_replicas, invalid);
@@ -654,21 +654,21 @@ static int new_needs_rb_allowed(struct btree_trans *trans,
 	 * XXX: foreground writes should still match compression,
 	 * foreground_target - figure out how to check for this
 	 */
-	if (ctx == SET_NEEDS_REBALANCE_opt_change ||
-	    ctx == SET_NEEDS_REBALANCE_opt_change_indirect)
+	if (ctx == SET_NEEDS_RECONCILE_opt_change ||
+	    ctx == SET_NEEDS_RECONCILE_opt_change_indirect)
 		return 0;
 
-	if ((new_need_rb & BIT(BCH_REBALANCE_erasure_code)) &&
+	if ((new_need_rb & BIT(BCH_RECONCILE_erasure_code)) &&
 	    !bkey_has_ec(c, k)) {
 		/* Foreground writes are not initially erasure coded - and we
 		 * may crash before a stripe is created
 		 */
-		new_need_rb &= ~BIT(BCH_REBALANCE_erasure_code);
+		new_need_rb &= ~BIT(BCH_RECONCILE_erasure_code);
 	}
 
-	if (ctx == SET_NEEDS_REBALANCE_foreground) {
-		new_need_rb &= ~(BIT(BCH_REBALANCE_background_compression)|
-				 BIT(BCH_REBALANCE_background_target));
+	if (ctx == SET_NEEDS_RECONCILE_foreground) {
+		new_need_rb &= ~(BIT(BCH_RECONCILE_background_compression)|
+				 BIT(BCH_RECONCILE_background_target));
 
 		/*
 		 * Foreground writes might end up degraded when a device is
@@ -677,7 +677,7 @@ static int new_needs_rb_allowed(struct btree_trans *trans,
 		 * XXX: this is something we need to fix, but adding retries to
 		 * the write path is something we have to do carefully.
 		 */
-		new_need_rb &= ~BIT(BCH_REBALANCE_data_replicas);
+		new_need_rb &= ~BIT(BCH_RECONCILE_data_replicas);
 		if (!new_need_rb)
 			return 0;
 
@@ -707,7 +707,7 @@ static int new_needs_rb_allowed(struct btree_trans *trans,
 	if (ret)
 		return min(ret, 0);
 
-	if (new_need_rb == BIT(BCH_REBALANCE_data_replicas)) {
+	if (new_need_rb == BIT(BCH_RECONCILE_data_replicas)) {
 		ret = check_dev_reconcile_scan_cookie(trans, k, s ? &s->dev_cookie : NULL);
 		if (ret)
 			return min(ret, 0);
@@ -725,9 +725,9 @@ static int new_needs_rb_allowed(struct btree_trans *trans,
 		old = &_old;
 
 #define x(_name)								\
-	if (new_need_rb & BIT(BCH_REBALANCE_##_name))				\
+	if (new_need_rb & BIT(BCH_RECONCILE_##_name))				\
 		prt_printf(&buf, "\n" #_name " %u != %u", old->_name, new->_name);
-	BCH_REBALANCE_OPTS()
+	BCH_RECONCILE_OPTS()
 #undef x
 
 	fsck_err(trans, extent_io_opts_not_set, "%s", buf.buf);
@@ -951,7 +951,7 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 		if (old->_name##_from_inode)					\
 			opts->_name		= old->_name;			\
 		opts->_name##_from_inode	= old->_name##_from_inode;
-		BCH_REBALANCE_OPTS()
+		BCH_RECONCILE_OPTS()
 #undef x
 	}
 

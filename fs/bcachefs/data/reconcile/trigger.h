@@ -58,7 +58,7 @@ static inline struct bch_extent_reconcile io_opts_to_reconcile_opts(struct bch_f
 #define x(_name)							\
 		._name = opts->_name,					\
 		._name##_from_inode = opts->_name##_from_inode,
-		BCH_REBALANCE_OPTS()
+		BCH_RECONCILE_OPTS()
 #undef x
 	};
 };
@@ -128,10 +128,10 @@ static inline int bch2_trigger_extent_reconcile(struct btree_trans *trans,
 }
 
 enum set_needs_reconcile_ctx {
-	SET_NEEDS_REBALANCE_opt_change,
-	SET_NEEDS_REBALANCE_opt_change_indirect,
-	SET_NEEDS_REBALANCE_foreground,
-	SET_NEEDS_REBALANCE_other,
+	SET_NEEDS_RECONCILE_opt_change,
+	SET_NEEDS_RECONCILE_opt_change_indirect,
+	SET_NEEDS_RECONCILE_foreground,
+	SET_NEEDS_RECONCILE_other,
 };
 
 /* Inodes in different snapshots may have different IO options: */

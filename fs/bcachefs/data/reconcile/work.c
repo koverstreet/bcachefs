@@ -37,7 +37,7 @@
 #define x(n) #n,
 
 const char * const bch2_reconcile_opts[] = {
-	BCH_REBALANCE_OPTS()
+	BCH_RECONCILE_OPTS()
 	NULL
 };
 
@@ -180,7 +180,7 @@ static int bch2_clear_reconcile_needs_scan(struct btree_trans *trans, struct bpo
 	}));
 }
 
-#define REBALANCE_WORK_BUF_NR		1024
+#define RECONCILE_WORK_BUF_NR		1024
 DEFINE_DARRAY_NAMED(darray_reconcile_work, struct bkey_i);
 
 static struct bkey_s_c next_reconcile_entry(struct btree_trans *trans,
@@ -289,7 +289,7 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 	unsigned csum_type = bch2_data_checksum_type_rb(c, *r);
 	unsigned compression_type = bch2_compression_opt_to_type(r->background_compression);
 
-	if (r->need_rb & BIT(BCH_REBALANCE_data_replicas)) {
+	if (r->need_rb & BIT(BCH_RECONCILE_data_replicas)) {
 		struct bkey_durability durability;
 		try(bch2_bkey_durability(trans, k, &durability));
 
@@ -370,7 +370,7 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 		}
 	}
 
-	if (r->need_rb & BIT(BCH_REBALANCE_erasure_code)) {
+	if (r->need_rb & BIT(BCH_RECONCILE_erasure_code)) {
 		if (r->erasure_code) {
 			/* XXX: we'll need ratelimiting */
 			if (extent_ec_pending(trans, ptrs))
@@ -379,7 +379,7 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 			data_opts->extra_replicas = 1;
 			data_opts->no_devs_have = true;
 
-			if (r->need_rb == BIT(BCH_REBALANCE_erasure_code))
+			if (r->need_rb == BIT(BCH_RECONCILE_erasure_code))
 				data_opts->write_flags |= BCH_WRITE_must_ec;
 		} else {
 			unsigned ptr_bit = 1;
@@ -395,15 +395,15 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 	scoped_guard(rcu) {
 		unsigned ptr_bit = 1;
 		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-			if ((r->need_rb & BIT(BCH_REBALANCE_data_checksum)) &&
+			if ((r->need_rb & BIT(BCH_RECONCILE_data_checksum)) &&
 			    p.crc.csum_type != csum_type)
 				data_opts->ptrs_kill |= ptr_bit;
 
-			if ((r->need_rb & BIT(BCH_REBALANCE_background_compression)) &&
+			if ((r->need_rb & BIT(BCH_RECONCILE_background_compression)) &&
 			    p.crc.compression_type != compression_type)
 				data_opts->ptrs_kill |= ptr_bit;
 
-			if ((r->need_rb & BIT(BCH_REBALANCE_background_target)) &&
+			if ((r->need_rb & BIT(BCH_RECONCILE_background_target)) &&
 			    !p.ptr.cached &&
 			    !bch2_dev_in_target_rcu(c, p.ptr.dev, r->background_target))
 				data_opts->ptrs_kill |= ptr_bit;
@@ -416,7 +416,7 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 		    data_opts->ptrs_kill_ec ||
 		    data_opts->extra_replicas);
 	if (!ret) {
-		if (r->need_rb == BIT(BCH_REBALANCE_data_replicas)) {
+		if (r->need_rb == BIT(BCH_RECONCILE_data_replicas)) {
 			/*
 			 * We can end up here because you have all devices set
 			 * to durability=2 and replicas set to 1, 3 - we can't
@@ -527,7 +527,7 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 
 	try(bch2_bkey_get_io_opts(trans, snapshot_io_opts, k, opts));
 	try(bch2_update_reconcile_opts(trans, snapshot_io_opts, opts, iter, level, k,
-				       SET_NEEDS_REBALANCE_other));
+				       SET_NEEDS_RECONCILE_other));
 
 	CLASS(disk_reservation, res)(c);
 	try(bch2_trans_commit_lazy(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc));
@@ -707,7 +707,7 @@ static int update_reconcile_opts_scan(struct btree_trans *trans,
 	}
 
 	return bch2_update_reconcile_opts(trans, snapshot_io_opts, opts, iter, level, k,
-					  SET_NEEDS_REBALANCE_opt_change);
+					  SET_NEEDS_RECONCILE_opt_change);
 }
 
 static int do_reconcile_scan_bp(struct btree_trans *trans,
@@ -990,7 +990,7 @@ static CLOSURE_CALLBACK(do_reconcile_phys_thread)
 	struct btree_trans *trans = ctxt.trans;
 
 	CLASS(darray_reconcile_work, work)();
-	darray_make_room(&work, REBALANCE_WORK_BUF_NR);
+	darray_make_room(&work, RECONCILE_WORK_BUF_NR);
 	if (!work.size) {
 		bch_err(c, "%s: unable to allocate memory", __func__);
 		closure_return(cl);
@@ -1072,7 +1072,7 @@ static int do_reconcile(struct moving_context *ctxt)
 	int ret = 0;
 
 	CLASS(darray_reconcile_work, work)();
-	try(darray_make_room(&work, REBALANCE_WORK_BUF_NR));
+	try(darray_make_room(&work, RECONCILE_WORK_BUF_NR));
 
 	bch2_move_stats_init(&r->work_stats, "reconcile_work");
 
@@ -1238,7 +1238,7 @@ void bch2_reconcile_status_to_text(struct printbuf *out, struct bch_fs *c)
 	struct bch_fs_reconcile *r = &c->reconcile;
 
 	prt_printf(out, "pending work:\tdata\rmetadata\r\n");
-	for (unsigned i = 0; i < BCH_REBALANCE_ACCOUNTING_NR; i++) {
+	for (unsigned i = 0; i < BCH_RECONCILE_ACCOUNTING_NR; i++) {
 		struct disk_accounting_pos acc;
 		disk_accounting_key_init(acc, reconcile_work, i);
 		u64 v[2];
