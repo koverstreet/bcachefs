@@ -146,17 +146,7 @@ static int __mark_stripe_bucket(struct btree_trans *trans,
 	if (deleting)
 		sectors = -sectors;
 
-	if (!deleting) {
-		if (bch2_trans_inconsistent_on(parity && bch2_bucket_sectors_total(*a), trans,
-				"bucket %llu:%llu gen %u data type %s dirty_sectors %u stripe_sectors %u cached_sectors %u: data already in parity bucket\n%s",
-				bucket.inode, bucket.offset, a->gen,
-				bch2_data_type_str(a->data_type),
-				a->dirty_sectors,
-				a->stripe_sectors,
-				a->cached_sectors,
-				(bch2_bkey_val_to_text(&buf, c, s.s_c), buf.buf)))
-			return bch_err_throw(c, mark_stripe);
-	} else {
+	if (deleting) {
 		if (bch2_trans_inconsistent_on(!a->stripe_refcount, trans,
 				"bucket %llu:%llu gen %u: not marked as stripe when deleting stripe\n%s",
 				bucket.inode, bucket.offset, a->gen,
