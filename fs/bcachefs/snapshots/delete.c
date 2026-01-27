@@ -580,9 +580,6 @@ static int bch2_fix_child_of_deleted_snapshot(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	u32 nr_deleted_ancestors = 0;
 
-	if (!bch2_snapshot_exists(c, k.k->p.offset))
-		return 0;
-
 	if (k.k->type != KEY_TYPE_snapshot)
 		return 0;
 
