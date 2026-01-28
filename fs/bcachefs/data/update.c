@@ -46,6 +46,12 @@ static const struct rhashtable_params bch_update_params = {
 	.automatic_shrinking	= true,
 };
 
+bool bch2_data_update_in_flight(struct bch_fs *c, struct bbpos *pos)
+{
+	guard(rcu)();
+	return rhltable_lookup(&c->update_table, pos, bch_update_params) != NULL;
+}
+
 static void bkey_put_dev_refs(struct bch_fs *c, struct bkey_s_c k, unsigned ptrs_held)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
@@ -1119,8 +1125,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 			if (ret)
 				goto out;
 
-			guard(rcu)();
-			if (rhltable_lookup(&c->update_table, &m->pos, bch_update_params)) {
+			if (bch2_data_update_in_flight(c, &m->pos)) {
 				event_inc(c, data_update_in_flight);
 				ret = bch_err_throw(c, data_update_fail_in_flight);
 				goto out;
