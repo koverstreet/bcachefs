@@ -382,8 +382,13 @@ void bch2_replicas_entry_kill(struct bch_fs *c, struct bch_replicas_entry_v1 *ki
 
 	struct bch_replicas_entry_cpu *e = replicas_entry_search(&c->replicas, kill);
 
-	if (WARN(!e, "replicas entry not found in sb"))
+	if (!e) {
+		CLASS(printbuf, buf)();
+		prt_str(&buf, "replicas entry not found in sb: ");
+		bch2_replicas_entry_to_text(&buf, kill);
+		WARN(true, "%s", buf.buf);
 		return;
+	}
 
 	__replicas_entry_kill(c, e);
 
