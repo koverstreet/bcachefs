@@ -15,6 +15,7 @@
 #include "data/compress.h"
 
 #include "init/error.h"
+#include "init/fs.h"
 #include "init/passes.h"
 
 /*
@@ -735,6 +736,29 @@ static int accounting_read_key(struct btree_trans *trans, struct bkey_s_c k)
 
 	if (k.k->type != KEY_TYPE_accounting)
 		return 0;
+
+	struct disk_accounting_pos acc_k;
+	bpos_to_disk_accounting_pos(&acc_k, k.k->p);
+
+	if (acc_k.type == BCH_DISK_ACCOUNTING_replicas &&
+	    !bch2_accounting_key_is_zero(bkey_s_c_to_accounting(k))) {
+		unsigned flags = 0;
+		switch (c->opts.degraded) {
+		case BCH_DEGRADED_very:
+			flags |= BCH_FORCE_IF_DEGRADED|BCH_FORCE_IF_LOST;
+			break;
+		case BCH_DEGRADED_yes:
+			flags |= BCH_FORCE_IF_DEGRADED;
+			break;
+		}
+
+		CLASS(printbuf, buf)();
+		if (!bch2_can_read_replicas_with_devs(c, &c->devs_online, &acc_k.replicas, flags, &buf)) {
+			bch2_missing_devs_to_text(&buf, c);
+			bch2_print_str_loglevel(c, LOGLEVEL_err, buf.buf);
+			return bch_err_throw(c, insufficient_devices_to_start);
+		}
+	}
 
 	guard(percpu_read)(&c->capacity.mark_lock);
 	return bch2_accounting_mem_mod_locked(trans, bkey_s_c_to_accounting(k),

@@ -46,6 +46,8 @@ int bch2_fs_init_rw(struct bch_fs *);
 
 int bch2_fs_resize_on_mount(struct bch_fs *);
 
+void bch2_missing_devs_to_text(struct printbuf *, struct bch_fs *);
+
 int bch2_fs_start(struct bch_fs *);
 int bch2_fs_stop(struct bch_fs *);
 
