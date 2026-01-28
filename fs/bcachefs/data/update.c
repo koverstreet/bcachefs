@@ -301,8 +301,9 @@ static int data_update_index_update_key(struct btree_trans *trans,
 		try(bch2_bkey_durability(trans, k, &old_durability));
 		try(bch2_bkey_durability(trans, bkey_i_to_s_c(insert), &new_durability));
 
-		if (new_durability.total < old_durability.total &&
-		    new_durability.total < min(u->op.opts.data_replicas, opts.data_replicas)) {
+		if ((new_durability.total < old_durability.total &&
+		     new_durability.total < min(u->op.opts.data_replicas, opts.data_replicas)) ||
+		    !new_durability.total) {
 			CLASS(bch_log_msg, msg)(c);
 			prt_printf(&msg.m, "Data update would have reduced extent durability:\n");
 			prt_printf(&msg.m, "Old extent %u, new %u, option specifies %u\n",
