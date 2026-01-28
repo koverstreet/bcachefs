@@ -624,8 +624,13 @@ static int do_reconcile_extent_phys(struct moving_context *ctxt,
 	if (!bp_k.k || bp_k.k->type != KEY_TYPE_backpointer) /* write buffer race */
 		return 0;
 
-	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c_backpointer bp = bkey_s_c_to_backpointer(bp_k);
+
+	struct bbpos pos = BBPOS(bp.v->btree_id, bp.v->pos);
+	if (bch2_data_update_in_flight(c, &pos))
+		return 0;
+
+	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k = bkey_try(bch2_backpointer_get_key(trans, bp, &iter, 0, last_flushed));
 	if (!k.k)
 		return 0;
