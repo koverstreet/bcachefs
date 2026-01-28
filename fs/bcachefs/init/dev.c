@@ -999,7 +999,7 @@ static int bch2_dev_may_offline(struct bch_fs *c, struct bch_dev *ca, int flags,
 	struct bch_devs_mask new_rw_devs = c->allocator.rw_devs[0];
 	__clear_bit(ca->dev_idx, new_devs.d);
 
-	if (!bch2_can_read_fs_with_devs(c, new_devs, flags, err) ||
+	if (!bch2_can_read_fs_with_devs(c, &new_devs, flags, err) ||
 	    (!c->opts.read_only &&
 	     !bch2_can_write_fs_with_devs(c, new_rw_devs, flags, err))) {
 		prt_printf(err, "Cannot offline required disk\n");

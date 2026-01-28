@@ -34,7 +34,10 @@ static inline void bch2_replicas_entry_cached(struct bch_replicas_entry_v1 *e,
 	e->devs[0]	= dev;
 }
 
-bool bch2_can_read_fs_with_devs(struct bch_fs *, struct bch_devs_mask,
+bool bch2_can_read_replicas_with_devs(struct bch_fs *, struct bch_devs_mask *,
+				      struct bch_replicas_entry_v1 *,
+				      unsigned, struct printbuf *);
+bool bch2_can_read_fs_with_devs(struct bch_fs *, struct bch_devs_mask *,
 				unsigned, struct printbuf *);
 bool bch2_can_write_fs_with_devs(struct bch_fs *, struct bch_devs_mask,
 				 unsigned, struct printbuf *);
