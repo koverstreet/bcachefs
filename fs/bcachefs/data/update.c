@@ -1081,6 +1081,11 @@ int bch2_data_update_init(struct btree_trans *trans,
 		m->op.nr_replicas = max(0, (int) (io_opts->data_replicas - durability_keeping)) +
 			m->opts.extra_replicas;
 
+		if (!durability_keeping) {
+			m->op.nr_replicas = max_t(unsigned, m->op.nr_replicas, 1);
+			m->op.flags &= ~BCH_WRITE_cached;
+		}
+
 		/*
 		 * It might turn out that we don't need any new replicas, if the
 		 * replicas or durability settings have been changed since the extent
