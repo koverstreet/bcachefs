@@ -485,8 +485,8 @@ next_nondata:
 static int __bch2_move_data_phys(struct moving_context *ctxt,
 			struct move_bucket *bucket_in_flight,
 			unsigned dev,
-			u64 bucket_start,
-			u64 bucket_end,
+			u64 sector_start,
+			u64 sector_end,
 			unsigned data_types,
 			bool copygc,
 			move_pred_fn pred, void *arg)
@@ -494,7 +494,6 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
 	struct bkey_s_c k;
-	u64 check_mismatch_done = bucket_start;
 	int ret = 0;
 
 	/* Userspace might have supplied @dev: */
@@ -502,10 +501,12 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	if (!ca)
 		return 0;
 
-	bucket_end = min(bucket_end, ca->mi.nbuckets);
+	sector_end = min(sector_end, bucket_to_sector(ca, ca->mi.nbuckets));
 
-	struct bpos bp_start	= bucket_pos_to_bp_start(ca, POS(dev, bucket_start));
-	struct bpos bp_end	= bucket_pos_to_bp_end(ca, POS(dev, bucket_end));
+	u64 check_mismatch_done = sector_to_bucket(ca, sector_start);
+
+	struct bpos bp_start	= POS(dev, sector_start	<< c->sb.extent_bp_shift);
+	struct bpos bp_end	= POS(dev, sector_end	<< c->sb.extent_bp_shift);
 
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
 	wb_maybe_flush_init(&last_flushed);
@@ -586,7 +587,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		bch2_btree_iter_advance(&bp_iter);
 	}
 
-	while (check_mismatch_done < bucket_end)
+	while (check_mismatch_done < sector_to_bucket(ca, sector_end))
 		bch2_check_bucket_backpointer_mismatch(trans, ca, check_mismatch_done++,
 						       copygc, &last_flushed);
 
@@ -649,10 +650,15 @@ int bch2_evacuate_bucket(struct moving_context *ctxt,
 	struct bch_fs *c = ctxt->trans->c;
 	struct evacuate_bucket_arg arg = { bucket, gen, data_opts, };
 
+	/* Userspace might have supplied @dev: */
+	CLASS(bch2_dev_tryget_noerror, ca)(c, bucket.inode);
+	if (!ca)
+		return 0;
+
 	int ret = __bch2_move_data_phys(ctxt, bucket_in_flight,
 					bucket.inode,
-					bucket.offset,
-					bucket.offset + 1,
+					bucket_to_sector(ca, bucket.offset),
+					bucket_to_sector(ca, bucket.offset + 1),
 					~0,
 					true,
 					evacuate_bucket_pred, &arg);
