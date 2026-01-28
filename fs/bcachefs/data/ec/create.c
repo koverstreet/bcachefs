@@ -719,7 +719,7 @@ static struct ec_stripe_new *ec_new_stripe_alloc(struct bch_fs *c,
 						 unsigned disk_label,
 						 unsigned algorithm,
 						 unsigned nr_data, unsigned nr_parity,
-						 unsigned blocksize, unsigned target)
+						 unsigned blocksize)
 {
 	struct ec_stripe_new *s = kzalloc(sizeof(*s), GFP_KERNEL);
 	if (!s)
@@ -919,23 +919,13 @@ static int get_old_stripe(struct btree_trans *trans,
 	return ret;
 }
 
-static int init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
+static void init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
 {
 	struct bch_stripe *new_v = &s->new_stripe.key.v;
 	struct bch_stripe *old_v = &s->old_stripe.key.v;
 	unsigned i;
 
 	BUG_ON(old_v->nr_redundant != s->nr_parity);
-
-	int ret = __bch2_ec_stripe_buf_init(c, &s->old_stripe, 0, le16_to_cpu(old_v->sectors));
-	if (ret) {
-		bch2_stripe_handle_put(c, &s->old_stripe_handle);
-		return ret;
-	}
-
-	BUG_ON(s->old_stripe.size != le16_to_cpu(old_v->sectors));
-
-	bch2_stripe_buf_read(c, &s->old_stripe);
 
 	/*
 	 * Free buckets we initially allocated - they might conflict with
@@ -963,8 +953,6 @@ static int init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
 	}
 
 	s->have_old_stripe = true;
-
-	return 0;
 }
 
 static int stripe_reuse(struct btree_trans *trans, struct ec_stripe_new *s)
@@ -984,7 +972,14 @@ static int stripe_reuse(struct btree_trans *trans, struct ec_stripe_new *s)
 	if (ret <= 0)
 		return ret ?: bch_err_throw(c, stripe_alloc_blocked);
 
-	return init_new_stripe_from_old(c, s);
+	ret = __bch2_ec_stripe_buf_init(c, &s->old_stripe, 0, le16_to_cpu(s->old_stripe.key.v.sectors));
+	if (ret)
+		bch2_stripe_handle_put(c, &s->old_stripe_handle);
+
+	init_new_stripe_from_old(c, s);
+	bch2_stripe_buf_read(c, &s->old_stripe);
+	return ret;
+
 }
 
 static int stripe_idx_alloc(struct btree_trans *trans, struct ec_stripe_new *s)
@@ -1071,7 +1066,7 @@ static int stripe_alloc_or_reuse(struct btree_trans *trans,
 				if (req->watermark == BCH_WATERMARK_copygc) {
 					/* Don't self-deadlock copygc */
 					swap(req->flags, saved_flags);
-					ret =   new_stripe_alloc_buckets(trans, req, dev_stripe, s);
+					ret = new_stripe_alloc_buckets(trans, req, dev_stripe, s);
 					swap(req->flags, saved_flags);
 
 					try(ret);
@@ -1318,8 +1313,7 @@ struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *trans,
 					   min_t(unsigned, h->nr_active_devs,
 						 BCH_BKEY_PTRS_MAX) - h->redundancy,
 					   h->redundancy,
-					   h->blocksize,
-					   h->disk_label);
+					   h->blocksize);
 		if (!h->s) {
 			ret = bch_err_throw(c, ENOMEM_ec_new_stripe_alloc);
 			bch_err(c, "failed to allocate new stripe");
