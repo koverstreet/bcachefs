@@ -1189,12 +1189,12 @@ int bch2_write_super(struct bch_fs *c)
 	unsigned nr_members =	bch2_sb_nr_devices(c->disk_sb.sb);
 
 	if (!nr_wrote ||
-	    !bch2_can_read_fs_with_devs(c, sb_written, degraded_flags, NULL)) {
+	    !bch2_can_read_fs_with_devs(c, &sb_written, degraded_flags, NULL)) {
 		prt_printf(&err, "Unable to write superblock to sufficient devices (from %ps)\n",
 			   (void *) _RET_IP_);
 		prt_printf(&err, "Would not be able to mount with written devices\n");
 
-		bch2_can_read_fs_with_devs(c, sb_written, degraded_flags, &err);
+		bch2_can_read_fs_with_devs(c, &sb_written, degraded_flags, &err);
 
 		prt_printf(&err, "Wrote to %u/%u devices:\n", nr_wrote, nr_members);
 		scoped_guard(printbuf_indent, &err)

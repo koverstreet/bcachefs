@@ -835,51 +835,58 @@ const struct bch_sb_field_ops bch_sb_field_ops_replicas_v0 = {
 
 /* Query replicas: */
 
-bool bch2_can_read_fs_with_devs(struct bch_fs *c, struct bch_devs_mask devs,
+bool bch2_can_read_replicas_with_devs(struct bch_fs *c, struct bch_devs_mask *devs,
+				      struct bch_replicas_entry_v1 *e,
+				      unsigned flags, struct printbuf *err)
+{
+	unsigned nr_online = 0, nr_invalid = 0, dflags = 0;
+	bool metadata = e->data_type < BCH_DATA_user;
+
+	if (e->data_type == BCH_DATA_cached)
+		return true;
+
+	for (unsigned i = 0; i < e->nr_devs; i++) {
+		if (e->devs[i] == BCH_SB_MEMBER_INVALID) {
+			nr_invalid++;
+			continue;
+		}
+
+		nr_online += test_bit(e->devs[i], devs->d);
+	}
+
+	if (nr_invalid == e->nr_devs)
+		return true;
+
+	if (nr_online < e->nr_required)
+		dflags |= metadata
+			? BCH_FORCE_IF_METADATA_LOST
+			: BCH_FORCE_IF_DATA_LOST;
+
+	if (nr_online + nr_invalid < e->nr_devs)
+		dflags |= metadata
+			? BCH_FORCE_IF_METADATA_DEGRADED
+			: BCH_FORCE_IF_DATA_DEGRADED;
+
+	if (dflags & ~flags) {
+		if (err) {
+			prt_printf(err, "insufficient devices online (%u) for replicas entry ",
+				   nr_online);
+			bch2_replicas_entry_to_text(err, e);
+			prt_newline(err);
+		}
+		return false;
+	}
+
+	return true;
+}
+
+bool bch2_can_read_fs_with_devs(struct bch_fs *c, struct bch_devs_mask *devs,
 				unsigned flags, struct printbuf *err)
 {
 	guard(percpu_read)(&c->capacity.mark_lock);
-	for_each_cpu_replicas_entry(&c->replicas, i) {
-		struct bch_replicas_entry_v1 *e = &i->e;
-
-		unsigned nr_online = 0, nr_invalid = 0, dflags = 0;
-		bool metadata = e->data_type < BCH_DATA_user;
-
-		if (e->data_type == BCH_DATA_cached)
-			continue;
-
-		for (unsigned i = 0; i < e->nr_devs; i++) {
-			if (e->devs[i] == BCH_SB_MEMBER_INVALID) {
-				nr_invalid++;
-				continue;
-			}
-
-			nr_online += test_bit(e->devs[i], devs.d);
-		}
-
-		if (nr_invalid == e->nr_devs)
-			continue;
-
-		if (nr_online < e->nr_required)
-			dflags |= metadata
-				? BCH_FORCE_IF_METADATA_LOST
-				: BCH_FORCE_IF_DATA_LOST;
-
-		if (nr_online + nr_invalid < e->nr_devs)
-			dflags |= metadata
-				? BCH_FORCE_IF_METADATA_DEGRADED
-				: BCH_FORCE_IF_DATA_DEGRADED;
-
-		if (dflags & ~flags) {
-			if (err) {
-				prt_printf(err, "insufficient devices online (%u) for replicas entry ",
-					   nr_online);
-				bch2_replicas_entry_to_text(err, e);
-				prt_newline(err);
-			}
+	for_each_cpu_replicas_entry(&c->replicas, i)
+		if (!bch2_can_read_replicas_with_devs(c, devs, &i->e, flags, err))
 			return false;
-		}
-	}
 
 	return true;
 }
