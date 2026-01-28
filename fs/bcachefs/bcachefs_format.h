@@ -845,7 +845,8 @@ struct bch_sb_field_ext {
 	x(sb_field_extent_type_u64s,	BCH_VERSION(1, 32))		\
 	x(reconcile,			BCH_VERSION(1, 33))		\
 	x(extented_key_type_error,	BCH_VERSION(1, 34))		\
-	x(bucket_stripe_index,		BCH_VERSION(1, 35))
+	x(bucket_stripe_index,		BCH_VERSION(1, 35))		\
+	x(no_sb_user_data_replicas,	BCH_VERSION(1, 36))
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,

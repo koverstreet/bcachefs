@@ -472,6 +472,10 @@ void __bch2_accounting_maybe_kill(struct bch_fs *c, struct bpos pos)
 	if (acc_k.type != BCH_DISK_ACCOUNTING_replicas)
 		return;
 
+	if (acc_k.replicas.data_type > BCH_DATA_btree &&
+	    !bch2_request_incompat_feature(c, bcachefs_metadata_version_no_sb_user_data_replicas))
+		return;
+
 	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(mutex)(&c->sb_lock);
 	scoped_guard(percpu_write, &c->capacity.mark_lock) {
