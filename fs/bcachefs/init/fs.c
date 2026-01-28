@@ -1254,6 +1254,17 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 	return c;
 }
 
+void bch2_missing_devs_to_text(struct printbuf *out, struct bch_fs *c)
+{
+	prt_printf(out, "Missing devices\n");
+	for_each_member_device(c, ca)
+		if (!bch2_dev_is_online(ca) && bch2_dev_has_data(c, ca)) {
+			prt_printf(out, "Device %u\n", ca->dev_idx);
+			guard(printbuf_indent)(out);
+			bch2_member_to_text_short(out, c, ca);
+		}
+}
+
 static int bch2_fs_may_start(struct bch_fs *c, struct printbuf *err)
 {
 	unsigned flags = 0;
@@ -1288,14 +1299,7 @@ static int bch2_fs_may_start(struct bch_fs *c, struct printbuf *err)
 	if (!bch2_can_read_fs_with_devs(c, &c->devs_online, flags, err) ||
 	    (!c->opts.read_only &&
 	     !bch2_can_write_fs_with_devs(c, c->allocator.rw_devs[0], flags, err))) {
-		prt_printf(err, "Missing devices\n");
-		for_each_member_device(c, ca)
-			if (!bch2_dev_is_online(ca) && bch2_dev_has_data(c, ca)) {
-				prt_printf(err, "Device %u\n", ca->dev_idx);
-				guard(printbuf_indent)(err);
-				bch2_member_to_text_short(err, c, ca);
-			}
-
+		bch2_missing_devs_to_text(err, c);
 		return bch_err_throw(c, insufficient_devices_to_start);
 	}
 
