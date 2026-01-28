@@ -42,7 +42,7 @@ static const char * const bch2_data_update_type_strs[] = {
 static const struct rhashtable_params bch_update_params = {
 	.head_offset		= offsetof(struct data_update, hash),
 	.key_offset		= offsetof(struct data_update, pos),
-	.key_len		= sizeof(struct bpos),
+	.key_len		= sizeof(struct bbpos),
 	.automatic_shrinking	= true,
 };
 
@@ -979,7 +979,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	int ret = 0;
 
-	m->pos = k.k->p;
+	m->pos = BBPOS(iter ? iter->btree_id : BTREE_ID_extents, k.k->p);
 	bch2_bkey_buf_init(&m->k);
 	bch2_bkey_buf_reassemble(&m->k, k);
 	k = bkey_i_to_s_c(m->k.k);

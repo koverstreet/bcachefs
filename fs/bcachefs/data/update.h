@@ -52,7 +52,7 @@ struct data_update {
 	u8			ptrs_held;
 
 	struct rhlist_head	hash;
-	struct bpos		pos;
+	struct bbpos		pos;
 
 	/* associated with @ctxt */
 	struct list_head	read_list;

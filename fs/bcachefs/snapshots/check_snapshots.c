@@ -602,6 +602,10 @@ int __bch2_check_key_has_snapshot(struct btree_trans *trans,
 	int ret = 0;
 	enum snapshot_id_state state = bch2_snapshot_id_state(c, k.k->p.snapshot);
 
+	/* promote path - can't do repair */
+	if (!iter)
+		return 1;
+
 	/* Snapshot was definitively deleted, this error is marked autofix */
 	if (fsck_err_on(state == SNAPSHOT_ID_deleted,
 			trans, bkey_in_deleted_snapshot,
