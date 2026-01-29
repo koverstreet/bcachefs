@@ -1216,6 +1216,36 @@ bool bch2_bkey_matches_ptr(struct bch_fs *c, struct bkey_s_c k,
 	return false;
 }
 
+bool bch2_bkey_ptrs_match(struct bkey_s_c k1, struct extent_ptr_decoded p1,
+			  struct bkey_s_c k2, struct extent_ptr_decoded p2)
+{
+	return (p1.ptr.dev		== p2.ptr.dev &&
+		p1.ptr.gen		== p2.ptr.gen &&
+
+		/*
+		 * This checks that the two pointers point
+		 * to the same region on disk - adjusting
+		 * for the difference in where the extents
+		 * start, since one may have been trimmed:
+		 */
+		(s64) p1.ptr.offset + p1.crc.offset - bkey_start_offset(k1.k) ==
+		(s64) p2.ptr.offset + p2.crc.offset - bkey_start_offset(k2.k) &&
+
+		/*
+		 * This additionally checks that the
+		 * extents overlap on disk, since the
+		 * previous check may trigger spuriously
+		 * when one extent is immediately partially
+		 * overwritten with another extent (so that
+		 * on disk they are adjacent) and
+		 * compression is in use:
+		 */
+		((p1.ptr.offset >= p2.ptr.offset &&
+		  p1.ptr.offset  < p2.ptr.offset + p2.crc.compressed_size) ||
+		 (p2.ptr.offset >= p1.ptr.offset &&
+		  p2.ptr.offset  < p1.ptr.offset + p1.crc.compressed_size)));
+}
+
 /*
  * Returns true if two extents refer to the same data:
  */
@@ -1235,31 +1265,7 @@ bool bch2_extents_match(const struct bch_fs *c, struct bkey_s_c k1, struct bkey_
 
 		bkey_for_each_ptr_decode(k1.k, ptrs1, p1, entry1)
 			bkey_for_each_ptr_decode(k2.k, ptrs2, p2, entry2)
-				if (p1.ptr.dev		== p2.ptr.dev &&
-				    p1.ptr.gen		== p2.ptr.gen &&
-
-				    /*
-				     * This checks that the two pointers point
-				     * to the same region on disk - adjusting
-				     * for the difference in where the extents
-				     * start, since one may have been trimmed:
-				     */
-				    (s64) p1.ptr.offset + p1.crc.offset - bkey_start_offset(k1.k) ==
-				    (s64) p2.ptr.offset + p2.crc.offset - bkey_start_offset(k2.k) &&
-
-				    /*
-				     * This additionally checks that the
-				     * extents overlap on disk, since the
-				     * previous check may trigger spuriously
-				     * when one extent is immediately partially
-				     * overwritten with another extent (so that
-				     * on disk they are adjacent) and
-				     * compression is in use:
-				     */
-				    ((p1.ptr.offset >= p2.ptr.offset &&
-				      p1.ptr.offset  < p2.ptr.offset + p2.crc.compressed_size) ||
-				     (p2.ptr.offset >= p1.ptr.offset &&
-				      p2.ptr.offset  < p1.ptr.offset + p1.crc.compressed_size)))
+				if (bch2_bkey_ptrs_match(k1, p1, k2, p2))
 					return true;
 
 		return false;
@@ -1371,6 +1377,12 @@ void bch2_extent_ptr_set_cached(struct bch_fs *c,
 	maybe_drop_cached_ptr(c, opts, k, ptr, have_cached_ptr);
 }
 
+#if 0
+void bch2_bkey_set_ptrs_cached_mask()
+{
+}
+#endif
+
 static bool bch2_bkey_has_stale_ptrs(struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
@@ -1445,6 +1457,7 @@ int bch2_bkey_drop_extra_durability(struct btree_trans *trans,
 				    struct bkey_s k)
 {
 	struct bch_fs *c = trans->c;
+	u8 ptrs_cached = 0;
 	u8 ptrs_kill = 0;
 	u8 ptr_durability[BCH_BKEY_PTRS_MAX];
 	unsigned durability = 0, nr_ptrs = 0;
@@ -1457,21 +1470,21 @@ int bch2_bkey_drop_extra_durability(struct btree_trans *trans,
 	bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs(k), p, entry) {
 		BUG_ON(nr_ptrs >= ARRAY_SIZE(ptr_durability));
 
+		if (p.ptr.cached)
+			ptrs_cached |= BIT(nr_ptrs);
+
 		int d = bch2_extent_ptr_durability(trans, &p);
 		if (d < 0)
 			return d;
 
 		BUG_ON(d > U8_MAX);
 
-		if (!d && !p.ptr.cached)
-			ptrs_kill |= BIT(nr_ptrs);
-
 		ptr_durability[nr_ptrs++] = d;
 		durability += d;
 	}
 
 	for (unsigned i = 0; i < nr_ptrs; i++)
-		if (ptr_durability[i] &&
+		if (!(ptrs_cached & BIT(i)) &&
 		    durability - ptr_durability[i] >= opts->data_replicas) {
 			durability -= ptr_durability[i];
 			ptr_durability[i] = 0;

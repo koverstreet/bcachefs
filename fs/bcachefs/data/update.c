@@ -46,6 +46,15 @@ static const struct rhashtable_params bch_update_params = {
 	.automatic_shrinking	= true,
 };
 
+static void ptr_bits_to_text(struct printbuf *out, unsigned ptrs, const char *name)
+{
+	if (ptrs) {
+		prt_printf(out, "%s ptrs:\t", name);
+		bch2_prt_u64_base2(out, ptrs);
+		prt_newline(out);
+	}
+}
+
 static void bkey_put_dev_refs(struct bch_fs *c, struct bkey_s_c k, unsigned ptrs_held)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
@@ -133,16 +142,140 @@ static void count_data_update_key_fail(struct data_update *u,
 	}));
 }
 
+static unsigned ptr_remap(struct bch_fs *c, struct bkey_s_c old,
+			  struct extent_ptr_decoded oldp,
+			  struct bkey_s_c new)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(new);
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded newp;
+	unsigned ptr_bit = 1;
+
+	bkey_for_each_ptr_decode(new.k, ptrs, newp, entry) {
+		if (bch2_bkey_ptrs_match(old, oldp, new, newp))
+			return ptr_bit;
+		ptr_bit <<= 1;
+	}
+	return 0;
+}
+
+static unsigned ptr_mask_remap(struct bch_fs *c,
+			       struct bkey_s_c old, unsigned oldmask,
+			       struct bkey_s_c new)
+{
+	if (!oldmask)
+		return 0;
+
+	unsigned newmask = 0;
+	unsigned ptr_bit = 1;
+
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(old);
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded oldp;
+	bkey_for_each_ptr_decode(old.k, ptrs, oldp, entry) {
+		if (oldmask & ptr_bit)
+			newmask |= ptr_remap(c, old, oldp, new);
+		ptr_bit <<= 1;
+	}
+
+	return newmask;
+}
+
+static unsigned bkey_has_device_mask(struct bch_fs *c, struct bkey_s_c k, unsigned dev)
+{
+	unsigned ptr_bit = 1;
+	bkey_for_each_ptr(bch2_bkey_ptrs_c(k), ptr) {
+		if (ptr->dev == dev)
+			return ptr_bit;
+		ptr_bit <<= 1;
+	}
+
+	return 0;
+}
+
+/* Returns mask of pointers in @k1 that conflict with pointers in @k2 */
+static unsigned bkey_ptr_conflicts_mask(struct bch_fs *c, struct bkey_s_c k1, struct bkey_s_c k2)
+{
+	unsigned ptrs_conflict = 0;
+
+	bkey_for_each_ptr(bch2_bkey_ptrs_c(k2), ptr)
+		ptrs_conflict |= bkey_has_device_mask(c, k1, ptr->dev);
+	return ptrs_conflict;
+}
+
+struct bkey_ptr_durabilities {
+	u8	ptr_durability[BCH_BKEY_PTRS_MAX];
+	u8	nr_ptrs;
+	u8	durability;
+	u8	drop;
+};
+
+static int bkey_ptr_durabilities(struct btree_trans *trans,
+				 struct bkey_s_c k,
+				 struct bkey_ptr_durabilities *d)
+{
+	struct bch_fs *c = trans->c;
+
+	memset(d, 0, sizeof(*d));
+
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
+
+	bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs_c(k), p, entry) {
+		BUG_ON(d->nr_ptrs >= ARRAY_SIZE(d->ptr_durability));
+
+		int ret = bch2_extent_ptr_durability(trans, &p);
+		if (ret < 0)
+			return ret;
+
+		BUG_ON(ret > U8_MAX);
+
+		d->ptr_durability[d->nr_ptrs++] = ret;
+		d->durability += ret;
+	}
+
+	return 0;
+}
+
+static void select_extra_durability_ptrs(struct bch_fs *c,
+					 struct bch_inode_opts *opts,
+					 struct bkey_ptr_durabilities *d,
+					 unsigned mask)
+{
+	for (unsigned i = 0; i < d->nr_ptrs; i++) {
+		if ((mask & BIT(i)) &&
+		    !(d->drop & BIT(i)) &&
+		    d->durability - d->ptr_durability[i] >= opts->data_replicas) {
+			d->drop |= BIT(i);
+			d->durability -= d->ptr_durability[i];
+		}
+	}
+}
+
 static int data_update_index_update_key(struct btree_trans *trans,
 					struct data_update *u,
 					struct btree_iter *iter)
 {
 	struct bch_fs *c = trans->c;
-	struct bkey_s_c old = bkey_i_to_s_c(u->k.k);
 
 	bch2_trans_begin(trans);
 
-	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(iter));
+	/*
+	 * @old: extent that we read from
+	 * @new: newly written replicas
+	 *
+	 * First, remap since the extent may have been changed by other data
+	 * updates (copygc is allowed to race with other data updates):
+	 */
+	struct bkey_s_c old	= bkey_i_to_s_c(u->k.k);
+	struct bkey_s_c k	= bkey_try(bch2_btree_iter_peek_slot(iter));
+	struct bkey_i_extent *new = bkey_i_to_extent(bch2_keylist_front(&u->op.insert_keys));
+
+	if (!bch2_extents_match(c, k, old)) {
+		count_data_update_key_fail(u, k, bkey_i_to_s_c(&new->k_i), NULL, "no match:");
+		bch2_btree_iter_advance(iter);
+		return 0;
+	}
 
 	/* make a local copy, so that we can trace it after the transaction commit:  */
 	k = bkey_i_to_s_c(errptr_try(bch2_bkey_make_mut_noupdate(trans, k)));
@@ -153,7 +286,6 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	 * pointers to BCH_SB_MEMBER_INVALID if the extent is now
 	 * degraded due to option changes:
 	 */
-	struct bkey_i_extent *new = bkey_i_to_extent(bch2_keylist_front(&u->op.insert_keys));
 	new = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(&new->k) +
 				 sizeof(struct bch_extent_reconcile) +
 				 sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX));
@@ -167,93 +299,96 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	bkey_reassemble(insert, k);
 
 	bch2_cut_front(c, iter->pos,	&new->k_i);
-	bch2_cut_front(c, iter->pos,	insert);
-	bch2_cut_back(new->k.p,		insert);
 	bch2_cut_back(insert->k.p,	&new->k_i);
 
-	if (!bch2_extents_match(c, k, old)) {
-		count_data_update_key_fail(u, k, bkey_i_to_s_c(&new->k_i), insert, "no match:");
-		bch2_btree_iter_advance(iter);
-		return 0;
+	bch2_cut_front(c, iter->pos,	insert);
+	bch2_cut_back(new->k.p,		insert);
+
+	if (!u->opts.no_devs_have) {
+		/* Don't replace non-cached replicas with cached: */
+		if (u->opts.ptrs_kill)
+			bkey_for_each_ptr(bch2_bkey_ptrs_c(bkey_i_to_s_c(&new->k_i)), ptr)
+				BUG_ON(ptr->cached);
+
+		/*
+		 * Drop replicas in the existing extent that conflict with what
+		 * we just wrote - but only if they were explicitly specified in
+		 * ptrs_kill:
+		 * A replica that we just wrote might conflict with a replica
+		 * that we want to keep, due to racing with another move:
+		 */
+		unsigned ptrs_conflict = bkey_ptr_conflicts_mask(c, bkey_i_to_s_c(insert), bkey_i_to_s_c(&new->k_i)) &
+			ptr_mask_remap(c, old, u->opts.ptrs_kill, bkey_i_to_s_c(insert));
+		bch2_bkey_drop_ptrs_mask(c, insert, ptrs_conflict);
+
+
+		/* Any conflicts that are left over were useless writes -
+		 * perhaps due to a copygc race:
+		 */
+		ptrs_conflict = bkey_ptr_conflicts_mask(c, bkey_i_to_s_c(&new->k_i), bkey_i_to_s_c(insert));
+		if (ptrs_conflict) {
+			event_add_trace(c, data_update_useless_write_fail,
+					k.k->size * hweight32(ptrs_conflict), buf, ({
+				ptr_bits_to_text(&buf, ptrs_conflict, "conflicted");
+				prt_printf(&buf, "wrote: ");
+				bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&new->k_i));
+				prt_newline(&buf);
+				bch2_data_update_to_text(&buf, u);
+			}));
+
+			bch2_bkey_drop_ptrs_mask(c, &new->k_i, ptrs_conflict);
+
+			if (!bkey_val_u64s(&new->k)) {
+				count_data_update_key_fail(u, k,
+							   bkey_i_to_s_c(bch2_keylist_front(&u->op.insert_keys)),
+							   insert, "new replicas conflicted:");
+				bch2_btree_iter_advance(iter);
+				return 0;
+			}
+		}
+	} else {
+		/*
+		 * Drop all conflicts from the existing extent, not the newly
+		 * written replicas:
+		 *
+		 * When converting an extent to erasure coding, we don't
+		 * disallow the write from allocating on the extent's existing
+		 * devices: we just want a new replica that will have a stripe
+		 * pointer added asynchronously by erasure coding, and it can
+		 * overwrite whichever device it happens to land on
+		 *
+		 * XXX: make sure drop_extra_replicas does not drop the new
+		 * replica
+		 */
+		unsigned ptrs_conflict = bkey_ptr_conflicts_mask(c, bkey_i_to_s_c(insert), bkey_i_to_s_c(&new->k_i));
+		bch2_bkey_drop_ptrs_mask(c, insert, ptrs_conflict);
 	}
+
+	/* Now, merge newly written replicas:
+	 * Since these are appended to the end of @insert, they don't invalidate
+	 * our pointer masks:
+	 */
+	struct extent_ptr_decoded p;
+	union bch_extent_entry *entry;
+	extent_for_each_ptr_decode(extent_i_to_s(new), p, entry)
+		bch2_extent_ptr_decoded_append(c, insert, &p);
+
+	/* Remap masks after creating @insert: bch2_extent_ptr_decoded_append()
+	 * will not necessarily add the new pointer to the end of the extent, it
+	 * tries to avoid creating new crc entries
+	 */
+	unsigned ptrs_kill	= ptr_mask_remap(c, old, u->opts.ptrs_kill,	bkey_i_to_s_c(insert));
+	unsigned ptrs_kill_ec	= ptr_mask_remap(c, old, u->opts.ptrs_kill_ec,	bkey_i_to_s_c(insert));
+	unsigned ptrs_io_error	= ptr_mask_remap(c, old, u->opts.ptrs_io_error,	bkey_i_to_s_c(insert));
+
 
 	struct bch_inode_opts opts;
 	try(bch2_bkey_get_io_opts(trans, NULL, k, &opts));
 
-	/*
-	 * @old: extent that we read from
-	 * @insert: key that we're going to update, initialized from
-	 * extent currently in btree - same as @old unless we raced with
-	 * other updates
-	 * @new: extent with new pointers that we'll be adding to @insert
-	 *
-	 * Fist, drop ptrs_kill from @new:
-	 */
-	const union bch_extent_entry *entry_c;
-	struct extent_ptr_decoded p;
-	struct bch_extent_ptr *ptr;
+	struct bkey_ptr_durabilities d;
+	try(bkey_ptr_durabilities(trans, bkey_i_to_s_c(insert), &d));
 
-	if (u->opts.ptrs_kill_ec)
-		bch2_bkey_drop_ec_mask(c, insert, u->opts.ptrs_kill_ec);
-
-	unsigned rewrites_found = 0, ptr_bit = 1;
-	bkey_for_each_ptr_decode(old.k, bch2_bkey_ptrs_c(old), p, entry_c) {
-		if ((ptr_bit & u->opts.ptrs_kill) &&
-		    (ptr = bch2_extent_has_ptr(c, old, p, bkey_i_to_s(insert)))) {
-			if (ptr_bit & u->opts.ptrs_io_error)
-				bch2_bkey_drop_ptr_noerror(c, bkey_i_to_s(insert), ptr);
-			else if (!ptr->cached)
-				bch2_extent_ptr_set_cached(c, &opts, bkey_i_to_s(insert), ptr);
-
-			rewrites_found |= ptr_bit;
-		}
-		ptr_bit <<= 1;
-	}
-
-	if (u->opts.ptrs_kill && !rewrites_found) {
-		struct bkey_durability durability;
-		try(bch2_bkey_durability(trans, k, &durability));
-
-		if (durability.total >= opts.data_replicas) {
-			count_data_update_key_fail(u, k, bkey_i_to_s_c(&new->k_i), insert,
-						   "no rewrites found:");
-			bch2_btree_iter_advance(iter);
-			return 0;
-		}
-	}
-
-	/*
-	 * A replica that we just wrote might conflict with a replica
-	 * that we want to keep, due to racing with another move:
-	 */
-	if (!u->opts.no_devs_have) {
-		const struct bch_extent_ptr *ptr_c;
-		bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(&new->k_i), p, entry,
-			((ptr_c = bch2_bkey_has_device_c(c, bkey_i_to_s_c(insert), p.ptr.dev)) &&
-			 !ptr_c->cached));
-	} else {
-		const struct bch_extent_ptr *ptr_c;
-		bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(insert), p, entry,
-			((ptr_c = bch2_bkey_has_device_c(c, bkey_i_to_s_c(&new->k_i), p.ptr.dev)) &&
-			 !ptr_c->cached));
-	}
-
-	if (!bkey_val_u64s(&new->k)) {
-		count_data_update_key_fail(u, k,
-				    bkey_i_to_s_c(bch2_keylist_front(&u->op.insert_keys)),
-				    insert, "new replicas conflicted:");
-		bch2_btree_iter_advance(iter);
-		return 0;
-	}
-
-	/* Now, drop pointers that conflict with what we just wrote: */
-	bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(insert), p, entry,
-		bch2_bkey_has_device(c, bkey_i_to_s(&new->k_i), p.ptr.dev));
-
-	/* Add the pointers we just wrote: */
-	union bch_extent_entry *entry;
-	extent_for_each_ptr_decode(extent_i_to_s(new), p, entry)
-		bch2_extent_ptr_decoded_append(c, insert, &p);
+	select_extra_durability_ptrs(c, &opts, &d, ptrs_io_error);
 
 	try(bch2_bkey_drop_extra_durability(trans, &opts, bkey_i_to_s(insert)));
 
@@ -282,20 +417,6 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	try(bch2_insert_snapshot_whiteouts(trans, u->btree_id, k.k->p, bkey_start_pos(&insert->k)));
 	try(bch2_insert_snapshot_whiteouts(trans, u->btree_id, k.k->p, insert->k.p));
 
-	/*
-	 * This set_needs_reconcile call is only for verifying that the data we
-	 * just wrote was written correctly, otherwise we could fail to flag
-	 * incorrectly written data due to needs_rb already being set on the
-	 * existing extent
-	 */
-	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, &new->k_i,
-					  SET_NEEDS_RECONCILE_foreground,
-					  u->op.opts.change_cookie));
-	/* This is the real set_needs_reconcile() call */
-	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, insert,
-					  SET_NEEDS_RECONCILE_foreground,
-					  u->op.opts.change_cookie));
-
 	if (u->op.opts.change_cookie == c->opt_change_cookie) {
 		struct bkey_durability old_durability, new_durability;
 		try(bch2_bkey_durability(trans, k, &old_durability));
@@ -310,11 +431,28 @@ static int data_update_index_update_key(struct btree_trans *trans,
 				   old_durability.total,
 				   new_durability.total,
 				   opts.data_replicas);
-			prt_str(&msg.m, "old: ");
+			prt_str(&msg.m, "orig: ");
 			bch2_bkey_val_to_text(&msg.m, c, k);
 			prt_newline(&msg.m);
 
+			prt_str(&msg.m, "wrote: ");
+			bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(bch2_keylist_front(&u->op.insert_keys)));
+			prt_newline(&msg.m);
+
+#if 0
+			prt_str(&msg.m, "new1: ");
+			bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(new1.k));
+			prt_newline(&msg.m);
+
+			prt_str(&msg.m, "insert1: ");
+			bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(insert1.k));
+			prt_newline(&msg.m);
+#endif
 			prt_str(&msg.m, "new: ");
+			bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(&new->k_i));
+			prt_newline(&msg.m);
+
+			prt_str(&msg.m, "insert: ");
 			bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(insert));
 			prt_newline(&msg.m);
 
@@ -323,6 +461,25 @@ static int data_update_index_update_key(struct btree_trans *trans,
 			return bch_err_throw(c, emergency_ro);
 		}
 	}
+
+	/*
+	 * This set_needs_reconcile call is only for verifying that the data we
+	 * just wrote was written correctly, otherwise we could fail to flag
+	 * incorrectly written data due to needs_rb already being set on the
+	 * existing extent
+	 */
+#if 0
+	/* We won't have written the full number of replicas, we need to account
+	 * for that to avoid false positives
+	 */
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, &new->k_i,
+					  SET_NEEDS_RECONCILE_foreground,
+					  u->op.opts.change_cookie));
+#endif
+	/* This is the real set_needs_reconcile() call */
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, insert,
+					  SET_NEEDS_RECONCILE_foreground,
+					  u->op.opts.change_cookie));
 
 	try(bch2_trans_update(trans, iter, insert, BTREE_UPDATE_internal_snapshot_node));
 	try(bch2_trans_commit(trans, &u->op.res, NULL,
@@ -593,15 +750,6 @@ int bch2_update_unwritten_extent(struct btree_trans *trans,
 	}
 
 	return ret;
-}
-
-static void ptr_bits_to_text(struct printbuf *out, unsigned ptrs, const char *name)
-{
-	if (ptrs) {
-		prt_printf(out, "%s ptrs:\t", name);
-		bch2_prt_u64_base2(out, ptrs);
-		prt_newline(out);
-	}
 }
 
 void bch2_data_update_opts_to_text(struct printbuf *out, struct bch_fs *c,
