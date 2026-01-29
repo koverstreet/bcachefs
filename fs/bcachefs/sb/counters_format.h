@@ -36,6 +36,7 @@ enum bch_counters_flags {
 	x(data_update_write,				36,	TYPE_SECTORS)	\
 	x(data_update_key,				37,	TYPE_SECTORS)	\
 	x(data_update_key_fail,				38,	TYPE_SECTORS)	\
+	x(data_update_useless_write_fail,		128,	TYPE_SECTORS)	\
 	x(data_update_start_fail_obsolete,		39,	TYPE_COUNTER)	\
 	x(data_update_noop_obsolete,			92,	TYPE_COUNTER)	\
 	x(reconcile_scan_fs,				113,	TYPE_SECTORS)	\

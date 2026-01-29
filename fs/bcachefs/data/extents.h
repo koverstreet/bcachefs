@@ -680,6 +680,8 @@ do {										\
 
 bool bch2_bkey_matches_ptr(struct bch_fs *, struct bkey_s_c,
 			   struct bch_extent_ptr, u64);
+bool bch2_bkey_ptrs_match(struct bkey_s_c, struct extent_ptr_decoded,
+			  struct bkey_s_c, struct extent_ptr_decoded);
 bool bch2_extents_match(const struct bch_fs *c, struct bkey_s_c, struct bkey_s_c);
 struct bch_extent_ptr *
 bch2_extent_has_ptr(const struct bch_fs *, struct bkey_s_c, struct extent_ptr_decoded, struct bkey_s);
@@ -689,7 +691,11 @@ void bch2_extent_ptr_set_cached(struct bch_fs *, struct bch_inode_opts *,
 
 int bch2_bkey_drop_stale_ptrs(struct btree_trans *, struct btree_iter *, struct bkey_s_c);
 void bch2_bkey_drop_extra_cached_ptrs(struct bch_fs *, struct bch_inode_opts *, struct bkey_s);
-int bch2_bkey_drop_extra_durability(struct btree_trans *, struct bch_inode_opts *, struct bkey_s);
+int bch2_bkey_drop_extra_durability(struct btree_trans *, struct bch_inode_opts *,
+				    struct bkey_i *, unsigned, bool);
+int bch2_bkey_drop_extra_ec_durability(struct btree_trans *,
+				       struct bch_inode_opts *,
+				       struct bkey_i *, unsigned);
 
 void bch2_extent_ptr_to_text(struct printbuf *out, struct bch_fs *, const struct bch_extent_ptr *);
 void bch2_bkey_ptrs_to_text(struct printbuf *, struct bch_fs *,
