@@ -13,7 +13,7 @@
 #include <linux/sort.h>
 
 DEFINE_CLASS(bch_replicas_cpu, struct bch_replicas_cpu,
-	     kfree(_T.entries),
+	     kvfree(_T.entries),
 	     (struct bch_replicas_cpu) {}, void)
 
 static inline struct bch_replicas_entry_cpu *
@@ -304,7 +304,7 @@ cpu_replicas_add_entry(struct bch_fs *c,
 	/* alignment */
 	new.entry_size = round_up(new.entry_size, sizeof(atomic_t));
 
-	new.entries = kcalloc(new.nr, new.entry_size, GFP_KERNEL);
+	new.entries = kvcalloc(new.nr, new.entry_size, GFP_KERNEL);
 	if (!new.entries)
 		return new;
 
@@ -504,7 +504,7 @@ int bch2_replicas_gc_accounted(struct bch_fs *c)
 	scoped_guard(percpu_write, &c->capacity.mark_lock) {
 		struct bch_replicas_cpu new = {
 			.entry_size	= c->replicas.entry_size,
-			.entries	= kcalloc(c->replicas.nr, c->replicas.entry_size, GFP_KERNEL),
+			.entries	= kvcalloc(c->replicas.nr, c->replicas.entry_size, GFP_KERNEL),
 		};
 		if (!new.entries) {
 			bch_err(c, "error allocating c->replicas_gc");
@@ -540,7 +540,7 @@ int bch2_replicas_gc_accounted(struct bch_fs *c)
 		if (!ret)
 			swap(c->replicas, new);
 
-		kfree(new.entries);
+		kvfree(new.entries);
 	}
 
 	if (!ret)
@@ -565,7 +565,7 @@ __bch2_sb_replicas_to_cpu_replicas(struct bch_sb_field_replicas *sb_r,
 	entry_size = __cpu_replicas_entry_bytes(entry_size);
 	entry_size = round_up(entry_size, sizeof(atomic_t));
 
-	cpu_r->entries = kcalloc(nr, entry_size, GFP_KERNEL);
+	cpu_r->entries = kvcalloc(nr, entry_size, GFP_KERNEL);
 	if (!cpu_r->entries)
 		return -BCH_ERR_ENOMEM_cpu_replicas;
 
@@ -601,7 +601,7 @@ __bch2_sb_replicas_v0_to_cpu_replicas(struct bch_sb_field_replicas_v0 *sb_r,
 
 	entry_size = round_up(entry_size, sizeof(atomic_t));
 
-	cpu_r->entries = kcalloc(nr, entry_size, GFP_KERNEL);
+	cpu_r->entries = kvcalloc(nr, entry_size, GFP_KERNEL);
 	if (!cpu_r->entries)
 		return -BCH_ERR_ENOMEM_cpu_replicas;
 
@@ -1022,5 +1022,5 @@ void bch2_verify_replicas_refs_clean(struct bch_fs *c)
 
 void bch2_fs_replicas_exit(struct bch_fs *c)
 {
-	kfree(c->replicas.entries);
+	kvfree(c->replicas.entries);
 }
