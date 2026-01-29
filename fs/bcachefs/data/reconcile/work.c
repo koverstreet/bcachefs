@@ -1016,7 +1016,8 @@ static CLOSURE_CALLBACK(do_reconcile_phys_thread)
 				      POS(thr->dev, 0));
 
 	while (!bch2_move_ratelimit(&ctxt)) {
-		if (!bch2_reconcile_enabled(c))
+		if (!bch2_reconcile_enabled(c) ||
+		    test_bit(BCH_FS_going_ro, &c->flags))
 			break;
 
 		bch2_trans_begin(trans);
@@ -1102,7 +1103,8 @@ static int do_reconcile(struct moving_context *ctxt)
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
 	wb_maybe_flush_init(&last_flushed);
 
-	while (!bch2_move_ratelimit(ctxt)) {
+	while (!bch2_move_ratelimit(ctxt) &&
+	       !test_bit(BCH_FS_going_ro, &c->flags)) {
 		if (!bch2_reconcile_enabled(c)) {
 			bch2_moving_ctxt_flush_all(ctxt);
 			kthread_wait_freezable(bch2_reconcile_enabled(c) ||
