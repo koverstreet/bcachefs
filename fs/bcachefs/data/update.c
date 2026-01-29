@@ -453,7 +453,8 @@ void bch2_data_update_read_done(struct data_update *u)
 
 static inline bool should_trace_update_err(struct data_update *u, int ret)
 {
-	if (bch2_err_matches(ret, BCH_ERR_data_update_fail_need_copygc) ||
+	if (bch2_err_matches(ret, BCH_ERR_data_update_fail_in_flight) ||
+	    bch2_err_matches(ret, BCH_ERR_data_update_fail_need_copygc) ||
 	    ((u->opts.type == BCH_DATA_UPDATE_reconcile ||
 	      u->opts.type == BCH_DATA_UPDATE_promote) &&
 	     (bch2_err_matches(ret, BCH_ERR_data_update_fail_no_rw_devs) ||
