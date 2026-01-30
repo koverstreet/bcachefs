@@ -56,9 +56,7 @@ static inline struct bch_dev *bch2_dev_rcu_noerror(struct bch_fs *, unsigned);
 
 static inline bool bch2_dev_idx_is_online(struct bch_fs *c, unsigned dev)
 {
-	guard(rcu)();
-	struct bch_dev *ca = bch2_dev_rcu_noerror(c, dev);
-	return ca && bch2_dev_is_online(ca);
+	return test_bit(dev, c->devs_online.d);
 }
 
 static inline unsigned dev_mask_nr(const struct bch_devs_mask *devs)
