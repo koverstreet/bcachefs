@@ -1836,6 +1836,7 @@ void bch2_write_op_to_text(struct printbuf *out, struct bch_write_op *op)
 	__bch2_write_op_to_text(out, op);
 
 	if (op->flags & BCH_WRITE_move) {
+		guard(printbuf_indent)(out);
 		prt_printf(out, "update:\n");
 		guard(printbuf_indent)(out);
 		struct data_update *u = container_of(op, struct data_update, op);
