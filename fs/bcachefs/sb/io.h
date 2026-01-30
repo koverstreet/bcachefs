@@ -30,6 +30,16 @@ static inline int bch2_request_incompat_feature(struct bch_fs *c,
 		: bch2_set_version_incompat(c, version);
 }
 
+int bch2_set_version_incompat_locked(struct bch_fs *, enum bcachefs_metadata_version);
+
+static inline int bch2_request_incompat_feature_locked(struct bch_fs *c,
+						enum bcachefs_metadata_version version)
+{
+	return likely(version <= c->sb.version_incompat)
+		? 0
+		: bch2_set_version_incompat_locked(c, version);
+}
+
 static inline size_t bch2_sb_field_bytes(struct bch_sb_field *f)
 {
 	return le32_to_cpu(f->u64s) * sizeof(u64);

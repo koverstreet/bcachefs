@@ -107,6 +107,37 @@ int bch2_set_version_incompat(struct bch_fs *c, enum bcachefs_metadata_version v
 	}
 }
 
+int bch2_set_version_incompat_locked(struct bch_fs *c, enum bcachefs_metadata_version version)
+{
+	if (((c->sb.features & BIT_ULL(BCH_FEATURE_incompat_version_field)) &&
+	     version <= c->sb.version_incompat_allowed)) {
+		if (version > c->sb.version_incompat) {
+			SET_BCH_SB_VERSION_INCOMPAT(c->disk_sb.sb,
+				max(BCH_SB_VERSION_INCOMPAT(c->disk_sb.sb), version));
+			bch2_write_super(c);
+		}
+		return 0;
+	} else {
+		BUILD_BUG_ON(BCH_VERSION_MAJOR(bcachefs_metadata_version_current) != 1);
+
+		unsigned minor = BCH_VERSION_MINOR(version);
+
+		if (!test_bit(minor, c->incompat_versions_requested) &&
+		    !test_and_set_bit(minor, c->incompat_versions_requested)) {
+			CLASS(printbuf, buf)();
+			prt_str(&buf, "requested incompat feature ");
+			bch2_version_to_text(&buf, version);
+			prt_str(&buf, " currently not enabled, allowed up to ");
+			bch2_version_to_text(&buf, c->sb.version_incompat_allowed);
+			prt_printf(&buf, "\n  set version_upgrade=incompatible to enable");
+
+			bch_notice(c, "%s", buf.buf);
+		}
+
+		return bch_err_throw(c, may_not_use_incompat_feature);
+	}
+}
+
 const char * const bch2_sb_fields[] = {
 #define x(name, nr)	#name,
 	BCH_SB_FIELDS()
