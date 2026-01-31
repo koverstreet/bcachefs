@@ -161,7 +161,8 @@ enum bch_fsck_flags {
 	x(extent_ptrs_redundant_stripe,				139,	0)		\
 	x(extent_ptrs_unwritten,				140,	0)		\
 	x(extent_ptrs_written_and_unwritten,			141,	0)		\
-	x(extent_ptrs_all_invalid,				338,	0)		\
+	x(extent_ptrs_all_invalid,				338,	FSCK_AUTOFIX)	\
+	x(extent_ptrs_all_invalid_but_cached,			351,	FSCK_AUTOFIX)	\
 	x(extent_reconcile_bad_pending,				332,	0)		\
 	x(extent_reconcile_bad_hipri,				333,	0)		\
 	x(extent_reconcile_bad_replicas,			339,	0)		\

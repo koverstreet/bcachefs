@@ -279,6 +279,61 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 	return 0;
 }
 
+static int bch2_no_valid_pointers_repair(struct btree_trans *trans,
+					 enum btree_id btree, struct bkey_s_c *k)
+{
+	struct bch_fs *c = trans->c;
+	struct bkey_i *new =
+		errptr_try(bch2_trans_kmalloc(trans, BKEY_EXTENT_U64s_MAX * sizeof(u64)));
+	bkey_reassemble(new, *k);
+	*k = bkey_i_to_s_c(new);
+
+	bool found_good_cached_pointer = false;
+	scoped_guard(rcu) {
+		/*
+		 * We can only flip a pointer from cached -> dirty
+		 * without contortions here, when we're also repairing
+		 * alloc info - to do this at runtime we'd have to pin
+		 * the bucket with an open_bucket
+		 */
+
+		bkey_for_each_ptr(bch2_bkey_ptrs(bkey_i_to_s(new)), ptr) {
+			struct bch_dev *ca;
+			if (ptr->cached &&
+			    (ca = bch2_dev_rcu_noerror(c, ptr->dev)) &&
+			     !dev_ptr_stale_rcu(ca, ptr)) {
+				ptr->cached = false;
+				found_good_cached_pointer = true;
+			}
+		}
+	}
+
+	CLASS(printbuf, buf)();
+	bch2_bkey_val_to_text(&buf, c, *k);
+
+	if (found_good_cached_pointer) {
+		ret_fsck_err(c, extent_ptrs_all_invalid_but_cached,
+			     "extent without valid dirty pointers\n%s", buf.buf);
+
+		struct bch_inode_opts opts;
+		try(bch2_bkey_get_io_opts(trans, NULL, *k, &opts));
+		try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, new, SET_NEEDS_RECONCILE_opt_change, 0));
+	} else {
+		ret_fsck_err(c, extent_ptrs_all_invalid,
+			     "extent without valid pointers\n%s", buf.buf);
+		bch2_set_bkey_error(c, new, KEY_TYPE_ERROR_no_valid_pointers_repair);
+	}
+
+	CLASS(btree_node_iter, iter)(trans, btree, new->k.p, 0, 0,
+				     BTREE_ITER_intent|BTREE_ITER_all_snapshots);
+
+	try(bch2_btree_iter_traverse(&iter));
+	try(bch2_trans_update(trans, &iter, new,
+			      BTREE_UPDATE_internal_snapshot_node|
+			      BTREE_TRIGGER_norun));
+	return 0;
+}
+
 int bch2_check_fix_ptrs(struct btree_trans *trans,
 			enum btree_id btree, unsigned level, struct bkey_s_c k,
 			enum btree_iter_update_trigger_flags flags)
@@ -287,6 +342,10 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 
 	/* We don't yet do btree key updates correctly for when we're RW */
 	BUG_ON(test_bit(BCH_FS_rw, &c->flags));
+
+	if (!bkey_is_btree_ptr(k.k) &&
+	    !bch2_bkey_nr_dirty_ptrs(c, k))
+		try(bch2_no_valid_pointers_repair(trans, btree, &k));
 
 	struct ptrs_repair r = {};
 
