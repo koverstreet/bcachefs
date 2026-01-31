@@ -100,6 +100,8 @@ int bch2_move_data_phys(struct bch_fs *, unsigned, u64, u64, unsigned,
 			struct write_point_specifier, bool,
 			move_pred_fn, void *);
 
+int bch2_evacuate_data(struct moving_context *, unsigned, u64, u64);
+
 int bch2_evacuate_bucket(struct moving_context *,
 			   struct move_bucket *,
 			   struct bpos, int,

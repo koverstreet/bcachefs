@@ -619,6 +619,42 @@ int bch2_move_data_phys(struct bch_fs *c,
 	return __bch2_move_data_phys(&ctxt, NULL, dev, start, end, data_types, false, pred, arg);
 }
 
+struct evacuate_arg {
+	unsigned		dev;
+};
+
+static int evacuate_pred(struct btree_trans *trans, void *_arg,
+			 enum btree_id btree, struct bkey_s_c k,
+			 struct bch_inode_opts *io_opts,
+			 struct data_update_opts *data_opts)
+{
+	struct bch_fs *c = trans->c;
+	struct evacuate_arg *arg = _arg;
+
+	data_opts->read_dev = -1;
+
+	unsigned ptr_bit = 1;
+	bkey_for_each_ptr(bch2_bkey_ptrs_c(k), ptr) {
+		if (ptr->dev == arg->dev)
+			data_opts->ptrs_kill |= ptr_bit;
+		ptr_bit <<= 1;
+	}
+
+	return data_opts->ptrs_kill != 0;
+}
+
+int bch2_evacuate_data(struct moving_context *ctxt,
+		       unsigned dev, u64 start, u64 end)
+{
+	struct evacuate_arg arg = { .dev = dev };
+
+	return __bch2_move_data_phys(ctxt, NULL,
+				     dev, start, end,
+				     ~0,
+				     false,
+				     evacuate_pred, &arg);
+}
+
 static int evacuate_bucket_pred(struct btree_trans *trans, void *_arg,
 				enum btree_id btree, struct bkey_s_c k,
 				struct bch_inode_opts *io_opts,
