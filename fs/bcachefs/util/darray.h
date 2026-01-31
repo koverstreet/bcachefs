@@ -169,6 +169,6 @@ int __bch2_darray_resize_noprof(darray_char *, size_t, size_t, gfp_t, bool);
 #define darray_find(_d, _item)	darray_find_p(_d, _i, *_i == _item)
 
 #define darray_sort(_d, _cmp)						\
-	sort((_d).data, (_d).nr, sizeof((_d).data[0]), _cmp, NULL)
+	sort_nonatomic((_d).data, (_d).nr, sizeof((_d).data[0]), _cmp, NULL)
 
 #endif /* _BCACHEFS_DARRAY_H */

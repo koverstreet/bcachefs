@@ -1382,7 +1382,6 @@ struct bkey_s_c_backpointer bch2_bp_scan_iter_peek(struct btree_trans *trans,
 			 ? bch2_progress_update_iter(trans, iter->progress, &bp_iter)
 			 : 0);
 		}));
-		trans->restart_count = restart_count;
 
 		if (ret)
 			return ((struct bkey_s_c_backpointer) { .k = ERR_PTR(ret) });
@@ -1390,7 +1389,10 @@ struct bkey_s_c_backpointer bch2_bp_scan_iter_peek(struct btree_trans *trans,
 		if (!iter->bps.nr)
 			return (struct bkey_s_c_backpointer) {};
 
+		bch2_trans_unlock_long(trans);
 		darray_sort(iter->bps, bkey_i_backpointer_cmp);
+		bch2_trans_begin(trans);
+		trans->restart_count = restart_count;
 	}
 
 	return backpointer_i_to_s_c(&darray_last(iter->bps));
