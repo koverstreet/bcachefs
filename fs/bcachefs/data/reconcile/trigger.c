@@ -60,6 +60,11 @@ const struct bch_extent_reconcile *bch2_bkey_reconcile_opts(const struct bch_fs 
 	return bch2_bkey_ptrs_reconcile_opts(c, bch2_bkey_ptrs_c(k));
 }
 
+enum reconcile_work_id bch2_bkey_reconcile_work_id(const struct bch_fs *c, struct bkey_s_c k)
+{
+	return rb_work_id(bch2_bkey_reconcile_opts(c, k));
+}
+
 void bch2_extent_rebalance_v1_to_text(struct printbuf *out, struct bch_fs *c,
 				      const struct bch_extent_rebalance_v1 *r)
 {

@@ -84,7 +84,7 @@ static int check_reconcile_work_one(struct btree_trans *trans,
 	if (bpos_ge(*cur_pos, data_to_rb_work_pos(data_iter->btree_id, SPOS_MAX)))
 		return 0;
 
-	enum btree_id btree_want_set = reconcile_work_btree[rb_work_id(bch2_bkey_reconcile_opts(c, data_k))];
+	enum btree_id btree_want_set = reconcile_work_btree[bch2_bkey_reconcile_work_id(c, data_k)];
 
 	u64 btrees_set =
 		(rb_w->k.type	? BIT_ULL(rb_w->btree_id) : 0)|

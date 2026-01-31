@@ -44,9 +44,8 @@ static inline enum reconcile_work_id rb_work_id(const struct bch_extent_reconcil
 	return RECONCILE_WORK_normal;
 }
 
-static inline enum reconcile_work_id rb_work_id_phys(const struct bch_extent_reconcile *r)
+static inline enum reconcile_work_id rb_work_id_phys(enum reconcile_work_id w)
 {
-	enum reconcile_work_id w = rb_work_id(r);
 	return w == RECONCILE_WORK_pending ? RECONCILE_WORK_none : w;
 }
 
@@ -100,6 +99,8 @@ void bch2_extent_reconcile_to_text(struct printbuf *, struct bch_fs *,
 				      const struct bch_extent_reconcile *);
 
 const struct bch_extent_reconcile *bch2_bkey_reconcile_opts(const struct bch_fs *, struct bkey_s_c);
+
+enum reconcile_work_id bch2_bkey_reconcile_work_id(const struct bch_fs *, struct bkey_s_c);
 
 int __bch2_trigger_extent_reconcile(struct btree_trans *,
 				    enum btree_id, unsigned,
