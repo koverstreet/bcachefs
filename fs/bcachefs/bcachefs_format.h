@@ -451,9 +451,10 @@ struct bch_error {
 };
 
 #define KEY_TYPE_ERRORS()			\
-	x(unknown,		0)		\
-	x(device_removed,	1)		\
-	x(double_allocation,	2)
+	x(unknown,			0)	\
+	x(device_removed,		1)	\
+	x(double_allocation,		2)	\
+	x(no_valid_pointers_repair,	3)
 
 enum bch_key_type_errors {
 #define x(n, t)	KEY_TYPE_ERROR_##n = t,

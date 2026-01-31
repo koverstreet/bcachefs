@@ -1873,12 +1873,12 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 		 */
 		bkey_fsck_err_on(!have_non_inval_dev_ptrs,
 				 c, extent_ptrs_all_invalid,
-				 "extent ptrs all to BCH_SB_MEMBER_INVALID");
+				 "extent without valid pointers");
 
 		bkey_fsck_err_on(from.from == BKEY_VALIDATE_commit &&
 				 !have_non_inval_dev_ptrs_dirty,
 				 c, extent_ptrs_all_invalid,
-				 "extent ptrs all to BCH_SB_MEMBER_INVALID");
+				 "extent without valid dirty pointers");
 	}
 fsck_err:
 	return ret;
