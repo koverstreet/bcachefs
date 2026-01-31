@@ -493,6 +493,7 @@ struct bch_backpointer {
 } __packed __aligned(8);
 
 BITMASK(BACKPOINTER_RECONCILE_PHYS,	struct bch_backpointer, flags, 0, 2);
+BITMASK(BACKPOINTER_ERASURE_CODED,	struct bch_backpointer, flags, 2, 3);
 
 /* Optional/variable size superblock sections: */
 

@@ -188,6 +188,8 @@ static inline void bch2_extent_ptr_to_bp(struct bch_fs *c,
 	if (!level && bch2_dev_rotational(c, p.ptr.dev))
 		SET_BACKPOINTER_RECONCILE_PHYS(&bp->v,
 				rb_work_id_phys(bch2_bkey_reconcile_work_id(c, k)));
+
+	SET_BACKPOINTER_ERASURE_CODED(&bp->v, p.has_ec);
 }
 
 struct wb_maybe_flush;
