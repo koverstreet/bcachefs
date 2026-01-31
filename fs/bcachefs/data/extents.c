@@ -1544,7 +1544,7 @@ int bch2_bkey_drop_extra_ec_durability(struct btree_trans *trans,
 		if (mask & ptr_bit) {
 			int d;
 			if (bch2_dev_idx_is_online(c, p.ptr.dev)) {
-				int d = bch2_extent_ptr_durability(trans, &p);
+				d = bch2_extent_ptr_durability(trans, &p);
 				if (d < 0)
 					return d;
 
