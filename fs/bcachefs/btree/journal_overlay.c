@@ -769,6 +769,7 @@ int bch2_journal_keys_sort(struct bch_fs *c)
 	struct journal_replay *i, **_i;
 	struct journal_keys *keys = &c->journal_keys;
 	size_t nr_read = 0;
+	size_t nr_extra_sorts = 0;
 
 	u64 rewind_seq = c->opts.journal_rewind ?: U64_MAX;
 
@@ -804,6 +805,7 @@ int bch2_journal_keys_sort(struct bch_fs *c)
 
 				if (darray_push(keys, n)) {
 					__journal_keys_sort(keys);
+					nr_extra_sorts++;
 
 					if (keys->nr * 8 > keys->size * 7) {
 						bch_err(c, "Too many journal keys for slowpath; have %zu compacted, buf size %zu, processed %zu keys at seq %llu",
@@ -822,7 +824,10 @@ int bch2_journal_keys_sort(struct bch_fs *c)
 	__journal_keys_sort(keys);
 	keys->gap = keys->nr;
 
-	bch_verbose(c, "Journal keys: %zu read, %zu after sorting and compacting", nr_read, keys->nr);
+	CLASS(bch_log_msg_level, msg)(c, nr_extra_sorts ? LOGLEVEL_debug : LOGLEVEL_notice);
+	prt_printf(&msg.m, "Journal keys: %zu read, %zu after sorting and compacting", nr_read, keys->nr);
+	if (nr_extra_sorts)
+		prt_printf(&msg.m, "Required %zu extra sorts due to low memory", nr_extra_sorts);
 	return 0;
 }
 
