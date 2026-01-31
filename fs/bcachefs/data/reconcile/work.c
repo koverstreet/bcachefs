@@ -749,6 +749,14 @@ static int do_reconcile_scan_bp(struct btree_trans *trans,
 				struct bkey_s_c_backpointer bp,
 				struct wb_maybe_flush *last_flushed)
 {
+	/*
+	 * We're propagating a device state change or device durability change,
+	 * and if an extent is erasure coded it'll be handled at the stripe
+	 * level:
+	 */
+	if (BACKPOINTER_ERASURE_CODED(bp.v))
+		return 0;
+
 	struct bch_fs *c = trans->c;
 	struct bch_fs_reconcile *r = &c->reconcile;
 
