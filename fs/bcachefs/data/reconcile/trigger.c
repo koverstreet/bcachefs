@@ -480,6 +480,7 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 
 	bool incompressible = false, unwritten = false, ec = false;
 	unsigned durability = 0, durability_acct = 0, invalid = 0, min_durability = INT_MAX;
+	unsigned ec_redundancy = 0;
 
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;
@@ -489,7 +490,7 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 		incompressible	|= p.crc.compression_type == BCH_COMPRESSION_TYPE_incompressible;
 		unwritten	|= p.ptr.unwritten;
 
-		bool evacuating = bch2_dev_bad_or_evacuating(c, p.ptr.dev);
+		bool evacuating = bch2_dev_bad_or_evacuating(c, p.ptr.dev) && !p.has_ec;
 
 		if (!poisoned &&
 		    !btree &&
@@ -530,6 +531,8 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 		if (!p.ptr.cached)
 			min_durability = min(min_durability, d);
 
+		if (p.has_ec && r.erasure_code)
+			ec_redundancy = max_t(unsigned, ec_redundancy, p.ec.redundancy);
 		ec |= p.has_ec;
 
 		invalid += p.ptr.dev == BCH_SB_MEMBER_INVALID;
@@ -550,7 +553,7 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 	if (unwritten)
 		r.need_rb &= ~BIT(BCH_RECONCILE_data_checksum);
 
-	if (durability < r.data_replicas) {
+	if (max(durability, ec_redundancy) < r.data_replicas) {
 		r.need_rb |= BIT(BCH_RECONCILE_data_replicas);
 		r.hipri = 1;
 	}
