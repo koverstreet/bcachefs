@@ -472,7 +472,7 @@ static int bch2_extent_reconcile_pending_mod(struct btree_trans *trans, struct b
 		CLASS(btree_node_iter, iter2)(trans, iter->btree_id, k.k->p, 0, level - 1, 0);
 		struct btree *b = errptr_try(bch2_btree_iter_peek_node(&iter2));
 
-		if (!bkey_and_val_eq(bkey_i_to_s_c(&b->key), bkey_i_to_s_c(n))) {
+		if (!btree_bkey_and_val_eq(bkey_i_to_s_c(&b->key), bkey_i_to_s_c(n))) {
 			CLASS(printbuf, buf)();
 			prt_newline(&buf);
 			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&b->key));

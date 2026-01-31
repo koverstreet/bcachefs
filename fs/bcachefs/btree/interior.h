@@ -348,6 +348,19 @@ static inline bool bch2_btree_node_insert_fits(struct btree *b, unsigned u64s)
 	return u64s <= bch2_btree_keys_u64s_remaining(b);
 }
 
+static inline bool btree_bkey_and_val_eq(struct bkey_s_c l, struct bkey_s_c r)
+{
+	if (!bkey_fields_eq(*l.k, *r.k))
+		return false;
+
+	/* Skip mem_ptr field */
+	unsigned offset = l.k->type == KEY_TYPE_btree_ptr_v2
+		  ? offsetof(struct bch_btree_ptr_v2, seq)
+		  : 0;
+
+	return !memcmp(l.v + offset, r.v + offset, bkey_val_bytes(l.k) - offset);
+}
+
 void bch2_btree_updates_to_text(struct printbuf *, struct bch_fs *);
 
 static inline bool bch2_btree_interior_updates_pending(struct bch_fs *c)
