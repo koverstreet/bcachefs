@@ -1219,7 +1219,11 @@ bool bch2_bkey_matches_ptr(struct bch_fs *c, struct bkey_s_c k,
 bool bch2_bkey_ptrs_match(struct bkey_s_c k1, struct extent_ptr_decoded p1,
 			  struct bkey_s_c k2, struct extent_ptr_decoded p2)
 {
-	return (p1.ptr.dev		== p2.ptr.dev &&
+	return ((p1.ptr.dev		== p2.ptr.dev ||
+		 (p1.has_ec && p2.has_ec &&
+		  p1.ec.idx		== p2.ec.idx &&
+		  p1.ec.block		== p2.ec.block)) &&
+
 		p1.ptr.gen		== p2.ptr.gen &&
 
 		/*
