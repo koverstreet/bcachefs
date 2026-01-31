@@ -954,14 +954,24 @@ static void reconcile_wait(struct bch_fs *c)
 	bch2_kthread_io_clock_wait_once(clock, r->wait_iotime_end, MAX_SCHEDULE_TIMEOUT);
 }
 
-struct reconcile_scan_phase {
-	enum btree_id	btree;
-	struct bpos	start, end;
+enum reconcile_phase_type {
+	RECONCILE_PHASE_scan,
+	RECONCILE_PHASE_btree,
+	RECONCILE_PHASE_phys,
+	RECONCILE_PHASE_normal,
 };
 
-static const struct reconcile_scan_phase reconcile_phases[] = {
+struct reconcile_phase {
+	enum reconcile_phase_type	type;
+	enum reconcile_work_id		priority;
+	enum btree_id			btree;
+	struct bpos			start, end;
+};
+
+static const struct reconcile_phase reconcile_phases[] = {
 	/* Scan cookies: */
-	{ BTREE_ID_reconcile_scan, POS_MIN, POS(0, U64_MAX), },
+	{ RECONCILE_PHASE_scan,		RECONCILE_WORK_hipri,
+		BTREE_ID_reconcile_scan, POS_MIN, POS(0, U64_MAX), },
 
 	/* Hipri work first - evacuate/rereplicate */
 
@@ -969,28 +979,36 @@ static const struct reconcile_scan_phase reconcile_phases[] = {
 	 * Btree nodes first - they're indexed separately from the normal work
 	 * btrees because they require backpointers:
 	 */
-	{ BTREE_ID_reconcile_scan, POS(RECONCILE_WORK_hipri, 0), POS(RECONCILE_WORK_hipri, U64_MAX) },
+	{ RECONCILE_PHASE_btree,	RECONCILE_WORK_hipri,
+		BTREE_ID_reconcile_scan, POS(RECONCILE_WORK_hipri, 0), POS(RECONCILE_WORK_hipri, U64_MAX) },
 
 	/*
 	 * User data:
 	 * Phys btrees first: pending work there will also be present in the normal work btrees
 	 * Then the logical btrees, this will be data on SSDS:
 	 * */
-	{ BTREE_ID_reconcile_hipri_phys,	POS_MIN, SPOS_MAX },
-	{ BTREE_ID_reconcile_hipri,		POS_MIN, SPOS_MAX },
+	{ RECONCILE_PHASE_phys,		RECONCILE_WORK_hipri,
+		BTREE_ID_reconcile_hipri_phys,	POS_MIN, SPOS_MAX },
+	{ RECONCILE_PHASE_normal,	RECONCILE_WORK_hipri,
+		BTREE_ID_reconcile_hipri,		POS_MIN, SPOS_MAX },
 
 	/* Normal priority work: */
-	{ BTREE_ID_reconcile_scan, POS(RECONCILE_WORK_normal, 0), POS(RECONCILE_WORK_normal, U64_MAX) },
-	{ BTREE_ID_reconcile_work_phys,		POS_MIN, SPOS_MAX },
-	{ BTREE_ID_reconcile_work,		POS_MIN, SPOS_MAX },
+	{ RECONCILE_PHASE_btree,	RECONCILE_WORK_normal,
+		BTREE_ID_reconcile_scan, POS(RECONCILE_WORK_normal, 0), POS(RECONCILE_WORK_normal, U64_MAX) },
+	{ RECONCILE_PHASE_phys,		RECONCILE_WORK_normal,
+		BTREE_ID_reconcile_work_phys,		POS_MIN, SPOS_MAX },
+	{ RECONCILE_PHASE_normal,	RECONCILE_WORK_normal,
+		BTREE_ID_reconcile_work,		POS_MIN, SPOS_MAX },
 
 	/*
 	 * Lastly, work that we marked as unable to complete until system
 	 * configuration changes: this won't be process unless kicked by
 	 * something else
 	 */
-	{ BTREE_ID_reconcile_scan, POS(RECONCILE_WORK_pending, 0), POS(RECONCILE_WORK_pending, U64_MAX) },
-	{ BTREE_ID_reconcile_pending,		POS_MIN, SPOS_MAX },
+	{ RECONCILE_PHASE_btree,	RECONCILE_WORK_pending,
+		BTREE_ID_reconcile_scan, POS(RECONCILE_WORK_pending, 0), POS(RECONCILE_WORK_pending, U64_MAX) },
+	{ RECONCILE_PHASE_normal,	RECONCILE_WORK_pending,
+		BTREE_ID_reconcile_pending,		POS_MIN, SPOS_MAX },
 };
 
 typedef struct {
@@ -1078,13 +1096,13 @@ static int do_reconcile_phys(struct bch_fs *c, unsigned reconcile_phase)
 
 static struct bbpos reconcile_phase_start(unsigned i)
 {
-	struct reconcile_scan_phase p = reconcile_phases[i];
+	struct reconcile_phase p = reconcile_phases[i];
 	return BBPOS(p.btree, p.start);
 }
 
 static bool reconcile_phase_is_pending(unsigned i)
 {
-	struct reconcile_scan_phase p = reconcile_phases[i];
+	struct reconcile_phase p = reconcile_phases[i];
 	return (p.btree == BTREE_ID_reconcile_scan &&
 		p.start.inode == RECONCILE_WORK_pending) ||
 		p.btree == BTREE_ID_reconcile_pending;
