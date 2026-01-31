@@ -151,6 +151,9 @@ int __bch2_darray_resize_noprof(darray_char *, size_t, size_t, gfp_t, bool);
 	_ret;								\
 })
 
+#define darray_remove_items(_d, _pos, _nr)				\
+	array_remove_items((_d)->data, (_d)->nr, (_pos) - (_d)->data, _nr)
+
 #define darray_remove_item(_d, _pos)					\
 	array_remove_item((_d)->data, (_d)->nr, (_pos) - (_d)->data)
 

@@ -14,6 +14,7 @@
 
 #include "data/compress.h"
 #include "data/copygc.h"
+#include "data/ec/create.h"
 #include "data/ec/trigger.h"
 #include "data/move.h"
 #include "data/reconcile/work.h"
@@ -528,6 +529,102 @@ static int check_reconcile_pending_err(struct btree_trans *trans,
 	return 1;
 }
 
+typedef struct {
+	u64		idx;
+	u64		io_seq;
+} stripe_retry;
+DEFINE_DARRAY(stripe_retry);
+
+static int do_reconcile_stripe(struct moving_context *ctxt,
+			       struct btree_iter *iter,
+			       struct bkey_s_c k,
+			       darray_stripe_retry *retry)
+{
+	struct btree_trans *trans = ctxt->trans;
+	struct bch_fs *c = trans->c;
+	u32 restart_count = trans->restart_count;
+
+	/*
+	 * XXX: ratelimiting
+	 *
+	 * Need to plumb moving_context to ec_stripe_new
+	 */
+	if (k.k->type != KEY_TYPE_stripe) /* write buffer race */
+		return 0;
+
+	struct bkey_s_c_stripe s = bkey_s_c_to_stripe(k);
+	if (!s.v->needs_reconcile) /* write buffer race */
+		return 0;
+
+	struct bkey_buf stack_k __cleanup(bch2_bkey_buf_exit);
+	bch2_bkey_buf_init(&stack_k);
+	bch2_bkey_buf_reassemble(&stack_k, k);
+	s = bkey_i_to_s_c_stripe(stack_k.k);;
+
+	int ret = bch2_stripe_repair(ctxt, iter, s);
+
+	event_add_trace(c, reconcile_stripe, le16_to_cpu(s.v->sectors) * s.v->nr_blocks, buf, ({
+		bch2_bkey_val_to_text(&buf, c, s.s_c);
+		prt_newline(&buf);
+		prt_printf(&buf, "ret %s", bch2_err_str(ret));
+	}));
+
+	if (ret == -BCH_ERR_stripe_needs_block_evacuate) {
+		if (retry) {
+			darray_push(retry, ((stripe_retry) {
+					    .idx	= k.k->p.offset,
+					    .io_seq	= ctxt->io_seq,
+			}));
+		} else {
+			bch_err_msg(c, ret, "retrying stripe");
+		}
+		ret = 0;
+	}
+
+	/* Suppress trans_was_restarted() check */
+	trans->restart_count = restart_count;
+	return ret;
+}
+
+static bool stripe_retry_must_wait(struct moving_context *ctxt,
+				   u64 stripe_io_seq)
+{
+	guard(mutex)(&ctxt->lock);
+	struct data_update *u = !list_empty(&ctxt->ios)
+		? list_last_entry(&ctxt->ios, struct data_update, io_list)
+		: NULL;
+
+	return u && u->io_seq <= stripe_io_seq;
+}
+
+static int do_retry_stripe(struct moving_context *ctxt, u64 idx)
+{
+	struct btree_trans *trans = ctxt->trans;
+
+	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, POS(0, idx), BTREE_ITER_intent);
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
+
+	return do_reconcile_stripe(ctxt, &iter, k, NULL);
+}
+
+static int do_retry_stripes(struct moving_context *ctxt,
+			    darray_stripe_retry *retry)
+{
+	struct btree_trans *trans = ctxt->trans;
+
+	darray_for_each(*retry, i) {
+		if (stripe_retry_must_wait(ctxt, i->io_seq)) {
+			darray_remove_items(retry, retry->data, i - retry->data);
+			return 0;
+		}
+
+		try(lockrestart_do(trans, do_retry_stripe(ctxt, i->idx)));
+	}
+
+	retry->nr = 0;
+	return 0;
+}
+
 static int __do_reconcile_extent(struct moving_context *ctxt,
 				 struct per_snapshot_io_opts *snapshot_io_opts,
 				 struct bch_inode_opts *opts,
@@ -535,8 +632,12 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 				 struct bbpos work,
 				 struct btree_iter *iter,
 				 unsigned level,
-				 struct bkey_s_c k)
+				 struct bkey_s_c k,
+				 darray_stripe_retry *stripe_retry)
 {
+	if (k.k->type == KEY_TYPE_stripe)
+		return do_reconcile_stripe(ctxt, iter, k, stripe_retry);
+
 	if (!bkey_extent_is_direct_data(k.k))
 		return 0;
 
@@ -604,13 +705,20 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 
 static int do_reconcile_extent(struct moving_context *ctxt,
 			       struct per_snapshot_io_opts *snapshot_io_opts,
-			       struct bbpos work)
+			       struct bbpos work,
+			       darray_stripe_retry *stripe_retry)
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
 	struct bbpos data_pos = rb_work_to_data_pos(work.pos);
 
-	CLASS(btree_iter, iter)(trans, data_pos.btree, data_pos.pos, BTREE_ITER_all_snapshots);
+	/* We require holding an intent lock when calling
+	 * bch2_stripe_handle_tryget(), to avoid racing with the stripe trigger
+	 * deleting the stripe */
+	enum btree_iter_update_trigger_flags flags = data_pos.btree == BTREE_ID_stripes
+		? BTREE_ITER_intent : 0;
+
+	CLASS(btree_iter, iter)(trans, data_pos.btree, data_pos.pos, BTREE_ITER_all_snapshots|flags);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 	if (!k.k)
 		return 0;
@@ -621,7 +729,8 @@ static int do_reconcile_extent(struct moving_context *ctxt,
 
 	struct bch_inode_opts opts;
 	struct data_update_opts data_opts = {};
-	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts, &data_opts, work, &iter, 0, k));
+	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts, &data_opts,
+				  work, &iter, 0, k, stripe_retry));
 
 	event_add_trace(c, reconcile_data, stack_k.k->k.size, buf, ({
 		prt_newline(&buf);
@@ -635,7 +744,8 @@ static int do_reconcile_extent(struct moving_context *ctxt,
 static int do_reconcile_extent_phys(struct moving_context *ctxt,
 				    struct per_snapshot_io_opts *snapshot_io_opts,
 				    struct bbpos work,
-				    struct wb_maybe_flush *last_flushed)
+				    struct wb_maybe_flush *last_flushed,
+				    darray_stripe_retry *stripe_retry)
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
@@ -651,8 +761,14 @@ static int do_reconcile_extent_phys(struct moving_context *ctxt,
 	if (bch2_data_update_in_flight(c, &pos))
 		return 0;
 
+	/* We require holding an intent lock when calling
+	 * bch2_stripe_handle_tryget(), to avoid racing with the stripe trigger
+	 * deleting the stripe */
+	enum btree_iter_update_trigger_flags flags = bp.v->btree_id == BTREE_ID_stripes
+		? BTREE_ITER_intent : 0;
+
 	CLASS(btree_iter_uninit, iter)(trans);
-	struct bkey_s_c k = bkey_try(bch2_backpointer_get_key(trans, bp, &iter, 0, last_flushed));
+	struct bkey_s_c k = bkey_try(bch2_backpointer_get_key(trans, bp, &iter, flags, last_flushed));
 	if (!k.k)
 		return 0;
 
@@ -669,7 +785,8 @@ static int do_reconcile_extent_phys(struct moving_context *ctxt,
 		.read_dev	= work.pos.inode,
 		.read_flags	= BCH_READ_soft_require_read_device,
 	};
-	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts, &data_opts, work, &iter, bp.v->level, k));
+	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts,
+				  &data_opts, work, &iter, bp.v->level, k, stripe_retry));
 
 	event_add_trace(c, reconcile_phys, k.k->size, buf, ({
 		prt_newline(&buf);
@@ -703,7 +820,7 @@ static int do_reconcile_btree(struct moving_context *ctxt,
 
 	struct bch_inode_opts opts;
 	struct data_update_opts data_opts = {};
-	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts, &data_opts, work, &iter, bp.v->level, k));
+	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts, &data_opts, work, &iter, bp.v->level, k, NULL));
 
 	event_add_trace(c, reconcile_btree, btree_sectors(c), buf, ({
 		prt_newline(&buf);
@@ -1054,6 +1171,8 @@ static CLOSURE_CALLBACK(do_reconcile_phys_thread)
 
 	CLASS(per_snapshot_io_opts, snapshot_io_opts)(c);
 
+	CLASS(darray_stripe_retry, stripe_retry)();
+
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
 	wb_maybe_flush_init(&last_flushed);
 
@@ -1075,7 +1194,9 @@ static CLOSURE_CALLBACK(do_reconcile_phys_thread)
 
 		int ret = lockrestart_do(trans,
 			do_reconcile_extent_phys(&ctxt, &snapshot_io_opts,
-						 BBPOS(work_pos.btree, k.k->p), &last_flushed));
+						 BBPOS(work_pos.btree, k.k->p),
+						 &last_flushed,
+						 &stripe_retry));
 		if (ret)
 			break;
 	}
@@ -1161,6 +1282,8 @@ static int do_reconcile(struct moving_context *ctxt)
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
 	wb_maybe_flush_init(&last_flushed);
 
+	CLASS(darray_stripe_retry, stripe_retry)();
+
 	while (!bch2_move_ratelimit(ctxt) &&
 	       !test_bit(BCH_FS_going_ro, &c->flags)) {
 		if (!bch2_reconcile_enabled(c)) {
@@ -1239,7 +1362,8 @@ static int do_reconcile(struct moving_context *ctxt)
 			reconcile_phase_start(c);
 		} else {
 			ret = lockrestart_do(trans,
-				do_reconcile_extent(ctxt, &snapshot_io_opts, r->work_pos));
+				do_reconcile_extent(ctxt, &snapshot_io_opts, r->work_pos,
+						    &stripe_retry));
 		}
 
 		if (bch2_err_matches(ret, BCH_ERR_data_update_fail_need_copygc)) {
@@ -1260,6 +1384,8 @@ static int do_reconcile(struct moving_context *ctxt)
 
 		if (ret)
 			break;
+
+		do_retry_stripes(ctxt, &stripe_retry);
 
 		r->work_pos.pos = btree_type_has_snapshot_field(r->work_pos.btree)
 			? bpos_successor(r->work_pos.pos)

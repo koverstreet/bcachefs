@@ -48,6 +48,7 @@ enum bch_counters_flags {
 	x(reconcile_btree,				118,	TYPE_SECTORS)	\
 	x(reconcile_data,				119,	TYPE_SECTORS)	\
 	x(reconcile_phys,				120,	TYPE_SECTORS)	\
+	x(reconcile_stripe,				130,	TYPE_SECTORS)	\
 	x(reconcile_set_pending,			83,	TYPE_SECTORS)	\
 	x(evacuate_bucket,				84,	TYPE_COUNTER)	\
 	x(stripe_alloc,					125,	TYPE_COUNTER)	\

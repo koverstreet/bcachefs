@@ -27,6 +27,7 @@ struct moving_context {
 	struct mutex		lock;
 	struct list_head	reads;
 	struct list_head	ios;
+	u64			io_seq;
 
 	/* in flight sectors: */
 	atomic_t		read_sectors;

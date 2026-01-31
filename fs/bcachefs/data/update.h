@@ -57,6 +57,7 @@ struct data_update {
 	/* associated with @ctxt */
 	struct list_head	read_list;
 	struct list_head	io_list;
+	u64			io_seq;
 	struct move_bucket	*b;
 	struct moving_context	*ctxt;
 	struct bch_move_stats	*stats;

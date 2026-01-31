@@ -253,6 +253,8 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 
 		list_add_tail(&u->read_list, &ctxt->reads);
 		list_add_tail(&u->io_list, &ctxt->ios);
+
+		u->io_seq = ctxt->io_seq++;
 	}
 
 	/*
