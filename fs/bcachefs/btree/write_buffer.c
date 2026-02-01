@@ -364,6 +364,13 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 	wb_sort(wb->sorted.data, wb->sorted.nr);
 
 	darray_for_each(wb->sorted, i) {
+		if (i->idx + BKEY_U64s > wb->flushing.keys.nr)
+			panic("at %zu/%zu of wb->sorted got idx %u/%zu\n",
+			      i - wb->sorted.data,
+			      wb->sorted.nr,
+			      i->idx,
+			      wb->flushing.keys.nr);
+
 		struct btree_write_buffered_key *k = wb_keys_idx(&wb->flushing, i->idx);
 
 		ret = bch2_btree_write_buffer_insert_checks(c, k->btree, &k->k);
