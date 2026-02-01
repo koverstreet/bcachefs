@@ -1250,25 +1250,6 @@ void bch2_reconcile_status_to_text(struct printbuf *out, struct bch_fs *c)
 
 	struct bch_fs_reconcile *r = &c->reconcile;
 
-	prt_printf(out, "pending work:\tdata\rmetadata\r\n");
-	for (unsigned i = 0; i < BCH_RECONCILE_ACCOUNTING_NR; i++) {
-		struct disk_accounting_pos acc;
-		disk_accounting_key_init(acc, reconcile_work, i);
-		u64 v[2];
-		bch2_accounting_mem_read(c, disk_accounting_pos_to_bpos(&acc), v, ARRAY_SIZE(v));
-
-		bch2_prt_reconcile_accounting_type(out, i);
-		prt_printf(out, ":\t");
-		prt_human_readable_u64(out, v[0] << 9);
-		prt_tab_rjust(out);
-		prt_human_readable_u64(out, v[1] << 9);
-		prt_tab_rjust(out);
-		prt_newline(out);
-	}
-
-	prt_newline(out);
-	guard(printbuf_indent_nextline)(out);
-
 	if (!r->running) {
 		prt_printf(out, "waiting:\n");
 		u64 now = atomic64_read(&c->io_clock[WRITE].now);
@@ -1320,9 +1301,15 @@ void bch2_reconcile_status_to_text(struct printbuf *out, struct bch_fs *c)
 			get_task_struct(t);
 	}
 
+	prt_newline(out);
+
 	if (t) {
+		prt_str(out, "Reconcile thread backtrace:\n");
+		guard(printbuf_indent)(out);
 		bch2_prt_task_backtrace(out, t, 0, GFP_KERNEL);
 		put_task_struct(t);
+	} else {
+		prt_str(out, "Reconcile thread not running\n");
 	}
 }
 
