@@ -247,9 +247,11 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	bch2_cut_back(new->k.p,		insert);
 	bch2_cut_back(insert->k.p,	&new->k_i);
 
+	struct bpos next_pos = insert->k.p;
+
 	if (!bch2_extents_match(c, k, old)) {
 		count_data_update_key_fail(u, k, bkey_i_to_s_c(&new->k_i), insert, "no match:");
-		bch2_btree_iter_advance(iter);
+		bch2_btree_iter_set_pos(iter, next_pos);
 		return 0;
 	}
 
@@ -325,6 +327,24 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	struct bch_inode_opts opts;
 	try(bch2_bkey_get_io_opts(trans, NULL, k, &opts));
 
+	struct bkey_durability old_durability, new_durability;
+	try(bch2_bkey_durability(trans, k, &old_durability));
+	try(bch2_bkey_durability(trans, bkey_i_to_s_c(insert), &new_durability));
+
+	if (new_durability.total < old_durability.total &&
+	    new_durability.total < min(u->op.opts.data_replicas, opts.data_replicas)) {
+		/*
+		 * This can happen when a move - evacuate or copygc - races with an
+		 * extent being erasure coded: we replaced a pointer with one on the
+		 * same device (so we have to drop it early, to avoid conflicts) which
+		 * is no longer erasure coded.
+		 *
+		 * XXX: trace this
+		 */
+		bch2_btree_iter_set_pos(iter, next_pos);
+		return 0;
+	}
+
 	try(bch2_bkey_drop_extra_durability(trans, &opts,	insert,
 		ptr_mask_remap(c, old, u->opts.ptrs_io_error,	bkey_i_to_s_c(insert)), true));
 
@@ -367,8 +387,6 @@ static int data_update_index_update_key(struct btree_trans *trans,
 					disk_sectors_delta - u->op.res.sectors,
 					!should_check_enospc
 					? BCH_DISK_RESERVATION_NOFAIL : 0));
-
-	struct bpos next_pos = insert->k.p;
 
 	try(bch2_trans_log_str(trans, bch2_data_update_type_strs[u->opts.type]));
 	try(bch2_trans_log_bkey(trans, u->btree_id, 0, u->k.k));
