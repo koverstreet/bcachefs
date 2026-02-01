@@ -281,7 +281,7 @@ bool bch2_replicas_marked_locked(struct bch_fs *c,
 			  struct bch_replicas_entry_v1 *search)
 {
 	if (search->data_type > BCH_DATA_btree &&
-	    !bch2_request_incompat_feature_locked(c, bcachefs_metadata_version_no_sb_user_data_replicas))
+	    c->sb.version_incompat >= bcachefs_metadata_version_no_sb_user_data_replicas)
 		return true;
 
 	return !search->nr_devs || replicas_entry_search(&c->replicas, search);
@@ -291,7 +291,7 @@ bool bch2_replicas_marked(struct bch_fs *c,
 			  struct bch_replicas_entry_v1 *search)
 {
 	if (search->data_type > BCH_DATA_btree &&
-	    !bch2_request_incompat_feature(c, bcachefs_metadata_version_no_sb_user_data_replicas))
+	    c->sb.version_incompat >= bcachefs_metadata_version_no_sb_user_data_replicas)
 		return true;
 
 	guard(percpu_read)(&c->capacity.mark_lock);
