@@ -261,19 +261,39 @@ static void replay_now_at(struct journal *j, u64 seq)
 		bch2_journal_pin_put(j, j->replay_journal_seq++);
 }
 
+static int journal_replay_iter_set_pos(struct btree_trans *trans, struct btree_iter *iter,
+				       struct journal_key *k, struct bkey_i *bk)
+{
+	if (!iter->path ||
+	    iter->btree_id	!= k->btree_id ||
+	    iter->min_depth	!= k->level) {
+		unsigned iter_flags =
+			BTREE_ITER_intent|
+			BTREE_ITER_not_extents;
+		if (!k->level && k->btree_id == BTREE_ID_alloc)
+			iter_flags |= BTREE_ITER_cached;
+
+		bch2_trans_node_iter_init(trans, iter, k->btree_id, bk->k.p,
+					  BTREE_MAX_DEPTH, k->level,
+					  iter_flags);
+	} else {
+		bch2_btree_iter_set_pos(iter, bk->k.p);
+	}
+
+	return bch2_btree_iter_traverse(iter);
+}
+
 static int bch2_journal_replay_accounting_key(struct btree_trans *trans,
+					      struct btree_iter *iter,
 					      struct journal_key *k)
 {
 	struct bch_fs *c = trans->c;
 	struct bkey_i *bk = journal_key_k(c, k);
 
-	CLASS(btree_node_iter, iter)(trans, k->btree_id, bk->k.p,
-				     BTREE_MAX_DEPTH, k->level,
-				     BTREE_ITER_intent);
-	try(bch2_btree_iter_traverse(&iter));
+	try(journal_replay_iter_set_pos(trans, iter, k, bk));
 
 	struct bkey u;
-	struct bkey_s_c old = bch2_btree_path_peek_slot(btree_iter_path(trans, &iter), &u);
+	struct bkey_s_c old = bch2_btree_path_peek_slot(btree_iter_path(trans, iter), &u);
 
 	/* Has this delta already been applied to the btree? */
 	if (bversion_cmp(old.k->bversion, bk->k.bversion) >= 0)
@@ -289,17 +309,17 @@ static int bch2_journal_replay_accounting_key(struct btree_trans *trans,
 	if (!k->allocated)
 		trans->journal_res.seq = c->journal_entries_base_seq + k->journal_seq_offset;
 
-	return bch2_trans_update(trans, &iter, new, BTREE_TRIGGER_norun);
+	return bch2_trans_update(trans, iter, new, BTREE_TRIGGER_norun);
 }
 
 static int bch2_journal_replay_key(struct btree_trans *trans,
+				   struct btree_iter *iter,
 				   struct journal_key *k)
 {
 	struct bch_fs *c = trans->c;
 	unsigned iter_flags =
 		BTREE_ITER_intent|
 		BTREE_ITER_not_extents;
-	unsigned update_flags = BTREE_TRIGGER_norun;
 
 	if (k->overwritten)
 		return 0;
@@ -307,26 +327,11 @@ static int bch2_journal_replay_key(struct btree_trans *trans,
 	if (!k->allocated)
 		trans->journal_res.seq = c->journal_entries_base_seq + k->journal_seq_offset;
 
-	/*
-	 * BTREE_UPDATE_key_cache_reclaim disables key cache lookup/update to
-	 * keep the key cache coherent with the underlying btree. Nothing
-	 * besides the allocator is doing updates yet so we don't need key cache
-	 * coherency for non-alloc btrees, and key cache fills for snapshots
-	 * btrees use BTREE_ITER_filter_snapshots, which isn't available until
-	 * the snapshots recovery pass runs.
-	 */
-	if (!k->level && k->btree_id == BTREE_ID_alloc)
-		iter_flags |= BTREE_ITER_cached;
-	else
-		update_flags |= BTREE_UPDATE_key_cache_reclaim;
-
 	struct bkey_i *bk = journal_key_k(c, k);
-	CLASS(btree_node_iter, iter)(trans, k->btree_id, bk->k.p,
-				     BTREE_MAX_DEPTH, k->level,
-				     iter_flags);
-	try(bch2_btree_iter_traverse(&iter));
 
-	struct btree_path *path = btree_iter_path(trans, &iter);
+	try(journal_replay_iter_set_pos(trans, iter, k, bk));
+
+	struct btree_path *path = btree_iter_path(trans, iter);
 	if (unlikely(!btree_path_node(path, k->level))) {
 		CLASS(printbuf, buf)();
 		prt_str(&buf, "btree=");
@@ -348,11 +353,11 @@ static int bch2_journal_replay_key(struct btree_trans *trans,
 			return 0;
 		}
 
-		bch2_trans_node_iter_init(trans, &iter, k->btree_id, bk->k.p,
+		bch2_trans_node_iter_init(trans, iter, k->btree_id, bk->k.p,
 					  BTREE_MAX_DEPTH, 0, iter_flags);
 
-		try(bch2_btree_iter_traverse(&iter));
-		try(bch2_btree_increase_depth(trans, iter.path, 0));
+		try(bch2_btree_iter_traverse(iter));
+		try(bch2_btree_increase_depth(trans, iter->path, 0));
 		return btree_trans_restart(trans, BCH_ERR_transaction_restart_nested);
 	}
 
@@ -366,7 +371,19 @@ static int bch2_journal_replay_key(struct btree_trans *trans,
 		return 0;
 	}
 
-	return bch2_trans_update(trans, &iter, bk, update_flags);
+	/*
+	 * BTREE_UPDATE_key_cache_reclaim disables key cache lookup/update to
+	 * keep the key cache coherent with the underlying btree. Nothing
+	 * besides the allocator is doing updates yet so we don't need key cache
+	 * coherency for non-alloc btrees, and key cache fills for snapshots
+	 * btrees use BTREE_ITER_filter_snapshots, which isn't available until
+	 * the snapshots recovery pass runs.
+	 */
+	unsigned update_flags = BTREE_TRIGGER_norun;
+	if (k->level || k->btree_id != BTREE_ID_alloc)
+		update_flags |= BTREE_UPDATE_key_cache_reclaim;
+
+	return bch2_trans_update(trans, iter, bk, update_flags);
 }
 
 static int journal_sort_seq_cmp(const void *_l, const void *_r)
@@ -398,6 +415,7 @@ static CLOSURE_CALLBACK(do_journal_replay_thread)
 	struct bch_fs *c = thr->c;
 
 	CLASS(btree_trans, trans)(c);
+	CLASS(btree_iter_uninit, iter)(trans);
 
 	for (; thr->next < thr->end; thr->next++) {
 		cond_resched();
@@ -415,7 +433,7 @@ static CLOSURE_CALLBACK(do_journal_replay_thread)
 				  BCH_TRANS_COMMIT_journal_reclaim|
 				  BCH_TRANS_COMMIT_skip_accounting_apply|
 				  (!thr->next->allocated ? BCH_TRANS_COMMIT_no_journal_res : 0),
-			     bch2_journal_replay_key(trans, thr->next));
+			     bch2_journal_replay_key(trans, &iter, thr->next));
 		if (ret)
 			break;
 	}
@@ -446,27 +464,30 @@ int bch2_journal_replay(struct bch_fs *c)
 	 * Replay accounting keys first: we can't allow the write buffer to
 	 * flush accounting keys until we're done
 	 */
-	darray_for_each(*keys, k) {
-		struct bkey_i *bk = journal_key_k(trans->c, k);
+	{
+		CLASS(btree_iter_uninit, iter)(trans);
+		darray_for_each(*keys, k) {
+			struct bkey_i *bk = journal_key_k(trans->c, k);
 
-		if (!(bk->k.type == KEY_TYPE_accounting && !k->allocated))
-			continue;
+			if (!(bk->k.type == KEY_TYPE_accounting && !k->allocated))
+				continue;
 
-		cond_resched();
+			cond_resched();
 
-		ret = commit_do(trans, NULL, NULL,
-				BCH_TRANS_COMMIT_journal_replay|
-				BCH_TRANS_COMMIT_no_enospc|
-				BCH_TRANS_COMMIT_no_skip_noops|
-				BCH_TRANS_COMMIT_journal_reclaim|
-				BCH_TRANS_COMMIT_skip_accounting_apply|
-				BCH_TRANS_COMMIT_no_journal_res|
-				BCH_WATERMARK_reclaim,
-			     bch2_journal_replay_accounting_key(trans, k));
-		if (bch2_fs_fatal_err_on(ret, c, "error replaying accounting; %s", bch2_err_str(ret)))
-			return ret;
+			ret = commit_do(trans, NULL, NULL,
+					BCH_TRANS_COMMIT_journal_replay|
+					BCH_TRANS_COMMIT_no_enospc|
+					BCH_TRANS_COMMIT_no_skip_noops|
+					BCH_TRANS_COMMIT_journal_reclaim|
+					BCH_TRANS_COMMIT_skip_accounting_apply|
+					BCH_TRANS_COMMIT_no_journal_res|
+					BCH_WATERMARK_reclaim,
+				     bch2_journal_replay_accounting_key(trans, &iter, k));
+			if (bch2_fs_fatal_err_on(ret, c, "error replaying accounting; %s", bch2_err_str(ret)))
+				return ret;
 
-		k->overwritten = true;
+			k->overwritten = true;
+		}
 	}
 
 	set_bit(BCH_FS_accounting_replay_done, &c->flags);
@@ -537,6 +558,7 @@ int bch2_journal_replay(struct bch_fs *c)
 
 		u64 seq_before = 0;
 
+		CLASS(btree_iter_uninit, iter)(trans);
 		darray_for_each(keys_sorted, kp) {
 			cond_resched();
 
@@ -558,7 +580,7 @@ int bch2_journal_replay(struct bch_fs *c)
 					(!k->allocated
 					 ? BCH_TRANS_COMMIT_no_journal_res|BCH_WATERMARK_reclaim
 					 : 0),
-				     bch2_journal_replay_key(trans, k));
+				     bch2_journal_replay_key(trans, &iter, k));
 			if (ret) {
 				CLASS(printbuf, buf)();
 				bch2_btree_id_level_to_text(&buf, k->btree_id, k->level);
