@@ -986,6 +986,9 @@ static int bch2_can_do_write_btree(struct bch_fs *c,
 	struct bch_devs_list empty = {};
 	bool need_copygc = false;
 
+	if (bch2_bkey_nr_dirty_ptrs(c, k) > opts->data_replicas)
+		return 0;
+
 	if (durability_available_on_target(c, watermark, BCH_DATA_btree, data_opts->target, &empty,
 					   data_opts->write_flags & BCH_WRITE_alloc_nowait,
 					   trace, &need_copygc) >
