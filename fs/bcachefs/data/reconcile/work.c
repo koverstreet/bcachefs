@@ -183,7 +183,10 @@ static int bch2_clear_reconcile_needs_scan(struct btree_trans *trans, struct bpo
 	})));
 
 	event_inc_trace(c, reconcile_clear_scan, buf, ({
+		reconcile_scan_to_text(&buf, c, reconcile_scan_decode(c, pos.offset));
+		prt_newline(&buf);
 		prt_printf(&buf, "scan started with cookie %llu now have %llu", cookie, v);
+		prt_printf(&buf, "%sdeleting scan cookie\n", v == cookie ? "" : "not ");
 	}));
 	return 0;
 }
@@ -776,6 +779,9 @@ static int do_reconcile_scan_bps(struct moving_context *ctxt,
 				  last_flushed, NULL, bp, ({
 		ctxt->stats->pos = BBPOS(BTREE_ID_backpointers, iter.pos);
 
+		if (kthread_should_stop() || !bch2_reconcile_enabled(c))
+			break;
+
 		CLASS(disk_reservation, res)(c);
 		do_reconcile_scan_bp(trans, s, bp, last_flushed) ?:
 		bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
@@ -837,6 +843,9 @@ static int do_reconcile_scan_btree(struct moving_context *ctxt,
 
 	return for_each_btree_key_max_continue(trans, iter, end, 0, k, ({
 		ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
+
+		if (kthread_should_stop() || !bch2_reconcile_enabled(c))
+			return 0;
 
 		atomic64_add(!level ? k.k->size : c->opts.btree_node_size >> 9,
 			     &r->scan_stats.sectors_seen);
