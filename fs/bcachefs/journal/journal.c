@@ -595,11 +595,14 @@ out:
 	if (ret == -BCH_ERR_journal_blocked)
 		track_event_change(&c->times[BCH_TIME_blocked_journal_write_buffer_flush], true);
 
-	if ((ret == -BCH_ERR_journal_max_in_flight &&
-	     track_event_change(&c->times[BCH_TIME_blocked_journal_max_in_flight], true)) ||
-	    (ret == -BCH_ERR_journal_max_open &&
-	     track_event_change(&c->times[BCH_TIME_blocked_journal_max_open], true)))
-		event_inc_trace(c, journal_entry_full, buf, ({
+	if (ret == -BCH_ERR_journal_max_in_flight)
+		track_event_change(&c->times[BCH_TIME_blocked_journal_max_in_flight], true);
+
+	if (ret == -BCH_ERR_journal_max_open)
+		track_event_change(&c->times[BCH_TIME_blocked_journal_max_open], true);
+
+	if (bch2_err_matches(ret, BCH_ERR_operation_blocked))
+		event_inc_trace(c, journal_res_get_blocked, buf, ({
 			prt_printf(&buf, "%s\n", bch2_err_str(ret));
 			bch2_printbuf_make_room(&buf, 4096);
 

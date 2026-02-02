@@ -92,7 +92,7 @@ enum bch_counters_flags {
 	x(btree_path_relock_fail,			22,	TYPE_COUNTER)	\
 	x(btree_path_upgrade_fail,			23,	TYPE_COUNTER)	\
 	x(btree_reserve_get_fail,			24,	TYPE_COUNTER)	\
-	x(journal_entry_full,				25,	TYPE_COUNTER)	\
+	x(journal_res_get_blocked,			25,	TYPE_COUNTER)	\
 	x(journal_full,					26,	TYPE_COUNTER)	\
 	x(journal_reclaim_finish,			27,	TYPE_COUNTER)	\
 	x(journal_reclaim_start,			28,	TYPE_COUNTER)	\
