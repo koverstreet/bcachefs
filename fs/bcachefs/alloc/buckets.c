@@ -312,14 +312,14 @@ static int bch2_no_valid_pointers_repair(struct btree_trans *trans,
 	bch2_bkey_val_to_text(&buf, c, *k);
 
 	if (found_good_cached_pointer) {
-		ret_fsck_err(c, extent_ptrs_all_invalid_but_cached,
+		ret_fsck_err(trans, extent_ptrs_all_invalid_but_cached,
 			     "extent without valid dirty pointers\n%s", buf.buf);
 
 		struct bch_inode_opts opts;
 		try(bch2_bkey_get_io_opts(trans, NULL, *k, &opts));
 		try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, new, SET_NEEDS_RECONCILE_opt_change, 0));
 	} else {
-		ret_fsck_err(c, extent_ptrs_all_invalid,
+		ret_fsck_err(trans, extent_ptrs_all_invalid,
 			     "extent without valid pointers\n%s", buf.buf);
 		bch2_set_bkey_error(c, new, KEY_TYPE_ERROR_no_valid_pointers_repair);
 	}
