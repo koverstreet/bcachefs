@@ -490,6 +490,7 @@ BCH_DEBUG_PARAMS_ALL()
 	x(blocked_journal_low_on_pin)		\
 	x(blocked_journal_max_in_flight)	\
 	x(blocked_journal_max_open)		\
+	x(blocked_journal_write_buffer_flush)	\
 	x(blocked_key_cache_flush)		\
 	x(blocked_allocate)			\
 	x(blocked_allocate_open_bucket)		\
