@@ -247,6 +247,8 @@ static inline void bch2_bp_scan_iter_advance(struct bp_scan_iter *iter)
 				break;								\
 			bkey_err(_bp) ?: (_do);							\
 		}));										\
+		if (_ret3)									\
+			break;									\
 												\
 		bch2_bp_scan_iter_advance(&_bp_iter);						\
 	}											\
