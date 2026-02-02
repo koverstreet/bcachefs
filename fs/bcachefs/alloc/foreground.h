@@ -249,9 +249,6 @@ static inline struct alloc_request *alloc_request_get(struct btree_trans *trans,
 	if (IS_ERR(req))
 		return req;
 
-	if (!IS_ENABLED(CONFIG_BCACHEFS_ERASURE_CODING))
-		erasure_code = false;
-
 	if (ec_replicas < 2)
 		erasure_code = false;
 
