@@ -261,20 +261,28 @@ static void move_keys_from_inc_to_flushing(struct bch_fs_btree_write_buffer *wb)
 		goto out;
 	}
 
-	size_t nr = min(darray_room(wb->flushing.keys),
-			wb->sorted.size - wb->flushing.keys.nr);
-	nr = min(nr, wb->inc.keys.nr);
-
-	memcpy(&darray_top(wb->flushing.keys),
-	       wb->inc.keys.data,
-	       sizeof(wb->inc.keys.data[0]) * nr);
-
-	memmove(wb->inc.keys.data,
-		wb->inc.keys.data + nr,
-	       sizeof(wb->inc.keys.data[0]) * (wb->inc.keys.nr - nr));
-
-	wb->flushing.keys.nr	+= nr;
-	wb->inc.keys.nr		-= nr;
+	if (wb->inc.keys.nr <= darray_room(wb->flushing.keys)) {
+		memcpy(&darray_top(wb->flushing.keys),
+		       wb->inc.keys.data,
+		       sizeof(wb->inc.keys.data[0]) * wb->inc.keys.nr);
+		wb->flushing.keys.nr += wb->inc.keys.nr;
+		wb->inc.keys.nr = 0;
+	} else {
+		wb_keys_for_each(&wb->flushing, i) {
+			if (wb_key_u64s(&i->k) <= darray_room(wb->flushing.keys)) {
+				memcpy_u64s(&darray_top(wb->flushing.keys), i,
+					    wb_key_u64s(&i->k));
+				wb->flushing.keys.nr += wb_key_u64s(&i->k);
+			} else {
+				size_t nr = (u64 *) i - wb->inc.keys.data;
+				memmove(wb->inc.keys.data,
+					wb->inc.keys.data + nr,
+					sizeof(wb->inc.keys.data[0]) * (wb->inc.keys.nr - nr));
+				wb->inc.keys.nr	 -= nr;
+				break;
+			}
+		}
+	}
 out:
 	if (!wb->inc.keys.nr)
 		bch2_journal_pin_drop(j, &wb->inc.pin);
