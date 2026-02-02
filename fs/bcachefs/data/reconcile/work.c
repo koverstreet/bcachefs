@@ -167,17 +167,25 @@ int bch2_set_fs_needs_reconcile(struct bch_fs *c)
 
 static int bch2_clear_reconcile_needs_scan(struct btree_trans *trans, struct bpos pos, u64 cookie)
 {
-	return commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+	struct bch_fs *c = trans->c;
+	u64 v;
+
+	try(commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
 		CLASS(btree_iter, iter)(trans, BTREE_ID_reconcile_scan, pos, BTREE_ITER_intent);
 		struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
-		u64 v = k.k->type == KEY_TYPE_cookie
+		v = k.k->type == KEY_TYPE_cookie
 			? le64_to_cpu(bkey_s_c_to_cookie(k).v->cookie)
 			: 0;
 		v == cookie
 			? bch2_btree_delete_at(trans, &iter, 0)
 			: 0;
+	})));
+
+	event_inc_trace(c, reconcile_clear_scan, buf, ({
+		prt_printf(&buf, "scan started with cookie %llu now have %llu", cookie, v);
 	}));
+	return 0;
 }
 
 #define RECONCILE_WORK_BUF_NR		1024
@@ -720,6 +728,14 @@ static int update_reconcile_opts_scan(struct btree_trans *trans,
 					  SET_NEEDS_RECONCILE_opt_change);
 }
 
+static bool bch2_reconcile_enabled(struct bch_fs *c)
+{
+	return !c->opts.read_only &&
+		c->opts.reconcile_enabled &&
+		!(c->opts.reconcile_on_ac_only &&
+		  c->reconcile.on_battery);
+}
+
 static int do_reconcile_scan_bp(struct btree_trans *trans,
 				struct reconcile_scan s,
 				struct bkey_s_c_backpointer bp,
@@ -927,14 +943,6 @@ static void reconcile_wait(struct bch_fs *c)
 	}
 
 	bch2_kthread_io_clock_wait_once(clock, r->wait_iotime_end, MAX_SCHEDULE_TIMEOUT);
-}
-
-static bool bch2_reconcile_enabled(struct bch_fs *c)
-{
-	return !c->opts.read_only &&
-		c->opts.reconcile_enabled &&
-		!(c->opts.reconcile_on_ac_only &&
-		  c->reconcile.on_battery);
 }
 
 struct reconcile_scan_phase {

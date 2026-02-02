@@ -44,6 +44,7 @@ enum bch_counters_flags {
 	x(reconcile_scan_pending,			115,	TYPE_SECTORS)	\
 	x(reconcile_scan_device,			116,	TYPE_SECTORS)	\
 	x(reconcile_scan_inum,				117,	TYPE_SECTORS)	\
+	x(reconcile_clear_scan,				129,	TYPE_COUNTER)	\
 	x(reconcile_btree,				118,	TYPE_SECTORS)	\
 	x(reconcile_data,				119,	TYPE_SECTORS)	\
 	x(reconcile_phys,				120,	TYPE_SECTORS)	\
