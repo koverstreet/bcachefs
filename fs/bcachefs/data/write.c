@@ -1003,6 +1003,7 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 		if (ret < 0)
 			goto err;
 		if (ret) {
+			BUG_ON(ret != 1);
 			if (ec_buf) {
 				dst = bch2_write_bio_alloc(c, wp, src,
 							   &page_alloc_failed,
