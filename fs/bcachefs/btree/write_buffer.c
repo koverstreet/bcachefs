@@ -924,6 +924,17 @@ int bch2_btree_write_buffer_resize(struct bch_fs *c, size_t new_size)
 		wb_keys_resize(&wb->inc, new_size);
 }
 
+void bch2_btree_write_buffer_to_text(struct printbuf *out, struct bch_fs *c)
+{
+	struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer;
+
+	prt_printf(out, "inc: keys:\t%zu/%zu\n",	wb->inc.keys.nr, wb->inc.keys.size);
+	prt_printf(out, "inc: seq pinned:\t%llu\n",	wb->inc.pin.seq);
+
+	prt_printf(out, "flushing: keys:\t%zu/%zu\n",	wb->flushing.keys.nr, wb->flushing.keys.size);
+	prt_printf(out, "flushing: seq pinned:\t%llu\n",wb->flushing.pin.seq);
+}
+
 void bch2_fs_btree_write_buffer_exit(struct bch_fs *c)
 {
 	struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer;
