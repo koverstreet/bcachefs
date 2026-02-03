@@ -16,7 +16,7 @@ void bch2_progress_init(struct progress_indicator *s,
 {
 	memset(s, 0, sizeof(*s));
 
-	s->msg = strip_bch2(msg);
+	s->msg = msg ? strip_bch2(msg) : NULL;
 	s->next_print = jiffies + HZ * 10;
 
 	/* This is only an estimation: nodes can have different replica counts */
@@ -86,7 +86,7 @@ int bch2_progress_update_iter(struct btree_trans *trans,
 	s->last_node	= b;
 	s->pos		= pos;
 
-	if (!s->silent && progress_update_p(s)) {
+	if (!s->silent && s->msg && progress_update_p(s)) {
 		CLASS(printbuf, buf)();
 		prt_printf(&buf, "%s ", s->msg);
 		bch2_progress_to_text(&buf, s);

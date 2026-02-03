@@ -34,6 +34,18 @@
 #include <linux/kthread.h>
 #include <linux/sched/cputime.h>
 
+#define RECONCILE_PHASE_TYPES()		\
+	x(scan)				\
+	x(btree)			\
+	x(phys)				\
+	x(normal)			\
+
+enum reconcile_phase_type {
+#define x(n)	RECONCILE_PHASE_##n,
+	RECONCILE_PHASE_TYPES()
+#undef x
+};
+
 #define x(n) #n,
 
 const char * const bch2_reconcile_opts[] = {
@@ -50,26 +62,16 @@ static const char * const bch2_rebalance_scan_strs[] = {
 	RECONCILE_SCAN_TYPES()
 };
 
+static const char * const bch2_reconcile_phase_types[] = {
+	RECONCILE_PHASE_TYPES()
+};
+
 #undef x
 
 static bool btree_is_reconcile_phys(enum btree_id btree)
 {
 	return btree == BTREE_ID_reconcile_hipri_phys ||
 		btree == BTREE_ID_reconcile_work_phys;
-}
-
-static enum reconcile_work_id btree_to_reconcile_work_id(enum btree_id btree)
-{
-	switch (btree) {
-	case BTREE_ID_reconcile_hipri:
-		return RECONCILE_WORK_hipri;
-	case BTREE_ID_reconcile_work:
-		return RECONCILE_WORK_normal;
-	case BTREE_ID_reconcile_pending:
-		return RECONCILE_WORK_pending;
-	default:
-		BUG();
-	}
 }
 
 static u64 reconcile_scan_encode(struct reconcile_scan s)
@@ -224,6 +226,8 @@ static struct bkey_s_c next_reconcile_entry(struct btree_trans *trans,
 
 		int ret = for_each_btree_key_max(trans, iter, work_pos->btree, work_pos->pos, end,
 				   flags, k, ({
+			bch2_progress_update_iter(trans, &trans->c->reconcile.progress, &iter);
+
 			/* There might be leftover scan cookies from rebalance, pre reconcile upgrade: */
 			if (k.k->type != KEY_TYPE_set)
 				continue;
@@ -843,6 +847,7 @@ static int do_reconcile_scan_btree(struct moving_context *ctxt,
 
 	return for_each_btree_key_max_continue(trans, iter, end, 0, k, ({
 		ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
+		bch2_progress_update_iter(trans, &r->progress, &iter);
 
 		if (kthread_should_stop() || !bch2_reconcile_enabled(c))
 			return 0;
@@ -871,6 +876,8 @@ static int do_reconcile_scan_fs(struct moving_context *ctxt, struct reconcile_sc
 {
 	struct bch_fs *c = ctxt->trans->c;
 	struct bch_fs_reconcile *r = &c->reconcile;
+
+	bch2_progress_init(&r->progress, NULL, c, metadata ? 0 : ~0ULL, ~0ULL);
 
 	r->scan_start	= BBPOS_MIN;
 	r->scan_end	= BBPOS_MAX;
@@ -953,13 +960,6 @@ static void reconcile_wait(struct bch_fs *c)
 
 	bch2_kthread_io_clock_wait_once(clock, r->wait_iotime_end, MAX_SCHEDULE_TIMEOUT);
 }
-
-enum reconcile_phase_type {
-	RECONCILE_PHASE_scan,
-	RECONCILE_PHASE_btree,
-	RECONCILE_PHASE_phys,
-	RECONCILE_PHASE_normal,
-};
 
 struct reconcile_phase {
 	enum reconcile_phase_type	type;
@@ -1094,10 +1094,24 @@ static int do_reconcile_phys(struct bch_fs *c, unsigned reconcile_phase)
 	return 0;
 }
 
-static struct bbpos reconcile_phase_start(unsigned i)
+static void reconcile_phase_start(struct bch_fs *c)
 {
-	struct reconcile_phase p = reconcile_phases[i];
-	return BBPOS(p.btree, p.start);
+	struct bch_fs_reconcile *r = &c->reconcile;
+	struct reconcile_phase p = reconcile_phases[r->phase];
+	r->work_pos = BBPOS(p.btree, p.start);
+
+	switch (p.type) {
+	case RECONCILE_PHASE_normal:
+		bch2_progress_init(&r->progress, NULL, c,
+				   BIT_ULL(reconcile_work_btree[p.priority]), 0);
+		break;
+	case RECONCILE_PHASE_phys:
+		bch2_progress_init(&r->progress, NULL, c,
+				   BIT_ULL(reconcile_work_phys_btree[p.priority]), 0);
+		break;
+	default:
+		break;
+	}
 }
 
 static bool reconcile_phase_is_pending(unsigned i)
@@ -1125,9 +1139,8 @@ static int do_reconcile(struct moving_context *ctxt)
 
 	CLASS(per_snapshot_io_opts, snapshot_io_opts)(c);
 
-	unsigned i = 0;
-
-	r->work_pos = reconcile_phase_start(i);
+	r->phase = 0;
+	reconcile_phase_start(c);
 
 	struct bkey_i_cookie pending_cookie;
 	bkey_init(&pending_cookie.k);
@@ -1150,28 +1163,27 @@ static int do_reconcile(struct moving_context *ctxt)
 
 		if (kick != r->kick) {
 			kick		= r->kick;
-			i		= 0;
-			r->work_pos	= BBPOS(reconcile_phases[i].btree,
-						reconcile_phases[i].start);
 			work.nr		= 0;
+			r->phase	= 0;
+			reconcile_phase_start(c);
 		}
 
 		bch2_trans_begin(trans);
 
 		struct bkey_s_c k = next_reconcile_entry(trans, &work,
 							 &r->work_pos,
-							 reconcile_phases[i].end);
+							 reconcile_phases[r->phase].end);
 		ret = bkey_err(k);
 		if (ret)
 			break;
 
 		if (!k.k) {
-			if (++i == ARRAY_SIZE(reconcile_phases))
+			if (++r->phase == ARRAY_SIZE(reconcile_phases))
 				break;
 
-			r->work_pos = reconcile_phase_start(i);
+			reconcile_phase_start(c);
 
-			if (reconcile_phase_is_pending(i) &&
+			if (reconcile_phase_is_pending(r->phase) &&
 			    bkey_deleted(&pending_cookie.k))
 				break;
 
@@ -1200,9 +1212,9 @@ static int do_reconcile(struct moving_context *ctxt)
 						 r->work_pos, bkey_s_c_to_backpointer(k));
 		} else if (btree_is_reconcile_phys(r->work_pos.btree)) {
 			bch2_trans_unlock_long(trans);
-			ret = do_reconcile_phys(c, i);
+			ret = do_reconcile_phys(c, r->phase);
 			BUG_ON(bch2_err_matches(ret, BCH_ERR_transaction_restart));
-			r->work_pos = reconcile_phase_start(++i);
+			reconcile_phase_start(c);
 		} else {
 			ret = lockrestart_do(trans,
 				do_reconcile_extent(ctxt, &snapshot_io_opts, r->work_pos));
@@ -1304,30 +1316,32 @@ void bch2_reconcile_status_to_text(struct printbuf *out, struct bch_fs *c)
 		bch2_pr_time_units(out, ktime_get_real_ns() - r->wait_wallclock_start);
 		prt_newline(out);
 	} else {
-		struct bbpos work_pos = r->work_pos;
+		struct reconcile_phase phase = reconcile_phases[r->phase];
+		struct bpos work_pos = r->work_pos.pos;
 		barrier();
 
-		if (work_pos.btree	== BTREE_ID_reconcile_scan &&
-		    work_pos.pos.inode	== 0) {
-			prt_printf(out, "scanning:\n");
-			reconcile_scan_to_text(out, c,
-				reconcile_scan_decode(c, work_pos.pos.offset));
-		} else if (work_pos.btree == BTREE_ID_reconcile_scan) {
-			prt_printf(out, "processing metadata: %s %llu\n",
-				   bch2_reconcile_work_ids[work_pos.pos.inode - 1],
-				   work_pos.pos.offset);
+		if (phase.type == RECONCILE_PHASE_scan) {
+			prt_printf(out, "scanning: ");
+			struct reconcile_scan s = reconcile_scan_decode(c, work_pos.offset);
+			reconcile_scan_to_text(out, c, s);
 
-		} else {
-			prt_printf(out, "processing data: ");
-
-			if (btree_is_reconcile_phys(work_pos.btree)) {
-				bch2_bbpos_to_text(out, work_pos);
-			} else {
-				prt_printf(out, " %s ",
-					   bch2_reconcile_work_ids[btree_to_reconcile_work_id(work_pos.btree)]);
-
-				bch2_bbpos_to_text(out, rb_work_to_data_pos(work_pos.pos));
+			if (s.type == RECONCILE_SCAN_fs ||
+			    s.type == RECONCILE_SCAN_metadata) {
+				prt_char(out, ' ');
+				bch2_progress_to_text(out, &r->progress);
 			}
+			prt_newline(out);
+		} else {
+			prt_printf(out, "processing %s %s: ",
+				   bch2_reconcile_work_ids[phase.priority],
+				   bch2_reconcile_phase_types[phase.type]);
+
+			if (phase.type == RECONCILE_PHASE_normal) {
+				bch2_progress_to_text(out, &r->progress);
+			} else {
+				bch2_bpos_to_text(out, work_pos);
+			}
+
 			prt_newline(out);
 		}
 	}
