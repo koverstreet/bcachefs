@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "eytzinger.h"
+#include <linux/sched.h>
 
 /**
  * is_aligned - is this pointer & size okay for word-wide copying?
@@ -205,6 +206,8 @@ static void eytzinger1_sort_r(void *base1, size_t n, size_t size,
 			j /= 2;
 			eytzinger1_do_swap(base1, n, size, swap_func, priv, j, k);
 		}
+
+		cond_resched();
 	}
 
 	/* sort */
@@ -228,6 +231,8 @@ static void eytzinger1_sort_r(void *base1, size_t n, size_t size,
 			j /= 2;
 			eytzinger1_do_swap(base1, n, size, swap_func, priv, j, k);
 		}
+
+		cond_resched();
 	}
 }
 
