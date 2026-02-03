@@ -171,4 +171,14 @@ int __bch2_darray_resize_noprof(darray_char *, size_t, size_t, gfp_t, bool);
 #define darray_sort(_d, _cmp)						\
 	sort_nonatomic((_d).data, (_d).nr, sizeof((_d).data[0]), _cmp, NULL)
 
+#define darray_eytzinger1_sort(_d, _cmp)				\
+	eytzinger1_sort((_d).data, (_d).nr - 1, sizeof((_d).data[0]), _cmp, NULL)
+
+#define darray_eytzinger1_find(_d, _cmp, _search)				\
+({										\
+	int idx = eytzinger1_find((_d).data, (_d).nr - 1, sizeof((_d).data[0]),	\
+				  _cmp, _search);				\
+	idx ? (_d).data + idx : NULL;						\
+})
+
 #endif /* _BCACHEFS_DARRAY_H */

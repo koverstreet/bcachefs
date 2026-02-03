@@ -167,10 +167,10 @@ static inline void eytzinger1_do_swap(void *base1, size_t n, size_t size,
 		size, swap_func, priv);
 }
 
-static void eytzinger1_sort_r(void *base1, size_t n, size_t size,
-			      cmp_r_func_t cmp_func,
-			      swap_r_func_t swap_func,
-			      const void *priv)
+void eytzinger1_sort_r(void *base1, size_t n, size_t size,
+		       cmp_r_func_t cmp_func,
+		       swap_r_func_t swap_func,
+		       const void *priv)
 {
 	unsigned i, j, k;
 
@@ -234,6 +234,18 @@ static void eytzinger1_sort_r(void *base1, size_t n, size_t size,
 
 		cond_resched();
 	}
+}
+
+void eytzinger1_sort(void *base, size_t n, size_t size,
+		     cmp_func_t cmp_func,
+		     swap_func_t swap_func)
+{
+	struct wrapper w = {
+		.cmp  = cmp_func,
+		.swap_func = swap_func,
+	};
+
+	return eytzinger1_sort_r(base, n, size, _CMP_WRAPPER, SWAP_WRAPPER, &w);
 }
 
 void eytzinger0_sort_r(void *base, size_t n, size_t size,
