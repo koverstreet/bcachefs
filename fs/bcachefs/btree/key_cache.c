@@ -234,7 +234,7 @@ static int btree_key_cache_create(struct btree_trans *trans,
 	} else {
 		ck = bkey_cached_reuse(bc);
 		if (unlikely(!ck)) {
-			bch_err(c, "error allocating memory for key cache item, btree %s",
+			bch_err_ratelimited(c, "error allocating memory for key cache item, btree %s",
 				bch2_btree_id_str(ck_path->btree_id));
 			return bch_err_throw(c, ENOMEM_btree_key_cache_create);
 		}
@@ -253,7 +253,7 @@ static int btree_key_cache_create(struct btree_trans *trans,
 		struct bkey_i *new_k = allocate_dropping_locks(trans, ret,
 				kmalloc(key_u64s * sizeof(u64), _gfp));
 		if (unlikely(!new_k && !ret)) {
-			bch_err(trans->c, "error allocating memory for key cache key, btree %s u64s %u",
+			bch_err_ratelimited(trans->c, "error allocating memory for key cache key, btree %s u64s %u",
 				bch2_btree_id_str(ck->key.btree_id), key_u64s);
 			ret = bch_err_throw(c, ENOMEM_btree_key_cache_fill);
 		}
