@@ -845,7 +845,7 @@ static int do_reconcile_scan_btree(struct moving_context *ctxt,
 		ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
 
 		if (kthread_should_stop() || !bch2_reconcile_enabled(c))
-			break;
+			return 0;
 
 		atomic64_add(!level ? k.k->size : c->opts.btree_node_size >> 9,
 			     &r->scan_stats.sectors_seen);
