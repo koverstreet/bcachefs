@@ -1163,7 +1163,7 @@ retry:
 	req->will_retry_target_devices	= !(req->flags & BCH_WRITE_alloc_nowait);
 	req->ptrs.nr			= 0;
 	req->nr_effective		= 0;
-	req->have_cache			= false;
+	req->have_cache			= req->flags & BCH_WRITE_move;
 	write_points_nr			= a->write_points_nr;
 
 	*wp_ret = req->wp = writepoint_find(trans, write_point.v);
