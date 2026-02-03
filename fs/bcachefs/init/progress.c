@@ -16,7 +16,7 @@ void bch2_progress_init(struct progress_indicator *s,
 {
 	memset(s, 0, sizeof(*s));
 
-	s->msg = strip_bch2(msg);
+	s->msg = msg ? strip_bch2(msg) : NULL;
 	s->next_print = jiffies + HZ * 10;
 
 	/* This is only an estimation: nodes can have different replica counts */
