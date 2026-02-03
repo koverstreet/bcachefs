@@ -87,67 +87,6 @@ static unsigned bkey_get_dev_refs(struct bch_fs *c, struct bkey_s_c k)
 	return ptrs_held;
 }
 
-noinline_for_stack
-static void count_data_update_key_fail(struct data_update *u,
-				       struct bkey_s_c new,
-				       struct bkey_s_c wrote,
-				       struct bkey_i *insert,
-				       const char *msg)
-{
-	struct bch_fs *c = u->op.c;
-
-	if (u->stats) {
-		atomic64_inc(&u->stats->keys_raced);
-		atomic64_add(insert->k.size, &u->stats->sectors_raced);
-	}
-
-	event_add_trace(c, data_update_key_fail, insert->k.size, buf, ({
-		prt_str(&buf, bch2_data_update_type_strs[u->opts.type]);
-		prt_newline(&buf);
-
-		prt_str(&buf, msg);
-		prt_newline(&buf);
-
-		struct bkey_s_c old = bkey_i_to_s_c(u->k.k);
-		unsigned rewrites_found = 0;
-
-		if (insert) {
-			const union bch_extent_entry *entry;
-			struct bch_extent_ptr *ptr;
-			struct extent_ptr_decoded p;
-
-			unsigned ptr_bit = 1;
-			bkey_for_each_ptr_decode(old.k, bch2_bkey_ptrs_c(old), p, entry) {
-				if ((ptr_bit & u->opts.ptrs_kill ) &&
-				    (ptr = bch2_extent_has_ptr(c, old, p, bkey_i_to_s(insert))) &&
-				    !ptr->cached)
-					rewrites_found |= ptr_bit;
-				ptr_bit <<= 1;
-			}
-		}
-
-		prt_str(&buf, "rewrites found:\t");
-		bch2_prt_u64_base2(&buf, rewrites_found);
-		prt_newline(&buf);
-
-		bch2_data_update_opts_to_text(&buf, c, &u->op.opts, &u->opts);
-
-		prt_str(&buf, "\nold:    ");
-		bch2_bkey_val_to_text(&buf, c, old);
-
-		prt_str(&buf, "\nnew:    ");
-		bch2_bkey_val_to_text(&buf, c, new);
-
-		prt_str(&buf, "\nwrote:  ");
-		bch2_bkey_val_to_text(&buf, c, wrote);
-
-		if (insert) {
-			prt_str(&buf, "\ninsert: ");
-			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(insert));
-		}
-	}));
-}
-
 static unsigned ptr_remap(struct bch_fs *c, struct bkey_s_c old,
 			  struct extent_ptr_decoded oldp,
 			  struct bkey_s_c new)
@@ -209,6 +148,55 @@ static unsigned bkey_ptr_conflicts_mask(struct bch_fs *c, struct bkey_s_c k1, st
 	return ptrs_conflict;
 }
 
+static void data_update_key_to_text(struct printbuf *out,
+				    struct data_update *u,
+				    struct bkey_s_c new,
+				    struct bkey_s_c wrote,
+				    struct bkey_i *insert)
+{
+	struct bch_fs *c = u->op.c;
+	struct bkey_s_c old = bkey_i_to_s_c(u->k.k);
+
+	prt_str(out, "rewrites found:\t");
+	bch2_prt_u64_base2(out,
+			   ptr_mask_remap(c, old, u->opts.ptrs_kill, bkey_i_to_s_c(insert)));
+	prt_newline(out);
+
+	bch2_data_update_opts_to_text(out, c, &u->op.opts, &u->opts);
+
+	prt_str(out, "\nold:    ");
+	bch2_bkey_val_to_text(out, c, old);
+
+	prt_str(out, "\nnew:    ");
+	bch2_bkey_val_to_text(out, c, new);
+
+	prt_str(out, "\nwrote:  ");
+	bch2_bkey_val_to_text(out, c, wrote);
+
+	prt_str(out, "\ninsert: ");
+	bch2_bkey_val_to_text(out, c, bkey_i_to_s_c(insert));
+}
+
+noinline_for_stack
+static void count_data_update_key_fail(struct data_update *u,
+				       struct bkey_s_c new,
+				       struct bkey_s_c wrote,
+				       struct bkey_i *insert,
+				       const char *msg)
+{
+	struct bch_fs *c = u->op.c;
+
+	if (u->stats) {
+		atomic64_inc(&u->stats->keys_raced);
+		atomic64_add(insert->k.size, &u->stats->sectors_raced);
+	}
+
+	event_add_trace(c, data_update_key_fail, insert->k.size, buf, ({
+		prt_printf(&buf, "%s\n", msg);
+		data_update_key_to_text(&buf, u, new, wrote, insert);
+	}));
+}
+
 static int data_update_index_update_key(struct btree_trans *trans,
 					struct data_update *u,
 					struct btree_iter *iter)
@@ -255,12 +243,29 @@ static int data_update_index_update_key(struct btree_trans *trans,
 		return 0;
 	}
 
-	if (!u->opts.no_devs_have) {
+	unsigned ptrs_kill = ptr_mask_remap(c, old, u->opts.ptrs_kill,	bkey_i_to_s_c(insert));
+	if (ptrs_kill) {
 		/* Don't replace non-cached replicas with cached: */
-		if (u->opts.ptrs_kill)
-			bkey_for_each_ptr(bch2_bkey_ptrs_c(bkey_i_to_s_c(&new->k_i)), ptr)
-				BUG_ON(ptr->cached);
+		bool replacing_non_cached_replicas = false;
+		unsigned ptr_bit = 1;
+		bkey_for_each_ptr(bch2_bkey_ptrs_c(bkey_i_to_s_c(insert)), ptr) {
+			if (ptrs_kill & ptr_bit)
+				replacing_non_cached_replicas |= !ptr->cached;
+			ptr_bit <<= 1;
+		}
 
+		if (replacing_non_cached_replicas)
+			bkey_for_each_ptr(bch2_bkey_ptrs_c(bkey_i_to_s_c(&new->k_i)), ptr)
+				if (ptr->cached) {
+					CLASS(bch_log_msg_ratelimited, msg)(c);
+					prt_printf(&msg.m, "data update tried to replace non cached data with cached:\n");
+					data_update_key_to_text(&msg.m, u, k, bkey_i_to_s_c(&new->k_i),
+								insert);
+					return 0;
+				}
+	}
+
+	if (!u->opts.no_devs_have) {
 		/*
 		 * Drop replicas in the existing extent that conflict with what
 		 * we just wrote - but only if they were explicitly specified in
@@ -422,23 +427,7 @@ static int data_update_index_update_key(struct btree_trans *trans,
 				   old_durability.total,
 				   new_durability.total,
 				   opts.data_replicas);
-			prt_str(&msg.m, "orig: ");
-			bch2_bkey_val_to_text(&msg.m, c, k);
-			prt_newline(&msg.m);
-
-			prt_str(&msg.m, "wrote: ");
-			bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(bch2_keylist_front(&u->op.insert_keys)));
-			prt_newline(&msg.m);
-
-			prt_str(&msg.m, "new: ");
-			bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(&new->k_i));
-			prt_newline(&msg.m);
-
-			prt_str(&msg.m, "insert: ");
-			bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(insert));
-			prt_newline(&msg.m);
-
-			bch2_data_update_to_text(&msg.m, u);
+			data_update_key_to_text(&msg.m, u, k, bkey_i_to_s_c(&new->k_i), insert);
 			bch2_fs_emergency_read_only(c, &msg.m);
 			return bch_err_throw(c, emergency_ro);
 		}
