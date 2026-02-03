@@ -376,6 +376,14 @@ u64 bch2_copygc_dev_wait_amount(struct bch_dev *ca)
 	for (unsigned i = 0; i < BCH_DATA_NR; i++)
 		usage.buckets[i] = usage_full.d[i].buckets;
 
+	/* Don't start until less than 20% of the device is free */
+	u64 available = (usage.buckets[BCH_DATA_free] +
+			 usage.buckets[BCH_DATA_need_gc_gens] +
+			 usage.buckets[BCH_DATA_need_discard]);
+	s64 wait = available * 5 - ca->mi.nbuckets;
+	if (wait > 0)
+		return wait;
+
 	s64 fragmented_allowed = (((__dev_buckets_available(ca, usage, BCH_WATERMARK_stripe) +
 				    (ca->mi.nbuckets >> 6)) * /* Copygc hard reserve */
 				   ca->mi.bucket_size) >> 1);
