@@ -196,6 +196,7 @@ read_attribute(journal_debug);
 read_attribute(btree_cache);
 read_attribute(btree_key_cache);
 read_attribute(btree_reserve_cache);
+read_attribute(btree_write_buffer);
 read_attribute(open_buckets);
 read_attribute(open_buckets_partial);
 read_attribute(nocow_lock_table);
@@ -364,6 +365,9 @@ SHOW(bch2_fs)
 
 	if (attr == &sysfs_btree_reserve_cache)
 		bch2_btree_reserve_cache_to_text(out, c);
+
+	if (attr == &sysfs_btree_write_buffer)
+		bch2_btree_write_buffer_to_text(out, c);
 
 	if (attr == &sysfs_open_buckets)
 		bch2_open_buckets_to_text(out, c, NULL);
@@ -611,6 +615,7 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_btree_cache,
 	&sysfs_btree_key_cache,
 	&sysfs_btree_reserve_cache,
+	&sysfs_btree_write_buffer,
 	&sysfs_new_stripes,
 	&sysfs_open_buckets,
 	&sysfs_open_buckets_partial,
