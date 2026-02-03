@@ -50,6 +50,7 @@ struct snapshot_delete {
 	snapshot_id_list		delete_leaves;
 	interior_delete_list		delete_interior;
 	interior_delete_list		no_keys;
+	interior_delete_list		eytzinger_delete_list;
 
 	bool				running;
 	unsigned			version;
