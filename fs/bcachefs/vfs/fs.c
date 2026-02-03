@@ -1832,6 +1832,11 @@ static int bch2_vfs_write_inode(struct inode *vinode,
 	return bch2_err_class(ret);
 }
 
+static bool verify_i_size_at_evict;
+
+module_param_named(verify_i_size_at_evict, verify_i_size_at_evict, bool, 0644);
+MODULE_PARM_DESC(verify_i_size_at_evict, "");
+
 static void bch2_evict_inode(struct inode *vinode)
 {
 	struct bch_fs *c = vinode->i_sb->s_fs_info;
@@ -1851,7 +1856,7 @@ static void bch2_evict_inode(struct inode *vinode)
 	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) && delete)
 		write_inode_now(&inode->v, true);
 
-	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) || !delete) {
+	if (verify_i_size_at_evict) {
 		BUG_ON(inode_state_read_once(&inode->v) & I_DIRTY);
 
 		struct bch_inode_unpacked inode_u;
