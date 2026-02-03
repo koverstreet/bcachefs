@@ -302,10 +302,33 @@ static inline u32 interior_delete_has_id(interior_delete_list *l, u32 id)
 	return i ? i->live_child : 0;
 }
 
-static bool snapshot_id_dying(struct snapshot_delete *d, unsigned id)
+static int snapshot_interior_delete_cmp(const void *_l, const void *_r)
 {
-	return snapshot_list_has_id(&d->delete_leaves, id) ||
-		interior_delete_has_id(&d->delete_interior, id) != 0;
+	const struct snapshot_interior_delete *l = _l;
+	const struct snapshot_interior_delete *r = _r;
+
+	return cmp_int(l->id, r->id);
+}
+
+static const struct snapshot_interior_delete *snapshot_id_dying(struct snapshot_delete *d, unsigned id)
+{
+	struct snapshot_interior_delete search = { id };
+
+	const struct snapshot_interior_delete *ret =
+		darray_eytzinger1_find(d->eytzinger_delete_list, snapshot_interior_delete_cmp, &search);
+
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
+		if (!ret) {
+			BUG_ON(snapshot_list_has_id(&d->delete_leaves, id));
+			BUG_ON(interior_delete_has_id(&d->delete_interior, id));
+		} else if (!ret->live_child) {
+			BUG_ON(!snapshot_list_has_id(&d->delete_leaves, id));
+		} else {
+			BUG_ON(ret->live_child != interior_delete_has_id(&d->delete_interior, id));
+		}
+	}
+
+	return ret;
 }
 
 static int delete_dead_snapshots_process_key(struct btree_trans *trans,
@@ -321,30 +344,31 @@ static int delete_dead_snapshots_process_key(struct btree_trans *trans,
 	if (ret)
 		return bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 
-	if (snapshot_list_has_id(&d->delete_leaves, k.k->p.snapshot))
-		return bch2_btree_delete_at(trans, iter,
-					    BTREE_UPDATE_internal_snapshot_node);
+	const struct snapshot_interior_delete *dying = snapshot_id_dying(d, k.k->p.snapshot);
+	if (!dying)
+		return 0;
 
-	u32 live_child = interior_delete_has_id(&d->delete_interior, k.k->p.snapshot);
-	if (live_child) {
-		BUG_ON(!bch2_snapshot_exists(c, live_child));
+	if (dying->live_child) {
+		BUG_ON(!bch2_snapshot_exists(c, dying->live_child));
 
-		struct bkey_i *new = errptr_try(bch2_bkey_make_mut_noupdate(trans, k));
+		struct bpos dst = k.k->p;
+		dst.snapshot = dying->live_child;
 
-		new->k.p.snapshot = live_child;
-
-		CLASS(btree_iter, dst_iter)(trans, iter->btree_id, new->k.p,
+		CLASS(btree_iter, dst_iter)(trans, iter->btree_id, dst,
 					    BTREE_ITER_all_snapshots|BTREE_ITER_intent);
 		struct bkey_s_c dst_k = bkey_try(bch2_btree_iter_peek_slot(&dst_iter));
 
-		return (bkey_deleted(dst_k.k)
-			 ? bch2_trans_update(trans, &dst_iter, new,
-					     BTREE_UPDATE_internal_snapshot_node)
-			 : 0) ?:
-			bch2_btree_delete_at(trans, iter,
-					     BTREE_UPDATE_internal_snapshot_node);
+		if (bkey_deleted(dst_k.k)) {
+			struct bkey_i *new = errptr_try(bch2_bkey_make_mut_noupdate(trans, k));
+
+			new->k.p = dst;
+			try(bch2_trans_update(trans, &dst_iter, new,
+					      BTREE_UPDATE_internal_snapshot_node));
+		}
 	}
 
+	try(bch2_btree_delete_at(trans, iter,
+				 BTREE_UPDATE_internal_snapshot_node));
 	return 0;
 }
 
@@ -641,6 +665,17 @@ static int delete_dead_snapshots_locked(struct bch_fs *c)
 	if (!d->delete_leaves.nr && !d->delete_interior.nr)
 		return 0;
 
+	/*
+	 * Eytzinger trees with 1-based indexing are faster than 0-based
+	 * indexing due to better cacheline alignment:
+	 */
+	try(darray_push(&d->eytzinger_delete_list, ((struct snapshot_interior_delete) {})));
+	darray_for_each(d->delete_interior, i)
+		try(darray_push(&d->eytzinger_delete_list, *i));
+	darray_for_each(d->delete_leaves, i)
+		try(darray_push(&d->eytzinger_delete_list, ((struct snapshot_interior_delete) { *i })));
+	darray_eytzinger1_sort(d->eytzinger_delete_list, snapshot_interior_delete_cmp);
+
 	CLASS(printbuf, buf)();
 	bch2_snapshot_delete_nodes_to_text(&buf, d, false);
 	try(commit_do(trans, NULL, NULL, 0, bch2_trans_log_msg(trans, &buf)));
@@ -682,6 +717,7 @@ int __bch2_delete_dead_snapshots(struct bch_fs *c)
 		darray_exit(&d->no_keys);
 		darray_exit(&d->delete_interior);
 		darray_exit(&d->delete_leaves);
+		darray_exit(&d->eytzinger_delete_list);
 		d->running = false;
 	}
 
