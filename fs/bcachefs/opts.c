@@ -928,10 +928,11 @@ void bch2_inode_opts_to_text(struct printbuf *out, struct bch_fs *c, struct bch_
 {
 	bool first = true;
 
-#define x(_name, _bits)			\
-	if (!first)			\
-		prt_char(out, ',');	\
-	first = false;			\
+#define x(_name, _bits)							\
+	if (!first)							\
+		prt_char(out, ',');					\
+	first = false;							\
+	prt_printf(out, "%s=", bch2_opt_table[Opt_##_name].attr.name);	\
 	bch2_opt_to_text(out, c, c->disk_sb.sb, &bch2_opt_table[Opt_##_name], opts._name, 0);
 	BCH_INODE_OPTS()
 #undef x
