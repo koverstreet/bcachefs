@@ -582,6 +582,8 @@ static inline struct bkey_s_c btree_path_level_prev(struct btree_trans *trans,
 						    struct btree_path_level *l,
 						    struct bkey *u)
 {
+	BUG_ON(path->ref != 1);
+
 	struct bkey_s_c k = __btree_iter_unpack(trans->c, l, u,
 			bch2_btree_node_iter_prev(&l->iter, l->b));
 
@@ -2670,6 +2672,13 @@ static struct bkey_s_c __bch2_btree_iter_peek_prev(struct btree_iter *iter, stru
 
 		k = btree_path_level_peek_all(trans->c, l, &iter->k);
 		if (!k.k || bpos_gt(k.k->p, search_key)) {
+			iter->path = bch2_btree_path_make_mut(trans, iter->path,
+					iter->flags & BTREE_ITER_intent,
+					btree_iter_ip_allocated(iter));
+			path = btree_iter_path(trans, iter);
+			btree_path_set_should_be_locked(trans, path);
+			l = path_l(path);
+
 			k = btree_path_level_prev(trans, path, l, &iter->k);
 
 			BUG_ON(k.k && bpos_gt(k.k->p, search_key));
