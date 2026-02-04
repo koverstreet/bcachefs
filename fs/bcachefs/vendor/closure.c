@@ -58,7 +58,13 @@ void bch2_closure_sub(struct closure *cl, int v)
 			} else
 				s = CLOSURE_done;
 
-			sleeper = new & CLOSURE_SLEEPING ? cl->sleeper : NULL;
+			if (new & CLOSURE_SLEEPING) {
+				/* pairs with cmpxchg_release in closure_sync() */
+				smp_rmb();
+				sleeper = cl->sleeper;
+			} else {
+				sleeper = NULL;
+			}
 			new &= ~CLOSURE_SLEEPING;
 		}
 
@@ -73,6 +79,9 @@ void bch2_closure_sub(struct closure *cl, int v)
 		wake_up_process(sleeper);
 		return;
 	}
+
+	/* pairs with cmpxchg_release in continue_at() et al. */
+	smp_rmb();
 
 	if (s == CLOSURE_requeue) {
 		closure_queue(cl);
@@ -135,6 +144,7 @@ bool bch2_closure_wait(struct closure_waitlist *waitlist, struct closure *cl)
 void __sched __bch2_closure_sync(struct closure *cl)
 {
 	cl->sleeper = current;
+	/* cmpxchg_release provides release ordering; pairs with smp_rmb in closure_sub */
 	bch2_closure_sub(cl,
 		    CLOSURE_REMAINING_INITIALIZER -
 		    CLOSURE_SLEEPING);
