@@ -532,6 +532,12 @@ static inline void bkey_reassemble(struct bkey_i *dst,
 	memcpy_u64s_small(&dst->v, src.v, bkey_val_u64s(src.k));
 }
 
+static inline struct bpos bpos_with_snapshot(struct bpos pos, u32 snapshot)
+{
+	pos.snapshot = snapshot;
+	return pos;
+}
+
 /* byte order helpers */
 
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__

@@ -171,50 +171,51 @@ static int overlapping_extents_found(struct btree_trans *trans,
 				     struct extent_end *extent_end)
 {
 	struct bch_fs *c = trans->c;
-	CLASS(printbuf, buf)();
+
+	u32 descendent_snapshot = min(pos1.snapshot, pos2.p.snapshot);
+	BUG_ON(!bch2_snapshot_is_ancestor(c, descendent_snapshot, pos1.snapshot));
+	BUG_ON(!bch2_snapshot_is_ancestor(c, descendent_snapshot, pos2.p.snapshot));
 
 	BUG_ON(bkey_le(pos1, bkey_start_pos(&pos2)));
+	BUG_ON(bkey_ge(pos1, pos2.p));
 
-	CLASS(btree_iter, iter1)(trans, btree, pos1,
-				 BTREE_ITER_all_snapshots|
-				 BTREE_ITER_not_extents);
-	struct bkey_s_c k1 = bkey_try(bch2_btree_iter_peek_max(&iter1, POS(pos1.inode, U64_MAX)));
-
+	CLASS(printbuf, buf)();
 	prt_printf(&buf, "overlapping extents in ");
-	try(bch2_inum_snapshot_to_path(trans, pos1.inode,
-				       min(pos1.snapshot, pos2.p.snapshot), NULL, &buf));
+	try(bch2_inum_snapshot_to_path(trans, pos1.inode, descendent_snapshot, NULL, &buf));
 	prt_newline(&buf);
+
+	CLASS(btree_iter, iter1)(trans, btree, bpos_with_snapshot(pos1, descendent_snapshot),
+				 BTREE_ITER_not_extents);
+	struct bkey_s_c k1 = bkey_try(bch2_btree_iter_peek_slot(&iter1));
+
+	CLASS(btree_iter, iter2)(trans, btree, bpos_with_snapshot(pos2.p, descendent_snapshot),
+				 BTREE_ITER_not_extents);
+	struct bkey_s_c k2 = bkey_try(bch2_btree_iter_peek_slot(&iter2));
+
+	if (bkey_deleted(k1.k) || !bpos_eq(k1.k->p, pos1)) {
+		prt_printf(&buf, " error finding first overlapping extent when repairing, got\n");
+		bch2_bkey_val_to_text(&buf, c, k1);
+		prt_str(&buf, "\nwanted\n");
+		bch2_bpos_to_text(&buf, pos1);
+		bch2_print_str_loglevel(c, LOGLEVEL_err, buf.buf);
+		return bch_err_throw(c, internal_fsck_err);
+	}
+
+	if (k2.k->type != pos2.type ||
+	    !bpos_eq(bkey_start_pos(k2.k), bkey_start_pos(&pos2)) ||
+	    !bpos_eq(k2.k->p, pos2.p)) {
+		prt_printf(&buf, " error finding second overlapping extent when repairing, got\n");
+		bch2_bkey_val_to_text(&buf, c, k2);
+		prt_str(&buf, "\nwanted\n");
+		bch2_bkey_to_text(&buf, &pos2);
+		bch2_print_str_loglevel(c, LOGLEVEL_err, buf.buf);
+		return bch_err_throw(c, internal_fsck_err);
+	}
 
 	bch2_bkey_val_to_text(&buf, c, k1);
-
-	if (!bpos_eq(pos1, k1.k->p)) {
-		prt_str(&buf, "\nwanted\n  ");
-		bch2_bpos_to_text(&buf, pos1);
-		prt_str(&buf, "\n");
-		bch2_bkey_to_text(&buf, &pos2);
-
-		bch_err(c, "%s: error finding first overlapping extent when repairing, got%s",
-			__func__, buf.buf);
-		return bch_err_throw(c, internal_fsck_err);
-	}
-
-	CLASS(btree_iter_copy, iter2)(&iter1);
-
-	struct bkey_s_c k2;
-	do {
-		bch2_btree_iter_advance(&iter2);
-		k2 = bkey_try(bch2_btree_iter_peek_max(&iter2, POS(pos1.inode, U64_MAX)));
-	} while (bpos_lt(k2.k->p, pos2.p));
-
 	prt_newline(&buf);
 	bch2_bkey_val_to_text(&buf, c, k2);
-
-	if (bpos_gt(k2.k->p, pos2.p) ||
-	    pos2.size != k2.k->size) {
-		bch_err(c, "%s: error finding seconding overlapping extent when repairing%s",
-			__func__, buf.buf);
-		return bch_err_throw(c, internal_fsck_err);
-	}
+	prt_newline(&buf);
 
 	bool first = (k1.k->type == KEY_TYPE_extent_whiteout ||
 		      k2.k->type == KEY_TYPE_extent_whiteout)
