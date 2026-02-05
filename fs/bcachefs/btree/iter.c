@@ -2146,7 +2146,9 @@ inline bool bch2_btree_iter_advance(struct btree_iter *iter)
 
 inline bool bch2_btree_iter_rewind(struct btree_iter *iter)
 {
-	struct bpos pos = bkey_start_pos(&iter->k);
+	struct bpos pos = iter->flags & BTREE_ITER_is_extents
+		? bkey_start_pos(&iter->k)
+		: iter->k.p;
 	bool ret = !(iter->flags & BTREE_ITER_all_snapshots
 		     ? bpos_eq(pos, POS_MIN)
 		     : bkey_eq(pos, POS_MIN));
