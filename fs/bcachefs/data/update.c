@@ -396,7 +396,6 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	try(bch2_trans_log_str(trans, bch2_data_update_type_strs[u->opts.type]));
 	try(bch2_trans_log_bkey(trans, u->btree_id, 0, u->k.k));
 
-	try(bch2_insert_snapshot_whiteouts(trans, u->btree_id, k.k->p, bkey_start_pos(&insert->k)));
 	try(bch2_insert_snapshot_whiteouts(trans, u->btree_id, k.k->p, insert->k.p));
 
 	/*
