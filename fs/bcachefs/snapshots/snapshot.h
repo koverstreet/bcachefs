@@ -257,6 +257,8 @@ static inline int snapshot_list_merge(struct bch_fs *c, snapshot_id_list *dst, s
 	return 0;
 }
 
+void bch2_snapshot_id_list_to_text(struct printbuf *, snapshot_id_list *);
+
 u32 __bch2_snapshot_tree_next(struct bch_fs *, struct snapshot_table *, u32, unsigned *);
 u32 bch2_snapshot_tree_next(struct bch_fs *, u32, unsigned *);
 

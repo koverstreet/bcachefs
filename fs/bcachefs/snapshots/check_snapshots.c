@@ -512,17 +512,6 @@ static inline bool snapshot_id_lists_have_common(snapshot_id_list *l, snapshot_i
 	return darray_find_p(*l, i, snapshot_list_has_id(r, *i)) != NULL;
 }
 
-static void snapshot_id_list_to_text(struct printbuf *out, snapshot_id_list *s)
-{
-	bool first = true;
-	darray_for_each(*s, i) {
-		if (!first)
-			prt_char(out, ' ');
-		first = false;
-		prt_printf(out, "%u", *i);
-	}
-}
-
 static int snapshot_tree_reconstruct_next(struct bch_fs *c, struct snapshot_tree_reconstruct *r)
 {
 	if (r->cur_ids.nr) {
@@ -573,7 +562,7 @@ int bch2_reconstruct_snapshots(struct bch_fs *c)
 
 	darray_for_each(r.trees, t) {
 		printbuf_reset(&buf);
-		snapshot_id_list_to_text(&buf, t);
+		bch2_snapshot_id_list_to_text(&buf, t);
 
 		darray_for_each(*t, id) {
 			if (fsck_err_on(bch2_snapshot_id_state(c, *id) == SNAPSHOT_ID_empty,
