@@ -151,7 +151,7 @@ int bch2_repair_inode_hash_info(struct btree_trans *trans,
 				struct bch_inode_unpacked *snapshot_root)
 {
 	BUG_ON(bad_inode->bi_inum != snapshot_root->bi_inum);
-	BUG_ON(!bch2_snapshot_is_ancestor(trans->c, bad_inode->bi_snapshot, snapshot_root->bi_snapshot));
+	BUG_ON(!bch2_snapshot_is_ancestor(trans, bad_inode->bi_snapshot, snapshot_root->bi_snapshot));
 
 	CLASS(printbuf, buf)();
 	prt_printf(&buf, "inum %llu: inode hash info in snapshots %u, %u mismatch\n",

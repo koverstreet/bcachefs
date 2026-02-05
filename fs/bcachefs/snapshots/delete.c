@@ -563,7 +563,7 @@ static int check_should_delete_snapshot(struct btree_trans *trans, struct bkey_s
 		};
 
 		BUG_ON(n.id == n.live_child);
-		BUG_ON(!bch2_snapshot_is_ancestor(c, n.live_child, n.id));
+		BUG_ON(!bch2_snapshot_is_ancestor(trans, n.live_child, n.id));
 
 		/*
 		 * We're not doing any processing for NO_KEYS snapshot nodes,
@@ -615,7 +615,7 @@ static int bch2_fix_child_of_deleted_snapshot(struct btree_trans *trans,
 
 	darray_for_each(*deleted, i)
 		nr_deleted_ancestors += bch2_snapshots_same_tree(c, s->k.p.offset, i->id) &&
-		bch2_snapshot_is_ancestor(c, s->k.p.offset, i->id);
+		bch2_snapshot_is_ancestor(trans, s->k.p.offset, i->id);
 
 	if (!nr_deleted_ancestors)
 		return 0;

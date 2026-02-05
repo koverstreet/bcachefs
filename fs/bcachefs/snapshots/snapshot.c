@@ -110,8 +110,9 @@ static bool test_ancestor_bitmap(struct snapshot_table *t, u32 id, u32 ancestor)
 	return test_bit(ancestor - id - 1, s->is_ancestor);
 }
 
-bool __bch2_snapshot_is_ancestor(struct bch_fs *c, u32 id, u32 ancestor)
+bool __bch2_snapshot_is_ancestor(struct btree_trans *trans, u32 id, u32 ancestor)
 {
+	struct bch_fs *c = trans->c;
 #ifdef CONFIG_BCACHEFS_DEBUG
 	u32 orig_id = id;
 #endif
@@ -502,8 +503,8 @@ int __bch2_get_snapshot_overwrites(struct btree_trans *trans,
 		if (!bkey_eq(k.k->p, pos))
 			break;
 
-		if (!bch2_snapshot_is_ancestor(c, k.k->p.snapshot, pos.snapshot) ||
-		    snapshot_list_has_ancestor(c, s, k.k->p.snapshot))
+		if (!bch2_snapshot_is_ancestor(trans, k.k->p.snapshot, pos.snapshot) ||
+		    snapshot_list_has_ancestor(trans, s, k.k->p.snapshot))
 			continue;
 
 		try(snapshot_list_add(c, s, k.k->p.snapshot));
@@ -628,7 +629,6 @@ int __bch2_key_has_snapshot_overwrites(struct btree_trans *trans,
 				       enum btree_id id,
 				       struct bpos pos)
 {
-	struct bch_fs *c = trans->c;
 	struct bkey_s_c k;
 	int ret;
 
@@ -639,7 +639,7 @@ int __bch2_key_has_snapshot_overwrites(struct btree_trans *trans,
 		if (!bkey_eq(pos, k.k->p))
 			break;
 
-		if (bch2_snapshot_is_ancestor(c, k.k->p.snapshot, pos.snapshot))
+		if (bch2_snapshot_is_ancestor(trans, k.k->p.snapshot, pos.snapshot))
 			return 1;
 	}
 

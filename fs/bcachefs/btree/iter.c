@@ -295,7 +295,7 @@ static int __bch2_btree_iter_verify_ret(struct btree_iter *iter, struct bkey_s_c
 	if (bkey_err(k) || !k.k)
 		return 0;
 
-	BUG_ON(!bch2_snapshot_is_ancestor(trans->c,
+	BUG_ON(!bch2_snapshot_is_ancestor(trans,
 					  iter->snapshot,
 					  k.k->p.snapshot));
 
@@ -307,7 +307,7 @@ static int __bch2_btree_iter_verify_ret(struct btree_iter *iter, struct bkey_s_c
 		return 0;
 
 	if (bkey_eq(prev.k->p, k.k->p) &&
-	    bch2_snapshot_is_ancestor(trans->c, iter->snapshot,
+	    bch2_snapshot_is_ancestor(trans, iter->snapshot,
 				      prev.k->p.snapshot) > 0) {
 		struct printbuf buf1 = PRINTBUF, buf2 = PRINTBUF;
 
@@ -2532,7 +2532,7 @@ struct bkey_s_c bch2_btree_iter_peek_max(struct btree_iter *iter, struct bpos en
 			 * We can never have a key in a leaf node at POS_MAX, so
 			 * we don't have to check these successor() calls:
 			 */
-			if (!bch2_snapshot_is_ancestor(trans->c,
+			if (!bch2_snapshot_is_ancestor(trans,
 						       iter->snapshot,
 						       k.k->p.snapshot)) {
 				search_key = bpos_successor(k.k->p);
@@ -2803,7 +2803,7 @@ struct bkey_s_c bch2_btree_iter_peek_prev_min(struct btree_iter *iter, struct bp
 			if (unlikely(bkey_lt(k.k->p, end)))
 				goto end;
 
-			if (!bch2_snapshot_is_ancestor(trans->c, iter->snapshot, k.k->p.snapshot)) {
+			if (!bch2_snapshot_is_ancestor(trans, iter->snapshot, k.k->p.snapshot)) {
 				search_key = bpos_predecessor(k.k->p);
 				continue;
 			}

@@ -268,8 +268,6 @@ static int check_overlapping_extents(struct btree_trans *trans,
 				     struct btree_iter *iter,
 				     bool *fixed)
 {
-	struct bch_fs *c = trans->c;
-
 	/* transaction restart, running again */
 	if (bpos_eq(extent_ends->last_pos, k.k->p))
 		return 0;
@@ -281,7 +279,7 @@ static int check_overlapping_extents(struct btree_trans *trans,
 		if (i->offset <= bkey_start_offset(k.k))
 			continue;
 
-		if (!bch2_ref_visible2(c,
+		if (!bch2_ref_visible2(trans,
 				  k.k->p.snapshot, seen,
 				  i->snapshot, &i->seen))
 			continue;
@@ -364,7 +362,7 @@ static int check_extent(struct btree_trans *trans, struct btree_iter *iter,
 		     inode->inodes.data && i >= inode->inodes.data;
 		     --i) {
 			if (i->inode.bi_snapshot > k.k->p.snapshot ||
-			    !bch2_key_visible_in_snapshot(c, s, i->inode.bi_snapshot, k.k->p.snapshot))
+			    !bch2_key_visible_in_snapshot(trans, s, i->inode.bi_snapshot, k.k->p.snapshot))
 				continue;
 
 			u64 last_block = round_up(i->inode.bi_size, block_bytes(c)) >> 9;
@@ -399,7 +397,7 @@ static int check_extent(struct btree_trans *trans, struct btree_iter *iter,
 		     --i) {
 			if (i->whiteout ||
 			    i->inode.bi_snapshot > k.k->p.snapshot ||
-			    !bch2_key_visible_in_snapshot(c, s, i->inode.bi_snapshot, k.k->p.snapshot))
+			    !bch2_key_visible_in_snapshot(trans, s, i->inode.bi_snapshot, k.k->p.snapshot))
 				continue;
 
 			i->count += k.k->size;

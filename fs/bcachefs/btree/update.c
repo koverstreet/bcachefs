@@ -107,7 +107,7 @@ static int need_whiteout_for_snapshot(struct btree_trans *trans,
 		if (!bkey_eq(k.k->p, pos))
 			break;
 
-		if (bch2_snapshot_is_ancestor(trans->c, snapshot,
+		if (bch2_snapshot_is_ancestor(trans, snapshot,
 					      k.k->p.snapshot)) {
 			ret = !bkey_whiteout(k.k);
 			break;

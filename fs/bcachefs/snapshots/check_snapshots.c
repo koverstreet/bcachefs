@@ -72,7 +72,7 @@ static int bch2_snapshot_tree_master_subvol(struct btree_trans *trans,
 			continue;
 
 		struct bkey_s_c_subvolume s = bkey_s_c_to_subvolume(k);
-		if (!bch2_snapshot_is_ancestor(c, le32_to_cpu(s.v->snapshot), snapshot_root))
+		if (!bch2_snapshot_is_ancestor(trans, le32_to_cpu(s.v->snapshot), snapshot_root))
 			continue;
 		if (!BCH_SUBVOLUME_SNAP(s.v)) {
 			*subvol_id = s.k->p.offset;
@@ -141,7 +141,7 @@ static int check_snapshot_tree(struct btree_trans *trans,
 			"snapshot tree points to missing subvolume:\n%s",
 			(printbuf_reset(&buf),
 			 bch2_bkey_val_to_text(&buf, c, st.s_c), buf.buf)) ||
-	    fsck_err_on(!bch2_snapshot_is_ancestor(c,
+	    fsck_err_on(!bch2_snapshot_is_ancestor(trans,
 						le32_to_cpu(subvol.snapshot),
 						root_id),
 			trans, snapshot_tree_to_wrong_subvol,

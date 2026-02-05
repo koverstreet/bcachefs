@@ -311,7 +311,7 @@ restart:
 	darray_for_each(subvols, i) {
 		u32 snap;
 		try(bch2_subvolume_get_snapshot(trans, *i, &snap));
-		try(bch2_snapshot_is_ancestor(c, snap, p.snapshot));
+		try(bch2_snapshot_is_ancestor(trans, snap, p.snapshot));
 	}
 
 	return 0;

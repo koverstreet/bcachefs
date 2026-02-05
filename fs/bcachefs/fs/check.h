@@ -27,10 +27,10 @@ DEFINE_CLASS(snapshots_seen, struct snapshots_seen,
 int bch2_snapshots_seen_update(struct bch_fs *, struct snapshots_seen *,
 			       enum btree_id, struct bpos);
 
-bool bch2_key_visible_in_snapshot(struct bch_fs *, struct snapshots_seen *, u32, u32);
+bool bch2_key_visible_in_snapshot(struct btree_trans *, struct snapshots_seen *, u32, u32);
 
-bool bch2_ref_visible(struct bch_fs *, struct snapshots_seen *, u32, u32);
-int bch2_ref_visible2(struct bch_fs *,
+bool bch2_ref_visible(struct btree_trans *, struct snapshots_seen *, u32, u32);
+int bch2_ref_visible2(struct btree_trans *,
 		      u32, struct snapshots_seen *,
 		      u32, struct snapshots_seen *);
 

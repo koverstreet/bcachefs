@@ -54,7 +54,7 @@ static int nlink_cmp(const void *_l, const void *_r)
 	return cmp_int(l->inum, r->inum);
 }
 
-static void inc_link(struct bch_fs *c, struct snapshots_seen *s,
+static void inc_link(struct btree_trans *trans, struct snapshots_seen *s,
 		     struct nlink_table *links,
 		     u64 range_start, u64 range_end, u64 inum, u32 snapshot)
 {
@@ -74,7 +74,7 @@ static void inc_link(struct bch_fs *c, struct snapshots_seen *s,
 		--link;
 
 	for (; link < links->d + links->nr && link->inum == inum; link++)
-		if (bch2_ref_visible(c, s, snapshot, link->snapshot)) {
+		if (bch2_ref_visible(trans, s, snapshot, link->snapshot)) {
 			link->count++;
 			if (link->snapshot >= snapshot)
 				break;
@@ -148,7 +148,7 @@ static int check_nlinks_walk_dirents(struct bch_fs *c, struct nlink_table *links
 
 			if (d.v->d_type != DT_DIR &&
 			    d.v->d_type != DT_SUBVOL)
-				inc_link(c, &s, links, range_start, range_end,
+				inc_link(trans, &s, links, range_start, range_end,
 					 le64_to_cpu(d.v->d_inum), d.k->p.snapshot);
 		}
 		0;

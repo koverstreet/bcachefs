@@ -413,7 +413,7 @@ int bch2_inode_find_oldest_snapshot(struct btree_trans *trans, u64 inum, u32 sna
 		if (k.k->p.offset != inum)
 			break;
 		if (!bkey_is_inode(k.k) ||
-		    !bch2_snapshot_is_ancestor(trans->c, snapshot, k.k->p.snapshot))
+		    !bch2_snapshot_is_ancestor(trans, snapshot, k.k->p.snapshot))
 			continue;
 		try(bch2_inode_unpack(k, root));
 		ret = 0;
@@ -659,7 +659,6 @@ static struct bkey_s_c
 bch2_bkey_get_iter_snapshot_parent(struct btree_trans *trans, struct btree_iter *iter,
 				   enum btree_id btree, struct bpos pos)
 {
-	struct bch_fs *c = trans->c;
 	struct bkey_s_c k;
 	int ret = 0;
 
@@ -668,7 +667,7 @@ bch2_bkey_get_iter_snapshot_parent(struct btree_trans *trans, struct btree_iter 
 
 	for_each_btree_key_max_continue_norestart(*iter, SPOS(pos.inode, pos.offset, U32_MAX),
 						  BTREE_ITER_all_snapshots, k, ret)
-		if (bch2_snapshot_is_ancestor(c, pos.snapshot, k.k->p.snapshot))
+		if (bch2_snapshot_is_ancestor(trans, pos.snapshot, k.k->p.snapshot))
 			return k;
 
 	return ret ? bkey_s_c_err(ret) : bkey_s_c_null;
@@ -692,14 +691,13 @@ bch2_inode_get_iter_snapshot_parent(struct btree_trans *trans, struct btree_iter
 
 int __bch2_inode_has_child_snapshots(struct btree_trans *trans, struct bpos pos)
 {
-	struct bch_fs *c = trans->c;
 	struct bkey_s_c k;
 	int ret = 0;
 
 	for_each_btree_key_max_norestart(trans, iter,
 			BTREE_ID_inodes, POS(0, pos.offset), bpos_predecessor(pos),
 			BTREE_ITER_all_snapshots, k, ret)
-		if (bch2_snapshot_is_ancestor(c, k.k->p.snapshot, pos.snapshot) &&
+		if (bch2_snapshot_is_ancestor(trans, k.k->p.snapshot, pos.snapshot) &&
 		    bkey_is_inode(k.k)) {
 			ret = 1;
 			break;
@@ -969,7 +967,7 @@ int bch2_inode_create(struct btree_trans *trans,
 			if (pos < iter->pos.offset)
 				break;
 
-			if (bch2_snapshot_is_ancestor(trans->c, snapshot, k.k->p.snapshot) &&
+			if (bch2_snapshot_is_ancestor(trans, snapshot, k.k->p.snapshot) &&
 			    k.k->type == KEY_TYPE_inode_generation) {
 				pos = k.k->p.offset;
 				gen = le32_to_cpu(bkey_s_c_to_inode_generation(k).v->bi_generation);

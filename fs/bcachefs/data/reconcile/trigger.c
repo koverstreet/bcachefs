@@ -939,7 +939,7 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 
 			struct snapshot_io_opts_entry *i =
 				darray_find_p(snapshot_opts->d, i,
-					      bch2_snapshot_is_ancestor(c, k.k->p.snapshot, i->snapshot));
+					      bch2_snapshot_is_ancestor(trans, k.k->p.snapshot, i->snapshot));
 			if (i) {
 				*opts = i->io_opts;
 				return 0;
