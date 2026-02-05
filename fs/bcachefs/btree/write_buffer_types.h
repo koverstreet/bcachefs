@@ -48,12 +48,33 @@ struct btree_write_buffer_keys {
 	struct mutex			lock;
 };
 
+#define WB_FLUSH_CALLERS()		\
+	x(thread)			\
+	x(journal_pin)			\
+	x(sync)				\
+	x(maybe)			\
+	x(tryflush)
+
+enum wb_flush_caller {
+#define x(n)	WB_FLUSH_##n,
+	WB_FLUSH_CALLERS()
+#undef x
+	WB_FLUSH_NR,
+};
+
 struct bch_fs_btree_write_buffer {
 	DARRAY(struct wb_key_ref)	sorted;
 	struct btree_write_buffer_keys	inc;
 	struct btree_write_buffer_keys	flushing;
 
 	struct task_struct __rcu	*thread;
+
+	u64				nr_flushes;
+	u64				nr_flushes_caller[WB_FLUSH_NR];
+	u64				nr_keys_flushed;
+	u64				nr_keys_skipped_overwritten;
+	u64				nr_keys_fast;
+	u64				nr_keys_slowpath;
 
 	DARRAY(struct btree_write_buffered_key) accounting;
 };
