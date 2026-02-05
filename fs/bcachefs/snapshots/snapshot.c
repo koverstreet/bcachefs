@@ -394,11 +394,22 @@ static int __bch2_mark_snapshot(struct btree_trans *trans,
 			t->skip[2]	= 0;
 		}
 
+		unsigned long is_ancestor[BITS_TO_LONGS(IS_ANCESTOR_BITMAP)] = {};
 		u32 parent = id;
 
 		while ((parent = bch2_snapshot_parent_early(c, parent)) &&
 		       parent - id - 1 < IS_ANCESTOR_BITMAP)
-			__set_bit(parent - id - 1, t->is_ancestor);
+			__set_bit(parent - id - 1, is_ancestor);
+
+		/*
+		 * Readers access is_ancestor under RCU without locks.
+		 * memcpy is sufficient here because readers can tolerate
+		 * seeing a mix of old and new values - they'll just take
+		 * a slower path. barrier_data prevents the compiler from
+		 * eliding the temporary and writing directly to t->is_ancestor.
+		 */
+		barrier_data(is_ancestor);
+		memcpy(t->is_ancestor, is_ancestor, sizeof(t->is_ancestor));
 
 		if (BCH_SNAPSHOT_WILL_DELETE(s.v)) {
 			set_bit(BCH_FS_need_delete_dead_snapshots, &c->flags);
