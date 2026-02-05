@@ -110,28 +110,113 @@ static bool test_ancestor_bitmap(struct snapshot_table *t, u32 id, u32 ancestor)
 	return test_bit(ancestor - id - 1, s->is_ancestor);
 }
 
+static noinline __cold
+void bch2_is_ancestor_trace_fastpath(struct printbuf *out,
+				     struct snapshot_table *t,
+				     u32 id, u32 ancestor)
+{
+	prt_printf(out, "  fastpath: %u", id);
+	while (id && id < ancestor - IS_ANCESTOR_BITMAP) {
+		u32 next = get_ancestor_below(t, id, ancestor);
+		prt_printf(out, " -> %u", next);
+		id = next;
+	}
+	if (id && id < ancestor)
+		prt_printf(out, " bitmap[%u]=%u",
+			   ancestor - id - 1,
+			   test_ancestor_bitmap(t, id, ancestor));
+	prt_newline(out);
+}
+
+static noinline __cold
+void bch2_is_ancestor_trace_slowpath(struct printbuf *out,
+				     struct snapshot_table *t,
+				     u32 id, u32 ancestor)
+{
+	prt_printf(out, "  slowpath: %u", id);
+	while (id && id < ancestor) {
+		const struct snapshot_t *s = __snapshot_t(t, id);
+		u32 next = s ? s->parent : 0;
+		prt_printf(out, " -> %u", next);
+		id = next;
+	}
+	prt_newline(out);
+}
+
+static noinline __cold
+void bch2_is_ancestor_trace_btree(struct printbuf *out,
+				  struct btree_trans *trans,
+				  u32 id, u32 ancestor)
+{
+	prt_printf(out, "  btree:    %u", id);
+	while (id && id < ancestor) {
+		struct bch_snapshot s;
+		int ret = bch2_snapshot_lookup(trans, id, &s);
+		if (ret) {
+			prt_printf(out, " (lookup error %i)", ret);
+			break;
+		}
+		u32 next = le32_to_cpu(s.parent);
+		prt_printf(out, " -> %u", next);
+		id = next;
+	}
+	prt_newline(out);
+}
+
+static noinline __cold
+void bch2_snapshot_is_ancestor_debug(struct btree_trans *trans,
+				     u32 id, u32 ancestor,
+				     bool fastpath_ret)
+{
+	struct bch_fs *c = trans->c;
+	bool slowpath_ret;
+
+	scoped_guard(rcu) {
+		struct snapshot_table *t = rcu_dereference(c->snapshots.table);
+		slowpath_ret = __bch2_snapshot_is_ancestor_early(t, id, ancestor);
+	}
+
+	if (fastpath_ret == slowpath_ret)
+		return;
+
+	CLASS(printbuf, buf)();
+	prt_printf(&buf, "is_ancestor(%u, %u): fastpath=%u slowpath=%u\n",
+		   id, ancestor, fastpath_ret, slowpath_ret);
+
+	scoped_guard(rcu) {
+		struct snapshot_table *t = rcu_dereference(c->snapshots.table);
+		bch2_is_ancestor_trace_fastpath(&buf, t, id, ancestor);
+		bch2_is_ancestor_trace_slowpath(&buf, t, id, ancestor);
+	}
+
+	bch2_is_ancestor_trace_btree(&buf, trans, id, ancestor);
+	panic("%s", buf.buf);
+}
+
 bool __bch2_snapshot_is_ancestor(struct btree_trans *trans, u32 id, u32 ancestor)
 {
 	struct bch_fs *c = trans->c;
-#ifdef CONFIG_BCACHEFS_DEBUG
 	u32 orig_id = id;
-#endif
+	bool ret;
 
-	guard(rcu)();
-	struct snapshot_table *t = rcu_dereference(c->snapshots.table);
+	scoped_guard(rcu) {
+		struct snapshot_table *t = rcu_dereference(c->snapshots.table);
 
-	if (unlikely(recovery_pass_will_run(c, BCH_RECOVERY_PASS_check_snapshots)))
-		return __bch2_snapshot_is_ancestor_early(t, id, ancestor);
+		if (unlikely(recovery_pass_will_run(c, BCH_RECOVERY_PASS_check_snapshots)))
+			return __bch2_snapshot_is_ancestor_early(t, id, ancestor);
 
-	if (likely(ancestor >= IS_ANCESTOR_BITMAP))
-		while (id && id < ancestor - IS_ANCESTOR_BITMAP)
-			id = get_ancestor_below(t, id, ancestor);
+		if (likely(ancestor >= IS_ANCESTOR_BITMAP))
+			while (id && id < ancestor - IS_ANCESTOR_BITMAP)
+				id = get_ancestor_below(t, id, ancestor);
 
-	bool ret = id && id < ancestor
-		? test_ancestor_bitmap(t, id, ancestor)
-		: id == ancestor;
+		ret = id && id < ancestor
+			? test_ancestor_bitmap(t, id, ancestor)
+			: id == ancestor;
+	}
 
-	EBUG_ON(ret != __bch2_snapshot_is_ancestor_early(t, orig_id, ancestor));
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG))
+		bch2_snapshot_is_ancestor_debug(trans, orig_id, ancestor, ret);
+
 	return ret;
 }
 
