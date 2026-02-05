@@ -478,6 +478,17 @@ int bch2_snapshot_lookup(struct btree_trans *trans, u32 id,
 	return bch2_bkey_get_val_typed(trans, BTREE_ID_snapshots, POS(0, id), 0, snapshot, s);
 }
 
+void bch2_snapshot_id_list_to_text(struct printbuf *out, snapshot_id_list *s)
+{
+	bool first = true;
+	darray_for_each(*s, i) {
+		if (!first)
+			prt_char(out, ' ');
+		first = false;
+		prt_printf(out, "%u", *i);
+	}
+}
+
 int __bch2_get_snapshot_overwrites(struct btree_trans *trans,
 				   enum btree_id btree, struct bpos pos,
 				   snapshot_id_list *s)
