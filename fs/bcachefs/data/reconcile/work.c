@@ -174,14 +174,15 @@ static int bch2_clear_reconcile_needs_scan(struct btree_trans *trans, struct bpo
 
 	try(commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
 		CLASS(btree_iter, iter)(trans, BTREE_ID_reconcile_scan, pos, BTREE_ITER_intent);
-		struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
-
-		v = k.k->type == KEY_TYPE_cookie
-			? le64_to_cpu(bkey_s_c_to_cookie(k).v->cookie)
-			: 0;
-		v == cookie
-			? bch2_btree_delete_at(trans, &iter, 0)
-			: 0;
+		struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
+		bkey_err(k) ?: ({
+			v = k.k->type == KEY_TYPE_cookie
+				? le64_to_cpu(bkey_s_c_to_cookie(k).v->cookie)
+				: 0;
+			v == cookie
+				? bch2_btree_delete_at(trans, &iter, 0)
+				: 0;
+		});
 	})));
 
 	event_inc_trace(c, reconcile_clear_scan, buf, ({
