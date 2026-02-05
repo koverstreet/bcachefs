@@ -506,12 +506,8 @@ int __bch2_get_snapshot_overwrites(struct btree_trans *trans,
 		    snapshot_list_has_ancestor(c, s, k.k->p.snapshot))
 			continue;
 
-		ret = snapshot_list_add(c, s, k.k->p.snapshot);
-		if (ret)
-			break;
+		try(snapshot_list_add(c, s, k.k->p.snapshot));
 	}
-	if (ret)
-		darray_exit(s);
 
 	return ret;
 }

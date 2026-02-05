@@ -308,8 +308,6 @@ static inline int bch2_get_snapshot_overwrites(struct btree_trans *trans,
 					       enum btree_id btree, struct bpos pos,
 					       snapshot_id_list *s)
 {
-	darray_init(s);
-
 	return bch2_snapshot_has_children(trans->c, pos.snapshot)
 		? __bch2_get_snapshot_overwrites(trans, btree, pos, s)
 		: 0;
