@@ -174,6 +174,19 @@ int bch2_btree_write_buffer_resize(struct bch_fs *, size_t);
 
 void bch2_btree_write_buffer_to_text(struct printbuf *, struct bch_fs *);
 
+static inline void bch2_btree_write_buffer_wakeup(struct bch_fs *c)
+{
+	struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer;
+
+	guard(rcu)();
+	struct task_struct *p = rcu_dereference(wb->thread);
+	if (p)
+		wake_up_process(p);
+}
+
+void bch2_btree_write_buffer_stop(struct bch_fs *);
+int bch2_btree_write_buffer_start(struct bch_fs *);
+
 void bch2_fs_btree_write_buffer_exit(struct bch_fs *);
 void bch2_fs_btree_write_buffer_init_early(struct bch_fs *);
 int bch2_fs_btree_write_buffer_init(struct bch_fs *);

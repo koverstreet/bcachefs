@@ -320,6 +320,7 @@ static void __bch2_fs_read_only(struct bch_fs *c)
 	bch2_open_buckets_stop(c, NULL, true);
 	bch2_reconcile_stop(c);
 	bch2_copygc_stop(c);
+	bch2_btree_write_buffer_stop(c);
 	bch2_fs_ec_flush(c);
 	cancel_delayed_work_sync(&c->maybe_schedule_btree_bitmap_gc);
 
@@ -550,6 +551,7 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 	enumerated_ref_start(&c->writes);
 
 	int ret = bch2_journal_reclaim_start(&c->journal) ?:
+		  bch2_btree_write_buffer_start(c) ?:
 		  bch2_copygc_start(c) ?:
 		  bch2_reconcile_start(c);
 	if (ret) {
@@ -602,6 +604,7 @@ static void __bch2_fs_free(struct bch_fs *c)
 
 	bch2_reconcile_stop(c);
 	bch2_copygc_stop(c);
+	bch2_btree_write_buffer_stop(c);
 	bch2_free_pending_node_rewrites(c);
 	bch2_free_fsck_errs(c);
 	bch2_fs_vfs_exit(c);
@@ -790,6 +793,7 @@ int bch2_fs_init_rw(struct bch_fs *c)
 	try(bch2_fs_journal_init(&c->journal));
 	try(bch2_fs_vfs_init_rw(c));
 	try(bch2_journal_reclaim_start(&c->journal));
+	try(bch2_btree_write_buffer_start(c));
 	try(bch2_copygc_start(c));
 	try(bch2_reconcile_start(c));
 
