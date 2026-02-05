@@ -1206,7 +1206,19 @@ static int do_reconcile(struct moving_context *ctxt)
 						le64_to_cpu(bkey_s_c_to_cookie(k).v->cookie),
 						&sectors_scanned, &last_flushed);
 
-			BUG_ON(bch2_err_matches(ret, BCH_ERR_transaction_restart));
+			if (bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
+#ifdef CONFIG_BCACHEFS_DEBUG
+				CLASS(printbuf, buf)();
+				bch2_prt_backtrace(&buf, &trans->last_restarted_trace);
+				panic("in transaction restart: %s, last restarted by\n%s",
+				      bch2_err_str(trans->restarted),
+				      buf.buf);
+#else
+				panic("in transaction restart: %s, last restarted by %pS\n",
+				      bch2_err_str(trans->restarted),
+				      (void *) trans->last_restarted_ip);
+#endif
+			}
 		} else if (k.k->type == KEY_TYPE_backpointer) {
 			ret = do_reconcile_btree(ctxt, &snapshot_io_opts,
 						 r->work_pos, bkey_s_c_to_backpointer(k));
