@@ -999,10 +999,30 @@ static noinline struct btree *bch2_btree_node_fill(struct btree_trans *trans,
 		return b;
 
 	bkey_copy(&b->key, k);
-	if (bch2_btree_node_hash_insert(bc, b, level, btree_id)) {
-		/* raced with another fill: */
+	if (!bch2_btree_node_hash_insert(bc, b, level, btree_id)) {
+		set_btree_node_read_in_flight(b);
+		six_unlock_write(&b->c.lock);
 
-		/* mark as unhashed... */
+		if (path) {
+			u32 seq = six_lock_seq(&b->c.lock);
+
+			/* Unlock before doing IO: */
+			six_unlock_intent(&b->c.lock);
+			bch2_trans_unlock(trans);
+
+			bch2_btree_node_read(trans, b, sync);
+
+			if (!sync)
+				b = NULL;
+			else if (!six_relock_type(&b->c.lock, lock_type, seq))
+				b = NULL;
+		} else {
+			bch2_btree_node_read(trans, b, sync);
+			if (lock_type == SIX_LOCK_read)
+				six_lock_downgrade(&b->c.lock);
+		}
+	} else {
+		/* raced with another fill: */
 		b->hash_val = 0;
 
 		mutex_lock(&bc->lock);
@@ -1011,35 +1031,21 @@ static noinline struct btree *bch2_btree_node_fill(struct btree_trans *trans,
 
 		six_unlock_write(&b->c.lock);
 		six_unlock_intent(&b->c.lock);
-		return NULL;
+		b = NULL;
 	}
-
-	set_btree_node_read_in_flight(b);
-	six_unlock_write(&b->c.lock);
-
+	/*
+	 * bch2_btree_node_mem_alloc may have unlocked the trans for GFP_KERNEL
+	 * allocation, and the if (path) { } block above unlocks for IO - ensure
+	 * we're relocked before returning:
+	 */
 	if (path) {
-		u32 seq = six_lock_seq(&b->c.lock);
-
-		/* Unlock before doing IO: */
-		six_unlock_intent(&b->c.lock);
-		bch2_trans_unlock(trans);
-
-		bch2_btree_node_read(trans, b, sync);
-
 		int ret = bch2_trans_relock(trans) ?:
 			  bch2_btree_path_relock(trans, path, _THIS_IP_);
-		if (ret)
+		if (ret) {
+			if (b)
+				six_unlock_type(&b->c.lock, lock_type);
 			return ERR_PTR(ret);
-
-		if (!sync)
-			return NULL;
-
-		if (!six_relock_type(&b->c.lock, lock_type, seq))
-			b = NULL;
-	} else {
-		bch2_btree_node_read(trans, b, sync);
-		if (lock_type == SIX_LOCK_read)
-			six_lock_downgrade(&b->c.lock);
+		}
 	}
 
 	return b;
