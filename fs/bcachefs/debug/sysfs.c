@@ -183,6 +183,8 @@ read_attribute(io_latency_read);
 read_attribute(io_latency_write);
 read_attribute(io_latency_stats_read);
 read_attribute(io_latency_stats_write);
+read_attribute(io_latency_stats_read_json);
+read_attribute(io_latency_stats_write_json);
 #ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
 read_attribute(congested);
 #endif
@@ -903,6 +905,12 @@ SHOW(bch2_dev)
 	if (attr == &sysfs_io_latency_stats_write)
 		bch2_time_stats_to_text(out, &ca->io_latency[WRITE].stats);
 
+	if (attr == &sysfs_io_latency_stats_read_json)
+		bch2_time_stats_json_to_text(out, &ca->io_latency[READ].stats, NULL, 0);
+
+	if (attr == &sysfs_io_latency_stats_write_json)
+		bch2_time_stats_json_to_text(out, &ca->io_latency[WRITE].stats, NULL, 0);
+
 #ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
 	if (attr == &sysfs_congested)
 		bch2_dev_congested_to_text(out, ca);
@@ -968,6 +976,8 @@ struct attribute *bch2_dev_files[] = {
 	&sysfs_io_latency_write,
 	&sysfs_io_latency_stats_read,
 	&sysfs_io_latency_stats_write,
+	&sysfs_io_latency_stats_read_json,
+	&sysfs_io_latency_stats_write_json,
 #ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
 	&sysfs_congested,
 #endif
