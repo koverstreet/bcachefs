@@ -660,7 +660,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 				prt_printf(err, "Remove failed: still has data\n");
 				ret = -EBUSY;
 			}
-			prt_printf(err, "  %s: %llu buckets\n", __bch2_data_types[i], usage.buckets[i]);
+			prt_printf(err, "  %s: %llu buckets\n", bch2_data_type_str(i), usage.buckets[i]);
 		}
 	if (ret)
 		goto err;

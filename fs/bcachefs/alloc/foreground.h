@@ -201,7 +201,7 @@ static inline void bch2_alloc_sectors_done_inlined(struct bch_fs *c, struct writ
 
 	unsigned sectors = wp->prev_sectors_free - wp->sectors_free;
 	event_add_trace(c, sectors_alloc, sectors, buf, ({
-		prt_str(&buf, __bch2_data_types[wp->data_type]);
+		prt_str(&buf, bch2_data_type_str(wp->data_type));
 	}));
 
 	mutex_unlock(&wp->lock);

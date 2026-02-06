@@ -951,7 +951,7 @@ static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct b
 				   "bucket %llu:%llu data type %s, counters\n",
 				   alloc_k.k->p.inode,
 				   alloc_k.k->p.offset,
-				   __bch2_data_types[a->data_type]);
+				   bch2_data_type_str(a->data_type));
 			if (sectors[ALLOC_dirty]  > a->dirty_sectors)
 				prt_printf(&msg.m, "dirty: %u > %u\n",
 					   sectors[ALLOC_dirty], a->dirty_sectors);

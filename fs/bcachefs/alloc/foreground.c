@@ -457,7 +457,7 @@ static noinline void bucket_alloc_to_text(struct printbuf *out,
 	}
 
 	prt_printf(out, "watermark\t%s\n",	bch2_watermarks[req->watermark]);
-	prt_printf(out, "data type\t%s\n",	__bch2_data_types[req->data_type]);
+	prt_printf(out, "data type\t%s\n",	bch2_data_type_str(req->data_type));
 	prt_printf(out, "will_retry_target_devices\t%u\n",	req->will_retry_target_devices);
 	prt_printf(out, "will_retry_all_devices\t%u\n",	req->will_retry_all_devices);
 	prt_printf(out, "blocking\t%u\n", !(req->flags & BCH_WRITE_alloc_nowait));
@@ -1500,7 +1500,7 @@ void bch2_fs_open_buckets_to_text(struct printbuf *out, struct bch_fs *c)
 
 	for (unsigned i = 0; i < ARRAY_SIZE(nr); i++)
 		if (nr[i])
-			prt_printf(out, "open_buckets %s:\t%u\n", __bch2_data_types[i], nr[i]);
+			prt_printf(out, "open_buckets %s:\t%u\n", bch2_data_type_str(i), nr[i]);
 
 	prt_printf(out, "open_buckets_wait\t%s\n",		a->open_buckets_wait.list.first ? "waiting" : "empty");
 }
@@ -1638,7 +1638,7 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_r
 		prt_newline(&buf);
 
 		prt_printf(&buf, "watermark:\t%s\n", bch2_watermarks[req->watermark]);
-		prt_printf(&buf, "data_type:\t%s\n", __bch2_data_types[req->data_type]);
+		prt_printf(&buf, "data_type:\t%s\n", bch2_data_type_str(req->data_type));
 
 		prt_str(&buf, "flags:\t");
 		prt_bitflags(&buf, bch2_write_flags, req->flags);
