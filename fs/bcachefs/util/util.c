@@ -18,6 +18,7 @@
 #include <linux/percpu.h>
 #include <linux/preempt.h>
 #include <linux/random.h>
+#include <linux/seq_buf.h>
 #include <linux/seq_file.h>
 #include <linux/string.h>
 #include <linux/types.h>
@@ -461,6 +462,17 @@ void bch2_time_stats_to_text(struct printbuf *out, struct bch2_time_stats *stats
 			last_q = q;
 		}
 	}
+}
+
+void bch2_time_stats_json_to_text(struct printbuf *out, struct bch2_time_stats *stats,
+				  const char *epoch_name, unsigned int flags)
+{
+	char buf[1024];
+	struct seq_buf seq;
+
+	seq_buf_init(&seq, buf, sizeof(buf));
+	bch2_time_stats_to_json(&seq, stats, epoch_name, flags);
+	prt_bytes(out, buf, seq_buf_used(&seq));
 }
 
 /* ratelimit: */

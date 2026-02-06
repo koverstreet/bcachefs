@@ -306,7 +306,8 @@ void bch2_time_stats_to_json(struct seq_buf *out, struct bch2_time_stats *stats,
 	}
 
 	seq_buf_printf(out, "{\n");
-	seq_buf_printf(out, "  \"epoch\":       \"%s\",\n", epoch_name);
+	if (epoch_name)
+		seq_buf_printf(out, "  \"epoch\":       \"%s\",\n", epoch_name);
 	seq_buf_printf(out, "  \"count\":       %llu,\n", stats->duration_stats.n);
 
 	seq_buf_printf(out, "  \"duration_ns\": {\n");
