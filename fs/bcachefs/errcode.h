@@ -132,8 +132,6 @@
 	x(ENOMEM,			ENOMEM_btree_node_reclaim)		\
 	x(ENOMEM,			ENOMEM_btree_node_mem_alloc)		\
 	x(ENOMEM,			ENOMEM_btree_cache_cannibalize_lock)	\
-	x(ENOMEM,			ENOMEM_buckets_waiting_for_journal_init)\
-	x(ENOMEM,			ENOMEM_buckets_waiting_for_journal_set)	\
 	x(ENOMEM,			ENOMEM_set_nr_journal_buckets)		\
 	x(ENOMEM,			ENOMEM_dev_journal_init)		\
 	x(ENOMEM,			ENOMEM_journal_pin_fifo)		\

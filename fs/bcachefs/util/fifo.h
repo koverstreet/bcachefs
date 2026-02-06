@@ -50,6 +50,33 @@ do {									\
 		fifo_push(dest, _t);					\
 } while (0)
 
+/*
+ * Double the size of a fifo, preserving front and back indices.
+ *
+ * The new mask gains one bit. For any absolute index i, i & new_mask is either
+ * (i & old_mask) or (i & old_mask) + old_buf_elems, depending on that bit in i.
+ * So copying the old buffer into both halves of the new buffer puts every
+ * element at the correct position for the new mask.
+ */
+#define fifo_grow(fifo, _gfp)						\
+({									\
+	size_t _osize = fifo_buf_size(fifo);				\
+	size_t _new_size = (fifo)->size * 2;				\
+	typeof((fifo)->data) _new_data =				\
+		kvmalloc(_osize * 2, (_gfp));				\
+	if (_new_data) {						\
+		memcpy(_new_data,					\
+		       (fifo)->data, _osize);				\
+		memcpy(_new_data + (fifo)->mask + 1,			\
+		       (fifo)->data, _osize);				\
+		kvfree((fifo)->data);					\
+		(fifo)->data	= _new_data;				\
+		(fifo)->size	= _new_size;				\
+		(fifo)->mask	= roundup_pow_of_two(_new_size) - 1;	\
+	}								\
+	_new_data != NULL;						\
+})
+
 #define fifo_used(fifo)		(((fifo)->back - (fifo)->front))
 #define fifo_free(fifo)		((fifo)->size - fifo_used(fifo))
 
@@ -123,5 +150,12 @@ do {									\
 	     ((_iter != (_fifo)->back) &&				\
 	      (_ptr = &(_fifo)->data[(_iter) & (_fifo)->mask], true));	\
 	     (_iter)++)
+
+#define fifo_for_each_entry_ptr_reverse(_ptr, _fifo, _iter)		\
+	for (typecheck(typeof((_fifo)->front), _iter),			\
+	     (_iter) = (_fifo)->back;					\
+	     ((_iter != (_fifo)->front) &&				\
+	      (_ptr = &(_fifo)->data[((_iter) - 1) & (_fifo)->mask], true)); \
+	     (_iter)--)
 
 #endif /* _BCACHEFS_FIFO_H */

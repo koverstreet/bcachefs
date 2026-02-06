@@ -552,9 +552,6 @@ alloc:
 		? bch2_bucket_alloc_freelist(trans, req)
 		: bch2_bucket_alloc_early(trans, req);
 
-	if (req->counters.need_journal_commit * 2 > avail)
-		bch2_journal_flush_async(&c->journal, BCH_WATERMARK_normal, NULL);
-
 	if (!ob && req->btree_bitmap != BTREE_BITMAP_ANY) {
 		req->btree_bitmap = BTREE_BITMAP_ANY;
 		goto alloc;

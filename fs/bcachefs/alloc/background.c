@@ -5,7 +5,6 @@
 #include "alloc/background.h"
 #include "alloc/backpointers.h"
 #include "alloc/buckets.h"
-#include "alloc/buckets_waiting_for_journal.h"
 #include "alloc/check.h"
 #include "alloc/discard.h"
 #include "alloc/foreground.h"
@@ -882,8 +881,7 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 		 * transitions, data in a bucket may be overwritten while we're
 		 * still writing to it - so be careful to only record the first:
 		 * */
-		if (is_empty_delta < 0 &&
-		    new_a->journal_seq_empty <= c->journal.flushed_seq_ondisk) {
+		if (is_empty_delta < 0) {
 			new_a->journal_seq_nonempty	= transaction_seq;
 			new_a->journal_seq_empty	= 0;
 		}
@@ -902,15 +900,6 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 				new_a->journal_seq_nonempty = new_a->journal_seq_empty = 0;
 			} else {
 				new_a->journal_seq_empty = transaction_seq;
-
-				ret = bch2_set_bucket_needs_journal_commit(&c->buckets_waiting_for_journal,
-									   c->journal.flushed_seq_ondisk,
-									   new.k->p.inode, new.k->p.offset,
-									   transaction_seq);
-				if (bch2_fs_fatal_err_on(ret, c,
-						"setting bucket_needs_journal_commit: %s",
-						bch2_err_str(ret)))
-					return ret;
 			}
 		}
 
@@ -926,14 +915,27 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 #define statechange(expr)		!eval_state(old_a, expr) && eval_state(new_a, expr)
 #define bucket_flushed(a)		(a->journal_seq_empty <= c->journal.flushed_seq_ondisk)
 
-		if (statechange(a->data_type == BCH_DATA_free) &&
-		    bucket_flushed(new_a))
-			closure_wake_up(&c->allocator.freelist_wait);
+		if (statechange(a->data_type == BCH_DATA_free)) {
+			/* Transitioning to free: should not have NEED_DISCARD set */
+			WARN_ON(BCH_ALLOC_V4_NEED_DISCARD(new_a));
 
-		if (statechange(a->data_type == BCH_DATA_need_discard) &&
-		    !bch2_bucket_is_open_safe(c, new.k->p.inode, new.k->p.offset) &&
-		    bucket_flushed(new_a))
-			bch2_discard_one_bucket_fast(ca, new.k->p.offset);
+			if (bucket_flushed(new_a))
+				closure_wake_up(&c->allocator.freelist_wait);
+		}
+
+		if (statechange(a->data_type == BCH_DATA_need_discard)) {
+			/* Transitioning to need_discard: NEED_DISCARD must be set */
+			WARN_ON(!BCH_ALLOC_V4_NEED_DISCARD(new_a));
+
+			bch2_discard_bucket_add(ca,
+						new_a->journal_seq_empty,
+						new.k->p.offset);
+		}
+
+		if (statechange(a->data_type != BCH_DATA_need_discard))
+			bch2_discard_bucket_del(ca,
+						old_a->journal_seq_empty,
+						new.k->p.offset);
 
 		if (statechange(a->data_type == BCH_DATA_cached) &&
 		    !bch2_bucket_is_open(c, new.k->p.inode, new.k->p.offset) &&
@@ -1188,19 +1190,6 @@ void bch2_dev_allocator_add(struct bch_fs *c, struct bch_dev *ca)
 
 	bch2_dev_allocator_set_rw(c, ca, true);
 	c->allocator.rw_devs_change_count++;
-}
-
-void bch2_dev_allocator_background_exit(struct bch_dev *ca)
-{
-	darray_exit(&ca->discard_buckets_in_flight);
-}
-
-void bch2_dev_allocator_background_init(struct bch_dev *ca)
-{
-	mutex_init(&ca->discard_buckets_in_flight_lock);
-	INIT_WORK(&ca->discard_work, bch2_do_discards_work);
-	INIT_WORK(&ca->discard_fast_work, bch2_do_discards_fast_work);
-	INIT_WORK(&ca->invalidate_work, bch2_do_invalidates_work);
 }
 
 void bch2_fs_allocator_background_init(struct bch_fs *c)

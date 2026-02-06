@@ -42,6 +42,10 @@
 	  "Populate in-memory bucket generation cache from "					\
 	  "bucket_gens btree (or alloc btree on older "						\
 	  "filesystems)")									\
+	x(discard_buckets_populate,		48, PASS_ALWAYS|PASS_SILENT,		0,	\
+	  "Populate per-device discard FIFO from need_discard btree, "		\
+	  "ordering buckets by journal_seq_empty so oldest generations "	\
+	  "are discarded first")							\
 	x(stripes_read,				 1, 0,					0,	\
 	  "Reserved for erasure-coding stripe initialization; "					\
 	  "currently a no-op")									\

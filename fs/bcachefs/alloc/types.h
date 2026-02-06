@@ -175,4 +175,14 @@ struct bch_fs_allocator {
 	struct write_point	reconcile_write_point;
 };
 
+struct discard_fifo_entry {
+	u64			seq;
+	DARRAY(u64)		buckets;
+};
+
+struct discard_fifo_cursor {
+	size_t			fifo_idx;
+	size_t			bucket_idx;
+};
+
 #endif /* _BCACHEFS_ALLOC_TYPES_H */

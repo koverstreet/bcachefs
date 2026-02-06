@@ -71,7 +71,6 @@
 
 #include "alloc/accounting_types.h"
 #include "alloc/buckets_types.h"
-#include "alloc/buckets_waiting_for_journal_types.h"
 #include "alloc/disk_groups_types.h"
 #include "alloc/replicas_types.h"
 #include "alloc/types.h"
@@ -402,11 +401,6 @@ struct io_count {
 	u64			sectors[2][BCH_DATA_NR];
 };
 
-struct discard_in_flight {
-	bool			in_progress:1;
-	u64			bucket:63;
-};
-
 #define BCH_DEV_READ_REFS()				\
 	x(bch2_online_devs)				\
 	x(trans_mark_dev_sbs)				\
@@ -519,10 +513,13 @@ struct bch_dev {
 	unsigned		nr_btree_reserve;
 
 	struct work_struct	invalidate_work;
+
 	struct work_struct	discard_work;
-	struct mutex		discard_buckets_in_flight_lock;
-	DARRAY(struct discard_in_flight)	discard_buckets_in_flight;
 	struct work_struct	discard_fast_work;
+	struct mutex		discard_lock;
+	darray_u64		discard_fast;
+	FIFO(struct discard_fifo_entry) discard_fifo;
+	bool			discard_buckets_degraded;
 
 	atomic64_t		rebalance_work;
 
@@ -724,7 +721,6 @@ struct bch_fs {
 	struct bch_disk_groups_cpu __rcu	*disk_groups;
 	struct bch_fs_capacity			capacity;
 	struct bch_fs_allocator			allocator;
-	struct buckets_waiting_for_journal	buckets_waiting_for_journal;
 
 	struct bch_fs_snapshots			snapshots;
 

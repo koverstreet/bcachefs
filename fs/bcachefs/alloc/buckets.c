@@ -11,7 +11,6 @@
 #include "alloc/background.h"
 #include "alloc/backpointers.h"
 #include "alloc/buckets.h"
-#include "alloc/buckets_waiting_for_journal.h"
 #include "alloc/replicas.h"
 
 #include "btree/bset.h"

@@ -6,6 +6,7 @@
 #include "alloc/background.h"
 #include "alloc/backpointers.h"
 #include "alloc/check.h"
+#include "alloc/discard.h"
 #include "alloc/lru.h"
 
 #include "btree/check.h"

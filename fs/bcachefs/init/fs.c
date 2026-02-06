@@ -10,7 +10,6 @@
 #include "bcachefs.h"
 
 #include "alloc/backpointers.h"
-#include "alloc/buckets_waiting_for_journal.h"
 #include "alloc/discard.h"
 #include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
@@ -642,7 +641,6 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bch2_io_clock_exit(&c->io_clock[WRITE]);
 	bch2_io_clock_exit(&c->io_clock[READ]);
 	bch2_fs_capacity_exit(c);
-	bch2_fs_buckets_waiting_for_journal_exit(c);
 	bch2_fs_btree_exit(c);
 	bch2_fs_accounting_exit(c);
 
@@ -1247,7 +1245,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	try(bch2_fs_async_obj_init(c));
 #endif
 	try(bch2_fs_btree_init(c));
-	try(bch2_fs_buckets_waiting_for_journal_init(c));
 	try(bch2_fs_compress_init(c));
 	try(bch2_fs_counters_init(c));
 	try(bch2_fs_data_update_init(c));
