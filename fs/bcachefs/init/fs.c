@@ -693,6 +693,7 @@ int bch2_fs_stop(struct bch_fs *c)
 		kobject_put(&c->time_stats_json);
 		kobject_put(&c->time_stats);
 		kobject_put(&c->opts_dir);
+		sysfs_remove_bin_file(&c->internal, &bin_attr_btree_trans_stats_json);
 		kobject_put(&c->internal);
 
 		/* btree prefetch might have kicked off reads in the background: */
@@ -768,7 +769,8 @@ static int bch2_fs_online(struct bch_fs *c)
 	    kobject_add(&c->time_stats_json, &c->kobj, "time_stats_json") ?:
 #endif
 	    kobject_add(&c->counters_kobj, &c->kobj, "counters") ?:
-	    bch2_opts_create_sysfs_files(&c->opts_dir, OPT_FS))
+	    bch2_opts_create_sysfs_files(&c->opts_dir, OPT_FS) ?:
+	    sysfs_create_bin_file(&c->internal, &bin_attr_btree_trans_stats_json))
 		return bch_err_throw(c, sysfs_init_error);
 
 	guard(rwsem_write)(&c->state_lock);

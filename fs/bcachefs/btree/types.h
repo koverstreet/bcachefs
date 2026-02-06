@@ -622,6 +622,9 @@ struct bch_fs_btree_trans {
 	bool				barrier_initialized;
 
 	struct btree_transaction_stats	stats[BCH_TRANSACTIONS_NR];
+
+	struct mutex			stats_json_lock;
+	struct printbuf			stats_json_buf;
 };
 
 static inline struct btree_path *btree_iter_path(struct btree_trans *trans, struct btree_iter *iter)

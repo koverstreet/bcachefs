@@ -659,6 +659,96 @@ struct attribute *bch2_fs_internal_files[] = {
 	NULL
 };
 
+/* btree transaction stats - JSON via bin_attribute */
+
+static ssize_t bch2_btree_trans_stats_json_read(struct file *file,
+		struct kobject *kobj, const struct bin_attribute *attr,
+		char *buf, loff_t off, size_t count)
+{
+	struct bch_fs *c = container_of(kobj, struct bch_fs, internal);
+	struct printbuf *out = &c->btree.trans.stats_json_buf;
+
+	guard(mutex)(&c->btree.trans.stats_json_lock);
+
+	/*
+	 * kernfs caps bin_attribute reads at PAGE_SIZE per callback, so
+	 * multi-page output triggers multiple calls with increasing offsets.
+	 * Regenerating each time would produce inconsistent JSON if stats
+	 * change between calls. Cache the buffer and only regenerate when
+	 * off == 0 (start of a new read sequence).
+	 */
+	if (off == 0) {
+		printbuf_reset(out);
+
+		bool first = true;
+
+		prt_char(out, '{');
+
+		for (unsigned i = 0; i < ARRAY_SIZE(bch2_btree_transaction_fns); i++) {
+			if (!bch2_btree_transaction_fns[i])
+				break;
+
+			struct btree_transaction_stats *s = &c->btree.trans.stats[i];
+
+			if (!first)
+				prt_char(out, ',');
+			first = false;
+
+			prt_printf(out, "\"%s\":{", bch2_btree_transaction_fns[i]);
+
+			prt_printf(out, "\"max_mem\":%u,", s->max_mem);
+
+			prt_str(out, "\"duration\":");
+			bch2_time_stats_json_to_text(out, &s->duration, NULL, 0);
+
+			if (IS_ENABLED(CONFIG_BCACHEFS_LOCK_TIME_STATS)) {
+				prt_str(out, ",\"lock_hold_times\":");
+				bch2_time_stats_json_to_text(out, &s->lock_hold_times, NULL, 0);
+			}
+
+			prt_char(out, '}');
+		}
+
+		prt_str(out, "}\n");
+
+		if (out->allocation_failure)
+			return -ENOMEM;
+	}
+
+	if (off >= out->pos)
+		return 0;
+
+	size_t n = min_t(size_t, count, out->pos - off);
+	memcpy(buf, out->buf + off, n);
+	return n;
+}
+
+static ssize_t bch2_btree_trans_stats_json_write(struct file *file,
+		struct kobject *kobj, const struct bin_attribute *attr,
+		char *buf, loff_t off, size_t count)
+{
+	struct bch_fs *c = container_of(kobj, struct bch_fs, internal);
+
+	for (unsigned i = 0; i < ARRAY_SIZE(bch2_btree_transaction_fns); i++) {
+		if (!bch2_btree_transaction_fns[i])
+			break;
+
+		struct btree_transaction_stats *s = &c->btree.trans.stats[i];
+
+		guard(mutex)(&s->lock);
+		bch2_time_stats_reset(&s->duration);
+		bch2_time_stats_reset(&s->lock_hold_times);
+	}
+
+	return count;
+}
+
+struct bin_attribute bin_attr_btree_trans_stats_json = {
+	.attr	= { .name = "btree_trans_stats_json", .mode = 0644 },
+	.read	= bch2_btree_trans_stats_json_read,
+	.write	= bch2_btree_trans_stats_json_write,
+};
+
 /* options */
 
 static ssize_t sysfs_opt_show(struct bch_fs *c,

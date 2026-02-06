@@ -23,6 +23,8 @@ extern const struct sysfs_ops bch2_fs_time_stats_sysfs_ops;
 extern const struct sysfs_ops bch2_fs_time_stats_json_sysfs_ops;
 extern const struct sysfs_ops bch2_dev_sysfs_ops;
 
+extern struct bin_attribute bin_attr_btree_trans_stats_json;
+
 int bch2_opts_create_sysfs_files(struct kobject *, unsigned);
 
 #endif  /* _BCACHEFS_SYSFS_H_ */

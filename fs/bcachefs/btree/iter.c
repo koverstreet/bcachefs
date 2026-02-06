@@ -3899,6 +3899,8 @@ void bch2_fs_btree_iter_exit(struct bch_fs *c)
 		bch2_time_stats_exit(&s->lock_hold_times);
 	}
 
+	printbuf_exit(&c->btree.trans.stats_json_buf);
+
 	if (c->btree.trans.barrier_initialized) {
 		synchronize_srcu_expedited(&c->btree.trans.barrier);
 		cleanup_srcu_struct(&c->btree.trans.barrier);
@@ -3921,6 +3923,8 @@ void bch2_fs_btree_iter_init_early(struct bch_fs *c)
 
 	INIT_LIST_HEAD(&c->btree.trans.list);
 	seqmutex_init(&c->btree.trans.lock);
+	mutex_init(&c->btree.trans.stats_json_lock);
+	c->btree.trans.stats_json_buf = PRINTBUF;
 }
 
 int bch2_fs_btree_iter_init(struct bch_fs *c)
