@@ -754,6 +754,7 @@ struct bch_fs {
 	struct kobject		internal;
 	struct kobject		opts_dir;
 	struct kobject		time_stats;
+	struct kobject		time_stats_json;
 	unsigned long		flags;
 
 	int			minor;

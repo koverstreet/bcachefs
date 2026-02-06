@@ -244,6 +244,10 @@ static void bch2_fs_time_stats_release(struct kobject *k)
 {
 }
 
+static void bch2_fs_time_stats_json_release(struct kobject *k)
+{
+}
+
 static struct attribute *bcachefs_files[] = {
 	NULL
 };
@@ -260,6 +264,7 @@ KTYPE(bch2_fs_counters);
 KTYPE(bch2_fs_internal);
 KTYPE(bch2_fs_opts_dir);
 KTYPE(bch2_fs_time_stats);
+KTYPE(bch2_fs_time_stats_json);
 
 static struct kobject bcachefs_kobj;
 
@@ -685,6 +690,7 @@ int bch2_fs_stop(struct bch_fs *c)
 		wait_event(c->ro_ref_wait, !refcount_read(&c->ro_ref));
 
 		kobject_put(&c->counters_kobj);
+		kobject_put(&c->time_stats_json);
 		kobject_put(&c->time_stats);
 		kobject_put(&c->opts_dir);
 		kobject_put(&c->internal);
@@ -759,6 +765,7 @@ static int bch2_fs_online(struct bch_fs *c)
 	    kobject_add(&c->opts_dir, &c->kobj, "options") ?:
 #ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
 	    kobject_add(&c->time_stats, &c->kobj, "time_stats") ?:
+	    kobject_add(&c->time_stats_json, &c->kobj, "time_stats_json") ?:
 #endif
 	    kobject_add(&c->counters_kobj, &c->kobj, "counters") ?:
 	    bch2_opts_create_sysfs_files(&c->opts_dir, OPT_FS))
@@ -1071,6 +1078,7 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	kobject_init(&c->internal, &bch2_fs_internal_ktype);
 	kobject_init(&c->opts_dir, &bch2_fs_opts_dir_ktype);
 	kobject_init(&c->time_stats, &bch2_fs_time_stats_ktype);
+	kobject_init(&c->time_stats_json, &bch2_fs_time_stats_json_ktype);
 	kobject_init(&c->counters_kobj, &bch2_fs_counters_ktype);
 
 	c->minor		= -1;
