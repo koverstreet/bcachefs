@@ -1521,7 +1521,7 @@ int bch2_bkey_drop_extra_durability(struct btree_trans *trans,
 			ptrs_kill |= BIT(i);
 		}
 
-	if (ptrs_kill)
+	if (kill)
 		bch2_bkey_drop_ptrs_mask(c, k, ptrs_kill);
 	else
 		bch2_bkey_set_ptrs_cached_mask(c, opts, k, ptrs_kill);
