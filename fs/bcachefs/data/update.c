@@ -855,10 +855,10 @@ static int bch2_extent_drop_ptrs(struct btree_trans *trans,
 	struct bkey_i *n = errptr_try(bch2_bkey_make_mut_noupdate(trans, k));
 
 	if (data_opts->ptrs_kill_ec)
-		bch2_bkey_drop_ec_mask(c, n, data_opts->ptrs_kill_ec);
+		try(bch2_bkey_drop_extra_ec_durability(trans, io_opts, n, data_opts->ptrs_kill_ec));
 
 	if (data_opts->ptrs_kill)
-		bch2_bkey_drop_ptrs_mask(c, n, data_opts->ptrs_kill);
+		try(bch2_bkey_drop_extra_durability(trans, io_opts, n, data_opts->ptrs_kill, false));
 
 	/*
 	 * If the new extent no longer has any pointers, bch2_extent_normalize()
