@@ -528,11 +528,16 @@ static int bch2_subvol_readdir_emit(struct btree_trans *trans,
 	if (*used + reclen > buf_size)
 		return 1;
 
+	struct timespec64 otime = bch2_time_to_timespec(trans->c,
+						le64_to_cpu(child.otime.lo));
+
 	struct bch_ioctl_subvol_dirent ent = {
 		.reclen		= reclen,
 		.subvolid	= child_subvol,
 		.flags		= le32_to_cpu(child.flags),
 		.snapshot_parent = le32_to_cpu(child.creation_parent),
+		.otime_sec	= otime.tv_sec,
+		.otime_nsec	= otime.tv_nsec,
 	};
 
 	try(copy_to_user_errcode(buf + *used, &ent, sizeof(ent)));

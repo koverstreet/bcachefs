@@ -504,6 +504,9 @@ struct bch_ioctl_subvol_dirent {
 	__u32			subvolid;
 	__u32			flags;
 	__u32			snapshot_parent;
+	__u64			otime_sec;
+	__u32			otime_nsec;
+	__u32			pad;
 	char			path[];
 };
 
