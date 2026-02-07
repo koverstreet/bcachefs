@@ -8,7 +8,11 @@
 #include "fs/namei.h"
 #include "fs/quota.h"
 
+#include "snapshots/snapshot.h"
 #include "snapshots/subvolume.h"
+
+#include "alloc/accounting.h"
+#include "btree/write_buffer.h"
 
 #include "init/chardev.h"
 #include "init/fs.h"
@@ -635,6 +639,113 @@ static long bch2_ioctl_subvolume_to_path(struct bch_fs *c, struct file *filp,
 	return 0;
 }
 
+static int bch2_ioctl_snapshot_tree_resolve(struct btree_trans *trans,
+					    struct file *filp, u32 arg_tree_id,
+					    u32 *tree_id, struct bch_snapshot_tree *st)
+{
+	*tree_id = arg_tree_id;
+
+	if (!*tree_id) {
+		u32 subvolid = inode_inum(file_bch_inode(filp)).subvol;
+
+		struct bch_subvolume subvol;
+		try(bch2_subvolume_get(trans, subvolid, false, &subvol));
+
+		*tree_id = bch2_snapshot_tree(trans->c, le32_to_cpu(subvol.snapshot));
+		if (!*tree_id)
+			return -ENOENT;
+	}
+
+	return bch2_snapshot_tree_lookup(trans, *tree_id, st);
+}
+
+static long bch2_ioctl_snapshot_tree(struct bch_fs *c, struct file *filp,
+					   struct bch_ioctl_snapshot_tree_query __user *user_arg)
+{
+	struct bch_ioctl_snapshot_tree_query arg;
+	try(copy_from_user_errcode(&arg, user_arg, sizeof(arg)));
+
+	if (arg.pad)
+		return -EINVAL;
+
+	/* Querying a specific tree by ID requires CAP_SYS_ADMIN */
+	if (arg.tree_id && !capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	u32 tree_id = arg.tree_id;
+	struct bch_snapshot_tree st;
+	{
+		CLASS(btree_trans, trans)(c);
+
+		int ret = lockrestart_do(trans,
+			bch2_ioctl_snapshot_tree_resolve(trans, filp, arg.tree_id, &tree_id, &st));
+		if (ret)
+			return ret;
+	}
+
+	u32 size = arg.nr;
+	u32 nr = 0;
+	u32 total = 0;
+
+	CLASS(btree_trans, trans)(c);
+
+	/* Flush write buffer so accounting keys are visible in the btree */
+	try(bch2_btree_write_buffer_flush_sync(trans));
+
+	int ret = for_each_btree_key(trans, iter,
+			BTREE_ID_snapshots, POS_MIN,
+			BTREE_ITER_prefetch, k, ({
+		if (k.k->type != KEY_TYPE_snapshot)
+			continue;
+
+		struct bkey_s_c_snapshot snap = bkey_s_c_to_snapshot(k);
+		if (le32_to_cpu(snap.v->tree) != tree_id)
+			continue;
+		if (BCH_SNAPSHOT_DELETED(snap.v))
+			continue;
+
+		u64 sectors[1] = {};
+		int _ret = bch2_fs_accounting_read_key2(trans, sectors,
+				snapshot, .id = k.k->p.offset);
+		if (!_ret) {
+			total++;
+
+			if (nr < size) {
+				struct bch_ioctl_snapshot_node node = {
+					.id		= k.k->p.offset,
+					.parent		= le32_to_cpu(snap.v->parent),
+					.children	= {
+						le32_to_cpu(snap.v->children[0]),
+						le32_to_cpu(snap.v->children[1]),
+					},
+					.subvol		= le32_to_cpu(snap.v->subvol),
+					.flags		= le32_to_cpu(snap.v->flags),
+					.sectors	= sectors[0],
+				};
+
+				_ret = copy_to_user_errcode(&user_arg->nodes[nr], &node,
+							    sizeof(node));
+				if (!_ret)
+					nr++;
+			}
+		}
+		_ret;
+	}));
+
+	if (ret)
+		return ret;
+
+	try(put_user(le32_to_cpu(st.master_subvol), &user_arg->master_subvol));
+	try(put_user(le32_to_cpu(st.root_snapshot), &user_arg->root_snapshot));
+	try(put_user(nr, &user_arg->nr));
+	try(put_user(total, &user_arg->total));
+
+	if (size && size < total)
+		return -ERANGE;
+
+	return 0;
+}
+
 long bch2_fs_file_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
 	struct bch_inode_info *inode = file_bch_inode(file);
@@ -711,6 +822,11 @@ long bch2_fs_file_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 	case BCH_IOCTL_SUBVOLUME_TO_PATH:
 		ret = bch2_ioctl_subvolume_to_path(c, file,
 				(struct bch_ioctl_subvol_to_path __user *) arg);
+		break;
+
+	case BCH_IOCTL_SNAPSHOT_TREE:
+		ret = bch2_ioctl_snapshot_tree(c, file,
+				(struct bch_ioctl_snapshot_tree_query __user *) arg);
 		break;
 
 	default:

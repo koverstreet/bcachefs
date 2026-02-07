@@ -72,6 +72,7 @@
 #define BCH_IOCTL_QUERY_COUNTERS	_IOW(0xbc,	21, struct bch_ioctl_query_counters)
 #define BCH_IOCTL_SUBVOLUME_LIST	_IOWR(0xbc,	31, struct bch_ioctl_subvol_readdir)
 #define BCH_IOCTL_SUBVOLUME_TO_PATH	_IOWR(0xbc,	32, struct bch_ioctl_subvol_to_path)
+#define BCH_IOCTL_SNAPSHOT_TREE		_IOWR(0xbc,	33, struct bch_ioctl_snapshot_tree_query)
 
 /* ioctl below act on a particular file, not the filesystem as a whole: */
 
@@ -560,6 +561,38 @@ struct bch_ioctl_subvol_to_path {
 	__u32			subvolid;
 	__u32			buf_size;
 	__u64			buf;
+};
+
+/*
+ * BCH_IOCTL_SNAPSHOT_TREE: return the full snapshot tree (interior + leaf
+ * nodes) with per-node disk accounting.
+ *
+ * @tree_id	- snapshot tree to query; 0 = infer from fd's subvolume
+ * @master_subvol - out: master subvolume of this tree
+ * @root_snapshot - out: root snapshot ID
+ * @nr		- in: capacity of nodes[]; out: entries returned
+ * @total	- out: total nodes in tree
+ *
+ * Returns -ERANGE if nr < total (nr and total are still written back)
+ */
+struct bch_ioctl_snapshot_node {
+	__u32			id;		/* snapshot ID */
+	__u32			parent;		/* parent snapshot ID, 0 for root */
+	__u32			children[2];
+	__u32			subvol;		/* subvolume ID, 0 for interior */
+	__u32			flags;
+	__u32			pad[2];
+	__u64			sectors;	/* BCH_DISK_ACCOUNTING_snapshot */
+};
+
+struct bch_ioctl_snapshot_tree_query {
+	__u32			tree_id;	/* in: 0 = infer from fd's subvol */
+	__u32			master_subvol;	/* out */
+	__u32			root_snapshot;	/* out */
+	__u32			nr;		/* in: capacity; out: returned */
+	__u32			total;		/* out: total nodes */
+	__u32			pad;
+	struct bch_ioctl_snapshot_node nodes[];
 };
 
 #endif /* _BCACHEFS_IOCTL_H */
