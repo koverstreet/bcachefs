@@ -513,6 +513,26 @@ static struct bch_inode_info *bch2_inode_hash_init_insert(struct btree_trans *tr
 
 }
 
+static inline struct bch_inode_info *
+__bch2_vfs_inode_get_trans(struct btree_trans *trans, subvol_inum inum, const char *warn)
+{
+	struct bch_inode_info *inode;
+	struct bch_inode_unpacked inode_u;
+	struct bch_subvolume subvol;
+	int ret = bch2_subvolume_get(trans, inum.subvol, warn, &subvol) ?:
+		__bch2_inode_find_by_inum_trans(trans, inum, &inode_u, warn) ?:
+		PTR_ERR_OR_ZERO(inode = bch2_inode_hash_init_insert(trans, inum, &inode_u, &subvol));
+
+	return ret ? ERR_PTR(ret) : inode;
+}
+
+struct bch_inode_info *bch2_vfs_inode_get_trans(struct btree_trans *trans, subvol_inum inum,
+						const char *warn)
+{
+	return bch2_inode_hash_find(trans->c, trans, inum) ?:
+		__bch2_vfs_inode_get_trans(trans, inum, warn);
+}
+
 struct inode *bch2_vfs_inode_get(struct bch_fs *c, subvol_inum inum,
 				 const char *warn)
 {
@@ -522,12 +542,8 @@ struct inode *bch2_vfs_inode_get(struct bch_fs *c, subvol_inum inum,
 
 	CLASS(btree_trans, trans)(c);
 
-	struct bch_inode_unpacked inode_u;
-	struct bch_subvolume subvol;
 	int ret = lockrestart_do(trans,
-		bch2_subvolume_get(trans, inum.subvol, warn, &subvol) ?:
-		__bch2_inode_find_by_inum_trans(trans, inum, &inode_u, warn) ?:
-		PTR_ERR_OR_ZERO(inode = bch2_inode_hash_init_insert(trans, inum, &inode_u, &subvol)));
+		PTR_ERR_OR_ZERO(inode = bch2_vfs_inode_get_trans(trans, inum, warn)));
 
 	return ret ? ERR_PTR(ret) : &inode->v;
 }

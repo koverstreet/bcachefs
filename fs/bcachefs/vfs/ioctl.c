@@ -4,8 +4,11 @@
 #include "bcachefs.h"
 
 #include "fs/dirent.h"
+#include "fs/inode.h"
 #include "fs/namei.h"
 #include "fs/quota.h"
+
+#include "snapshots/subvolume.h"
 
 #include "init/chardev.h"
 #include "init/fs.h"
@@ -416,6 +419,217 @@ static long bch2_ioctl_subvolume_destroy_v2(struct bch_fs *c, struct file *filp,
 	return bch2_copy_ioctl_err_msg(&arg.err, &err, ret);
 }
 
+/*
+ * Check if the current user can traverse from a child subvolume root
+ * up to the parent subvolume, checking MAY_EXEC on each intermediate
+ * directory using the full VFS permission stack (including POSIX ACLs
+ * and LSM hooks).
+ *
+ * Returns 0 if accessible, 1 to skip (permission denied or path doesn't
+ * connect to parent), or negative on error.
+ */
+static inline void bch2_iput(struct bch_inode_info *inode) { iput(&inode->v); }
+DEFINE_DARRAY_NAMED_FREE_ITEM(darray_inode, struct bch_inode_info *, bch2_iput);
+
+static int bch2_check_path_accessible(struct btree_trans *trans,
+				      struct mnt_idmap *idmap,
+				      struct bch_subvolume *child,
+				      u32 child_subvol, u32 parent_subvol)
+{
+	struct bch_inode_info *inode = bch2_vfs_inode_get_trans(trans,
+			(subvol_inum) { child_subvol, le64_to_cpu(child->inode) },
+			__func__);
+	if (IS_ERR(inode))
+		return PTR_ERR(inode);
+
+	u32 parent_sv = inode->ei_inode.bi_parent_subvol;
+	u64 dir_inum = inode->ei_inode.bi_dir;
+	iput(&inode->v);
+
+	if (!parent_sv)
+		return -EIO;
+
+	CLASS(darray_inode, check_inodes)();
+
+	while (dir_inum) {
+		inode = bch2_vfs_inode_get_trans(trans,
+				(subvol_inum) { parent_sv, dir_inum }, __func__);
+		if (IS_ERR(inode))
+			return PTR_ERR(inode);
+
+		int ret = darray_push(&check_inodes, inode);
+		if (ret) {
+			iput(&inode->v);
+			return ret;
+		}
+
+		if (inode->ei_inode.bi_subvol == parent_subvol)
+			goto check_perms;
+
+		dir_inum = inode->ei_inode.bi_dir;
+	}
+
+	return 1;
+check_perms:
+	/*
+	 * Unlock the transaction before calling inode_permission(),
+	 * which may trigger bch2_get_acl() needing its own transaction.
+	 */
+	bch2_trans_unlock(trans);
+
+	darray_for_each(check_inodes, i) {
+		int ret = inode_permission(idmap, &(*i)->v, MAY_EXEC);
+		if (ret)
+			return 1;
+	}
+
+	return bch2_trans_relock(trans);
+}
+
+static int bch2_subvol_readdir_emit(struct btree_trans *trans,
+				    struct mnt_idmap *idmap,
+				    u32 parent, u32 child_subvol,
+				    char __user *buf, u32 buf_size,
+				    u32 *used, u32 *pos)
+{
+	struct bch_subvolume child;
+	try(bch2_subvolume_get(trans, child_subvol, true, &child));
+
+	int ret = bch2_check_path_accessible(trans, idmap, &child, child_subvol, parent);
+	if (ret) {
+		if (ret > 0) {
+			*pos = child_subvol + 1;
+			ret = 0;
+		}
+		return ret;
+	}
+
+	CLASS(printbuf, path)();
+	ret = bch2_inum_to_path_in_subvol(trans,
+		(subvol_inum) { child_subvol, le64_to_cpu(child.inode) },
+		parent, INUM_TO_PATH_FAIL_ON_ERR, &path);
+	if (ret) {
+		if (!bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
+			*pos = child_subvol + 1;
+			ret = 0;
+		}
+		return ret;
+	}
+
+	/* Strip leading '/' — paths are relative to the readdir directory */
+	char *p = path.buf;
+	u32 len = path.pos;
+	while (len && *p == '/') { p++; len--; }
+
+	u32 path_bytes = len + 1;
+	u32 reclen = ALIGN(offsetof(struct bch_ioctl_subvol_dirent, path) +
+			   path_bytes, 8);
+
+	if (*used + reclen > buf_size)
+		return 1;
+
+	struct bch_ioctl_subvol_dirent ent = {
+		.reclen		= reclen,
+		.subvolid	= child_subvol,
+		.flags		= le32_to_cpu(child.flags),
+		.snapshot_parent = le32_to_cpu(child.creation_parent),
+	};
+
+	try(copy_to_user_errcode(buf + *used, &ent, sizeof(ent)));
+	try(copy_to_user_errcode(buf + *used + sizeof(ent), p, path_bytes));
+
+	/* Zero-fill alignment padding between NUL terminator and next entry */
+	u32 written = sizeof(ent) + path_bytes;
+	if (written < reclen &&
+	    clear_user(buf + *used + written, reclen - written))
+		return -EFAULT;
+
+	*used += reclen;
+	*pos = child_subvol + 1;
+	return 0;
+}
+
+static long bch2_ioctl_subvolume_list(struct bch_fs *c, struct file *filp,
+				      struct bch_ioctl_subvol_readdir __user *user_arg)
+{
+	struct bch_ioctl_subvol_readdir arg;
+	try(copy_from_user_errcode(&arg, user_arg, sizeof(arg)));
+
+	if (arg.pad)
+		return -EINVAL;
+
+	u32 parent = inode_inum(file_bch_inode(filp)).subvol;
+	struct mnt_idmap *idmap = file_mnt_idmap(filp);
+
+	char __user *buf = (char __user *)(unsigned long)arg.buf;
+	u32 used = 0;
+	u32 pos = arg.pos;
+
+	CLASS(btree_trans, trans)(c);
+
+	int ret = for_each_btree_key(trans, iter,
+			BTREE_ID_subvolume_children,
+			POS(parent, arg.pos),
+			BTREE_ITER_prefetch, k, ({
+		if (k.k->p.inode != parent)
+			break;
+
+		int ret2 = bch2_subvol_readdir_emit(trans, idmap,
+						    parent, k.k->p.offset,
+						    buf, arg.buf_size,
+						    &used, &pos);
+		if (ret2 > 0)
+			break;
+		ret2;
+	}));
+
+	if (ret)
+		return ret;
+
+	try(put_user(pos, &user_arg->pos));
+	try(put_user(used, &user_arg->used));
+
+	return 0;
+}
+
+static long bch2_ioctl_subvolume_to_path(struct bch_fs *c, struct file *filp,
+					 struct bch_ioctl_subvol_to_path __user *user_arg)
+{
+	struct bch_ioctl_subvol_to_path arg;
+	try(copy_from_user_errcode(&arg, user_arg, sizeof(arg)));
+
+	if (!arg.buf_size)
+		return -EINVAL;
+
+	CLASS(btree_trans, trans)(c);
+	CLASS(printbuf, path)();
+
+	struct bch_subvolume subvol;
+	int ret = lockrestart_do(trans, ({
+		printbuf_reset(&path);
+		bch2_subvolume_get(trans, arg.subvolid, false, &subvol) ?:
+		bch2_inum_to_path(trans,
+			(subvol_inum) { arg.subvolid, le64_to_cpu(subvol.inode) },
+			&path);
+	}));
+	if (ret)
+		return ret;
+
+	/* Strip leading '/' — return path relative to mountpoint */
+	char *p = path.buf;
+	u32 len = path.pos;
+	while (len && *p == '/') { p++; len--; }
+
+	u32 path_bytes = len + 1; /* include NUL */
+	if (path_bytes > arg.buf_size)
+		return -ERANGE;
+
+	char __user *ubuf = (char __user *)(unsigned long)arg.buf;
+	try(copy_to_user_errcode(ubuf, p, path_bytes));
+
+	return 0;
+}
+
 long bch2_fs_file_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
 	struct bch_inode_info *inode = file_bch_inode(file);
@@ -483,6 +697,16 @@ long bch2_fs_file_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 			: bch2_ioctl_subvolume_destroy_v2(c, file, i);
 		break;
 	}
+
+	case BCH_IOCTL_SUBVOLUME_LIST:
+		ret = bch2_ioctl_subvolume_list(c, file,
+				(struct bch_ioctl_subvol_readdir __user *) arg);
+		break;
+
+	case BCH_IOCTL_SUBVOLUME_TO_PATH:
+		ret = bch2_ioctl_subvolume_to_path(c, file,
+				(struct bch_ioctl_subvol_to_path __user *) arg);
+		break;
 
 	default:
 		ret = bch2_fs_ioctl(c, cmd, (void __user *) arg);
