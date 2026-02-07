@@ -41,7 +41,7 @@ int bch2_printbuf_make_room_gfp(struct printbuf *out, unsigned extra, gfp_t gfp)
 
 	if (!out->heap_allocated) {
 		out->overflow = true;
-		return 0;
+		return -ENOSPC;
 	}
 
 	unsigned new_size = roundup_pow_of_two(out->size + extra);
