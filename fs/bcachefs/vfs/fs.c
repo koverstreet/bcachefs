@@ -1814,6 +1814,17 @@ static void bch2_vfs_inode_init(struct btree_trans *trans,
 
 	mapping_set_folio_min_order(inode->v.i_mapping,
 				    get_order(trans->c->opts.block_size));
+
+	/*
+	 * TODO: consider preloading ACLs here (set_cached_acl) so that
+	 * inode_permission() never has to call back into bch2_get_acl()
+	 * and allocate its own btree_trans.
+	 *
+	 * Currently only __bch2_create() eagerly caches ACLs; inodes
+	 * loaded from disk start with ACL_NOT_CACHED.  Gather test data
+	 * to see if preloading reduces btree_trans allocations on
+	 * permission-heavy workloads (e.g. deep directory traversals).
+	 */
 }
 
 static void bch2_free_inode(struct inode *vinode)
