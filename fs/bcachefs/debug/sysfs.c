@@ -947,16 +947,17 @@ static const char * const bch2_rw[] = {
 
 static void dev_io_done_to_text(struct printbuf *out, struct bch_dev *ca)
 {
-	int rw, i;
-
-	for (rw = 0; rw < 2; rw++) {
-		prt_printf(out, "%s:\n", bch2_rw[rw]);
-
-		for (i = 1; i < BCH_DATA_NR; i++)
-			prt_printf(out, "%-12s:%12llu\n",
-			       bch2_data_type_str(i),
-			       percpu_u64_get(&ca->io_done->sectors[rw][i]) << 9);
+	prt_printf(out, "{\n");
+	for (int rw = 0; rw < 2; rw++) {
+		prt_printf(out, "  \"%s\": {\n", bch2_rw[rw]);
+		for (int i = 1; i < BCH_DATA_NR; i++)
+			prt_printf(out, "    \"%s\": %llu%s\n",
+				   bch2_data_type_str(i),
+				   percpu_u64_get(&ca->io_done->sectors[rw][i]) << 9,
+				   i < BCH_DATA_NR - 1 ? "," : "");
+		prt_printf(out, "  }%s\n", rw == 0 ? "," : "");
 	}
+	prt_printf(out, "}\n");
 }
 
 SHOW(bch2_dev)
