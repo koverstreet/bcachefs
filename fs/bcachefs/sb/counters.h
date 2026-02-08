@@ -13,6 +13,8 @@ int bch2_fs_counters_init(struct bch_fs *);
 int bch2_fs_counters_init_late(struct bch_fs *);
 
 extern const char * const bch2_counter_names[];
+extern const enum bch_counters_flags bch2_counter_flags_map[];
+extern const u16 bch2_counter_stable_map[];
 extern const struct bch_sb_field_ops bch_sb_field_ops_counters;
 
 long bch2_ioctl_query_counters(struct bch_fs *,

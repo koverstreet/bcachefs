@@ -19,6 +19,18 @@ const char * const bch2_counter_names[] = {
 	NULL
 };
 
+const enum bch_counters_flags bch2_counter_flags_map[] = {
+#define x(t, n, flags) [BCH_COUNTER_##t] = flags,
+	BCH_PERSISTENT_COUNTERS()
+#undef x
+};
+
+const u16 bch2_counter_stable_map[] = {
+#define x(n, id, ...) [BCH_COUNTER_##n] = BCH_COUNTER_STABLE_##n,
+	BCH_PERSISTENT_COUNTERS()
+#undef x
+};
+
 static size_t bch2_sb_counter_nr_entries(struct bch_sb_field_counters *ctrs)
 {
 	if (!ctrs)
