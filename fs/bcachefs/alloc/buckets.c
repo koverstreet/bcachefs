@@ -344,7 +344,7 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 	BUG_ON(test_bit(BCH_FS_rw, &c->flags));
 
 	if (!bkey_is_btree_ptr(k.k) &&
-	    !bch2_bkey_nr_dirty_ptrs(c, k))
+	    !bch2_bkey_can_read(c, k))
 		try(bch2_no_valid_pointers_repair(trans, btree, &k));
 
 	struct ptrs_repair r = {};
