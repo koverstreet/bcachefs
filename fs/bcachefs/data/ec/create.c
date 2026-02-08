@@ -582,6 +582,14 @@ static void ec_stripe_create(struct ec_stripe_new *s)
 	bch2_ec_stripe_buf_exit(&s->old_stripe);
 	bch2_ec_stripe_buf_exit(&s->new_stripe);
 
+	if (s->ctxt) {
+		unsigned stripe_sectors = le16_to_cpu(v->sectors) * v->nr_blocks;
+		atomic_sub(stripe_sectors, &s->ctxt->write_sectors);
+		atomic_dec(&s->ctxt->write_ios);
+		wake_up(&s->ctxt->wait);
+		closure_put(&s->ctxt->cl);
+	}
+
 	ec_stripe_new_put(c, s, STRIPE_REF_stripe);
 }
 
@@ -1529,6 +1537,13 @@ int bch2_stripe_repair(struct moving_context *ctxt,
 				  new_s->nr_parity,
 				  BCH_DISK_RESERVATION_NOFAIL);
 	bch2_stripe_buf_read(c, &new_s->old_stripe);
+
+	new_s->ctxt = ctxt;
+	unsigned stripe_sectors = le16_to_cpu(new_s->new_stripe.key.v.sectors) *
+				  new_s->new_stripe.key.v.nr_blocks;
+	atomic_add(stripe_sectors, &ctxt->write_sectors);
+	atomic_inc(&ctxt->write_ios);
+	closure_get(&ctxt->cl);
 
 	/* ec_stripe_new_set_pending */
 	scoped_guard(mutex, &c->ec.stripe_new_lock)

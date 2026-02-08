@@ -544,11 +544,6 @@ static int do_reconcile_stripe(struct moving_context *ctxt,
 	struct bch_fs *c = trans->c;
 	u32 restart_count = trans->restart_count;
 
-	/*
-	 * XXX: ratelimiting
-	 *
-	 * Need to plumb moving_context to ec_stripe_new
-	 */
 	if (k.k->type != KEY_TYPE_stripe) /* write buffer race */
 		return 0;
 

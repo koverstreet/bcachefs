@@ -11,6 +11,23 @@
 
 struct bch_read_bio;
 
+/*
+ * Tracks in-flight data movement IO for ratelimiting.
+ *
+ * Four atomic counters track sectors and IOs in flight:
+ *  - read_sectors/read_ios: extent read submit -> read completion
+ *  - write_sectors/write_ios: read completion -> write completion
+ *
+ * bch2_move_ratelimit() blocks the caller until all counters are below
+ * c->opts.move_bytes_in_flight / move_ios_in_flight.
+ *
+ * Extent moves (bch2_move_extent) and stripe repairs (bch2_stripe_repair)
+ * both account through these counters.
+ *
+ * Lifetime: every in-flight IO holds closure_get(&ctxt->cl).
+ * bch2_moving_ctxt_flush_all() waits for all IO via closure_sync(),
+ * and bch2_moving_ctxt_exit() asserts all counters are zero.
+ */
 struct moving_context {
 	struct btree_trans	*trans;
 	struct list_head	list;
