@@ -483,7 +483,9 @@ static CLOSURE_CALLBACK(journal_write_preflush)
 					   BCH_DEV_WRITE_REF_journal_write);
 
 			struct journal_device *ja = &ca->journal;
-			struct bio *bio = &ja->bio[w->idx]->bio;
+			struct journal_bio *jbio = ja->bio[w->idx];
+			struct bio *bio = &jbio->bio;
+			jbio->submit_time	= local_clock();
 			bio_reset(bio, ca->disk_sb.bdev,
 				  REQ_OP_WRITE|REQ_SYNC|REQ_META|REQ_PREFLUSH);
 			bio->bi_end_io		= journal_write_endio;
