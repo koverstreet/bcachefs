@@ -603,7 +603,7 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 		bch2_write_super(c);
 	}
 
-	if (new_state == BCH_MEMBER_STATE_rw)
+	if (new_state == BCH_MEMBER_STATE_rw && bch2_dev_is_online(ca))
 		__bch2_dev_read_write(c, ca);
 
 	if (do_reconcile_scan)
