@@ -1248,6 +1248,27 @@ static bool reconcile_phase_is_pending(unsigned i)
 		p.btree == BTREE_ID_reconcile_pending;
 }
 
+static bool reconcile_phase_next(struct bch_fs *c,
+				 struct moving_context *ctxt,
+				 struct bkey_i_cookie *pending_cookie)
+{
+	struct bch_fs_reconcile *r = &c->reconcile;
+
+	if (++r->phase == ARRAY_SIZE(reconcile_phases))
+		return false;
+
+	reconcile_phase_start(c);
+
+	if (reconcile_phase_is_pending(r->phase) &&
+	    bkey_deleted(&pending_cookie->k))
+		return false;
+
+	/* Avoid conflicts when switching between phys/normal */
+	bch2_moving_ctxt_flush_all(ctxt);
+	bch2_btree_write_buffer_flush_sync(ctxt->trans);
+	return true;
+}
+
 static int do_reconcile(struct moving_context *ctxt)
 {
 	struct btree_trans *trans = ctxt->trans;
@@ -1306,18 +1327,8 @@ static int do_reconcile(struct moving_context *ctxt)
 			break;
 
 		if (!k.k) {
-			if (++r->phase == ARRAY_SIZE(reconcile_phases))
+			if (!reconcile_phase_next(c, ctxt, &pending_cookie))
 				break;
-
-			reconcile_phase_start(c);
-
-			if (reconcile_phase_is_pending(r->phase) &&
-			    bkey_deleted(&pending_cookie.k))
-				break;
-
-			/* Avoid conflicts when switching between phys/normal */
-			bch2_moving_ctxt_flush_all(ctxt);
-			bch2_btree_write_buffer_flush_sync(trans);
 			continue;
 		}
 
@@ -1354,7 +1365,11 @@ static int do_reconcile(struct moving_context *ctxt)
 			bch2_trans_unlock_long(trans);
 			ret = do_reconcile_phys(c, r->phase);
 			BUG_ON(bch2_err_matches(ret, BCH_ERR_transaction_restart));
-			reconcile_phase_start(c);
+
+			work.nr = 0;
+			if (!reconcile_phase_next(c, ctxt, &pending_cookie))
+				break;
+			continue;
 		} else {
 			ret = lockrestart_do(trans,
 				do_reconcile_extent(ctxt, &snapshot_io_opts, r->work_pos,
