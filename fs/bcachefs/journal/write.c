@@ -289,7 +289,7 @@ static CLOSURE_CALLBACK(journal_write_done)
 				 * can return an error if appending to
 				 * replicas_refs failed, but we don't
 				 * care - it's a preallocated darray so
-				 * it'll allways be able to do some
+				 * it'll always be able to do some
 				 * work, and we have to retry anyways,
 				 * because we have to drop j->lock to
 				 * put the replicas refs before updating
@@ -307,12 +307,12 @@ static CLOSURE_CALLBACK(journal_write_done)
 					continue;
 				}
 
-				BUG_ON(j->last_seq > j->last_seq);
+				BUG_ON(w->last_seq > j->last_seq);
 				j->last_seq_ondisk = w->last_seq;
 				last_seq_ondisk_updated = true;
 			}
 
-			/* replicas refs eed to be put first */
+			/* replicas refs need to be put first */
 			j->flushed_seq_ondisk = seq;
 		}
 
