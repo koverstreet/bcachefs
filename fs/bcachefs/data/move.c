@@ -481,6 +481,9 @@ next_nondata:
 			break;
 	}
 
+	/* ratelimit told us to stop (kthread_should_stop), not an error */
+	if (ret > 0)
+		ret = 0;
 	return ret;
 }
 
@@ -588,6 +591,10 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		WARN_ONCE(ret, "unhandled error from move_extent: %s", bch2_err_str(ret));
 		bch2_btree_iter_advance(&bp_iter);
 	}
+
+	/* ratelimit told us to stop (kthread_should_stop), not an error */
+	if (ret > 0)
+		ret = 0;
 
 	while (check_mismatch_done < sector_to_bucket(ca, sector_end))
 		bch2_check_bucket_backpointer_mismatch(trans, ca, check_mismatch_done++,
