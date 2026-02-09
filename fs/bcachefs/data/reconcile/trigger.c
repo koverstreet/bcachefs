@@ -494,12 +494,13 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 
 		if (!poisoned &&
 		    !btree &&
-		    p.crc.csum_type != csum_type)
-			r.need_rb |= BIT(BCH_RECONCILE_data_checksum);
+		    !p.ptr.cached) {
+			if (p.crc.csum_type != csum_type)
+				r.need_rb |= BIT(BCH_RECONCILE_data_checksum);
 
-		if (!poisoned &&
-		    p.crc.compression_type != compression_type)
-			r.need_rb |= BIT(BCH_RECONCILE_background_compression);
+			if (p.crc.compression_type != compression_type)
+				r.need_rb |= BIT(BCH_RECONCILE_background_compression);
+		}
 
 		if (!poisoned &&
 		    !evacuating &&
