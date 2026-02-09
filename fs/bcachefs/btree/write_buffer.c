@@ -261,23 +261,36 @@ static void move_keys_from_inc_to_flushing(struct bch_fs_btree_write_buffer *wb)
 	bch2_journal_pin_add(j, wb_keys_start(&wb->inc)->journal_seq, &wb->flushing.pin,
 			     bch2_btree_write_buffer_journal_flush);
 
+	/* Best-effort resizes; may fail under memory pressure */
 	darray_resize(&wb->flushing.keys, min_t(size_t, 1U << 20, wb->flushing.keys.nr + wb->inc.keys.nr));
 	darray_resize(&wb->sorted, wb->flushing.keys.size);
 
-	if (!wb->flushing.keys.nr && wb->sorted.size >= wb->inc.keys.nr) {
+	/*
+	 * Each sorted entry references one key, and each key is at least
+	 * BKEY_U64s u64s, so this is a conservative bound on the number
+	 * of u64s we can put in flushing while still being able to sort them.
+	 */
+	size_t sorted_can_address = wb->sorted.size * BKEY_U64s;
+
+	/* Fast path: flushing is empty, just swap the buffers */
+	if (!wb->flushing.keys.nr && sorted_can_address >= wb->inc.keys.nr) {
 		swap(wb->flushing.keys, wb->inc.keys);
 		goto out;
 	}
 
-	if (wb->inc.keys.nr <= darray_room(wb->flushing.keys)) {
+	/* All of inc fits: bulk copy */
+	if (wb->flushing.keys.nr + wb->inc.keys.nr <=
+	    min(wb->flushing.keys.size, sorted_can_address)) {
 		memcpy(&darray_top(wb->flushing.keys),
 		       wb->inc.keys.data,
 		       sizeof(wb->inc.keys.data[0]) * wb->inc.keys.nr);
 		wb->flushing.keys.nr += wb->inc.keys.nr;
 		wb->inc.keys.nr = 0;
 	} else {
-		wb_keys_for_each(&wb->flushing, i) {
-			if (wb_key_u64s(&i->k) <= darray_room(wb->flushing.keys)) {
+		/* Partial copy: move as many keys as will fit */
+		wb_keys_for_each(&wb->inc, i) {
+			if (wb->flushing.keys.nr + wb_key_u64s(&i->k) <=
+			    min(wb->flushing.keys.size, sorted_can_address)) {
 				memcpy_u64s(&darray_top(wb->flushing.keys), i,
 					    wb_key_u64s(&i->k));
 				wb->flushing.keys.nr += wb_key_u64s(&i->k);
@@ -298,12 +311,12 @@ out:
 		bch2_journal_pin_update(j, wb_keys_start(&wb->inc)->journal_seq, &wb->inc.pin,
 					bch2_btree_write_buffer_journal_flush);
 
-	if (j->watermark) {
+	if (test_bit(JOURNAL_low_on_wb, &j->flags) && !bch2_btree_write_buffer_must_wait(c)) {
 		guard(spinlock)(&j->lock);
 		bch2_journal_set_watermark(j);
 	}
 
-	BUG_ON(wb->sorted.size < wb->flushing.keys.nr);
+	BUG_ON(wb->sorted.size * BKEY_U64s < wb->flushing.keys.nr);
 }
 
 int bch2_btree_write_buffer_insert_err(struct bch_fs *c,
