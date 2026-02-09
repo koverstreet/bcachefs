@@ -1278,7 +1278,8 @@ static int bch2_check_backpointers_to_extents_pass(struct btree_trans *trans,
 
 	struct progress_indicator progress;
 	bch2_progress_init(&progress, "backpointers_to_extents", trans->c,
-			   BIT_ULL(BTREE_ID_backpointers), 0);
+			   BIT_ULL(BTREE_ID_backpointers)|
+			   BIT_ULL(BTREE_ID_stripe_backpointers), 0);
 
 	try(backpointer_scan_for_each(trans, iter, BTREE_ID_backpointers,
 				      POS_MIN, POS_MAX,
