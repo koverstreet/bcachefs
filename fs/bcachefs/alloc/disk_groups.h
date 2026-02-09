@@ -104,6 +104,7 @@ void bch2_opt_target_to_text(struct printbuf *, struct bch_fs *, struct bch_sb *
 	.to_text	= bch2_opt_target_to_text,	\
 }
 
+void bch2_disk_groups_cleanup(struct bch_fs *);
 int bch2_sb_disk_groups_to_cpu(struct bch_fs *);
 
 int __bch2_dev_group_set(struct bch_fs *, struct bch_dev *, const char *);

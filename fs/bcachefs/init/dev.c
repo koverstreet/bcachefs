@@ -209,6 +209,7 @@
 #include "alloc/backpointers.h"
 #include "alloc/check.h"
 #include "alloc/discard.h"
+#include "alloc/disk_groups.h"
 #include "alloc/replicas.h"
 
 #include "btree/interior.h"
@@ -987,6 +988,8 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 		else
 			memset(&m->uuid, 0, sizeof(m->uuid));
 
+		bch2_disk_groups_cleanup(c);
+		bch2_sb_disk_groups_to_cpu(c);
 		bch2_write_super(c);
 	}
 

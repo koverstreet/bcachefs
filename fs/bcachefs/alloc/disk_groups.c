@@ -116,6 +116,64 @@ const struct bch_sb_field_ops bch_sb_field_ops_disk_groups = {
 	.to_text	= bch2_sb_disk_groups_to_text
 };
 
+void bch2_disk_groups_cleanup(struct bch_fs *c)
+{
+	struct bch_sb *sb = c->disk_sb.sb;
+	struct bch_sb_field_disk_groups *groups =
+		bch2_sb_field_get(sb, disk_groups);
+	unsigned nr_groups = disk_groups_nr(groups);
+	bool changed;
+
+	lockdep_assert_held(&c->sb_lock);
+
+	if (!groups)
+		return;
+
+	/*
+	 * Iterate until stable — deleting a child group might orphan its
+	 * parent:
+	 */
+	do {
+		changed = false;
+
+		for (unsigned i = 0; i < nr_groups; i++) {
+			struct bch_disk_group *g = &groups->entries[i];
+
+			if (BCH_GROUP_DELETED(g))
+				continue;
+
+			/* Check if any alive member references this group */
+			bool has_member = false;
+			for (unsigned d = 0; d < sb->nr_devices; d++) {
+				struct bch_member m = bch2_sb_member_get(sb, d);
+				if (bch2_member_alive(&m) &&
+				    BCH_MEMBER_GROUP(&m) == i + 1) {
+					has_member = true;
+					break;
+				}
+			}
+			if (has_member)
+				continue;
+
+			/* Check if any non-deleted group has this as parent */
+			bool has_child = false;
+			for (unsigned j = 0; j < nr_groups; j++) {
+				if (j != i &&
+				    !BCH_GROUP_DELETED(&groups->entries[j]) &&
+				    BCH_GROUP_PARENT(&groups->entries[j]) == i + 1) {
+					has_child = true;
+					break;
+				}
+			}
+			if (has_child)
+				continue;
+
+			SET_BCH_GROUP_DELETED(g, 1);
+			changed = true;
+		}
+	} while (changed);
+}
+
 int bch2_sb_disk_groups_to_cpu(struct bch_fs *c)
 {
 	struct bch_sb_field_disk_groups *groups;
