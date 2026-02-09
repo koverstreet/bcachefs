@@ -384,12 +384,31 @@ static long __bch2_ioctl_subvolume_destroy(struct bch_fs *c, struct file *filp,
 		goto err;
 	}
 
+	/*
+	 * Must acquire sb_writers before inode_lock to match the ordering used
+	 * by the create path (user_path_create → mnt_want_write → inode_lock).
+	 * Drop and reacquire inode_lock around mnt_want_write(), then
+	 * revalidate the victim dentry.
+	 */
+	inode_unlock(dir);
+	ret = mnt_want_write(path.mnt);
+	inode_lock(dir);
+	if (ret)
+		goto err;
+
+	if (d_unhashed(victim) || victim->d_parent != path.dentry) {
+		ret = -ENOENT;
+		goto err_write;
+	}
+
 	ret =   inode_permission(file_mnt_idmap(filp), d_inode(victim), MAY_WRITE) ?:
 		__bch2_unlink(dir, victim, true);
 	if (!ret) {
 		fsnotify_rmdir(dir, victim);
 		d_invalidate(victim);
 	}
+err_write:
+	mnt_drop_write(path.mnt);
 err:
 	inode_unlock(dir);
 	dput(victim);
