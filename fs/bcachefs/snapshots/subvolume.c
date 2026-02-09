@@ -669,36 +669,3 @@ void bch2_fs_subvolumes_init_early(struct bch_fs *c)
 		  bch2_subvolume_wait_for_pagecache_and_delete);
 }
 
-static int bch2_subvolume_to_text_full(struct printbuf *out, struct btree_trans *trans, struct bkey_s_c_subvolume s)
-{
-	unsigned pos = out->pos;
-
-	prt_printf(out, "%3llu ", s.k->p.offset);
-
-	int ret = bch2_inum_to_path(trans, (subvol_inum) { s.k->p.offset, le64_to_cpu(s.v->inode) }, out);
-	if (ret) {
-		out->pos = pos;
-		return ret;
-	}
-
-	u32 snapshot = le32_to_cpu(s.v->snapshot);
-
-	prt_printf(out, ":\t%u\r%u\r\n",
-		   bch2_snapshot_tree(trans->c, snapshot),
-		   snapshot);
-	return 0;
-}
-
-void bch2_subvolumes_list_to_text(struct printbuf *out, struct bch_fs *c)
-{
-	printbuf_tabstop_push(out, 40);
-	printbuf_tabstop_push(out, 12);
-	printbuf_tabstop_push(out, 12);
-
-	CLASS(btree_trans, trans)(c);
-	for_each_btree_key(trans, iter, BTREE_ID_subvolumes, POS_MIN, 0, k, ({
-		if (k.k->type != KEY_TYPE_subvolume)
-			continue;
-		bch2_subvolume_to_text_full(out, trans, bkey_s_c_to_subvolume(k));
-	}));
-}

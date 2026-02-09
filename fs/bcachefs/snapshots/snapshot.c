@@ -809,35 +809,3 @@ void bch2_snapshot_id_list_to_text(struct printbuf *out, snapshot_id_list *s)
 	}
 }
 
-static int bch2_snapshot_tree_to_text_full(struct printbuf *out, struct btree_trans *trans,
-				    struct bkey_s_c_snapshot_tree st)
-{
-	prt_printf(out, "snapshot tree %llu:\n", st.k->p.offset);
-	guard(printbuf_indent)(out);
-
-	/*
-	 * we need a better way of handling this sort of thing: we don't need
-	 * the outer transaction restart handling loop in for_each_btree_key()
-	 */
-	u32 restart_count = trans->restart_count;
-
-	int ret = bch2_snapshot_tree_keys_to_text(out, trans, le32_to_cpu(st.v->root_snapshot));
-
-	BUG_ON(bch2_err_matches(ret, BCH_ERR_transaction_restart));
-	trans->restart_count = restart_count;
-	return ret;
-}
-
-void bch2_snapshot_trees_to_text(struct printbuf *out, struct bch_fs *c)
-{
-	CLASS(btree_trans, trans)(c);
-
-	bch2_btree_write_buffer_flush_sync(trans);
-
-	for_each_btree_key(trans, iter,
-				  BTREE_ID_snapshot_trees, POS_MIN, BTREE_ITER_prefetch, k, ({
-		if (k.k->type != KEY_TYPE_snapshot_tree)
-			continue;
-		bch2_snapshot_tree_to_text_full(out, trans, bkey_s_c_to_snapshot_tree(k));
-	}));
-}
