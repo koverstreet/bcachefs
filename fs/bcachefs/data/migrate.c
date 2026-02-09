@@ -285,7 +285,7 @@ int bch2_dev_data_drop(struct bch_fs *c, unsigned dev_idx,
 
 	try(bch2_dev_usrdata_drop(c, &progress, dev_idx, flags, err));
 
-	bch2_progress_init(&progress, "dropping metadata", c, 0, ~0ULL);
+	bch2_progress_init(&progress, "dropping metadata", c, ~0ULL, ~0ULL);
 
 	return bch2_dev_metadata_drop(c, &progress, dev_idx, flags, err);
 }
