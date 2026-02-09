@@ -2087,14 +2087,11 @@ static struct bch_fs *bch2_path_to_fs(const char *path)
 static int bch2_show_devname(struct seq_file *seq, struct dentry *root)
 {
 	struct bch_fs *c = root->d_sb->s_fs_info;
-	bool first = true;
 
 	guard(rcu)();
 	for_each_online_member_rcu(c, ca) {
-		if (!first)
-			seq_putc(seq, ':');
-		first = false;
 		seq_puts(seq, ca->disk_sb.sb_name);
+		break;
 	}
 
 	return 0;
