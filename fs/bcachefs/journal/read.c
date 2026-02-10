@@ -1382,8 +1382,20 @@ int bch2_journal_read(struct bch_fs *c, struct journal_start_info *info)
 		return jlist.ret;
 
 	/*
-	 * Find most recent flush entry, and ignore newer non flush entries -
-	 * those entries will be blacklisted:
+	 * Iterating in reverse, find the most recent flush entry and compute
+	 * the three sequence number zones:
+	 *
+	 * - cur_seq: set from the highest entry of any kind (first iteration);
+	 *   new journal writes will start here. Must be strictly greater than
+	 *   every on-disk entry, including noflush entries that will be
+	 *   blacklisted — we must never reuse an on-disk sequence number.
+	 *
+	 * - replay_end: the most recent flush entry's seq — replay up to here.
+	 *
+	 * - last_seq: the most recent flush entry's last_seq — replay from here.
+	 *
+	 * Everything between replay_end+1 and cur_seq-1 (noflush entries and
+	 * torn flush writes) will be blacklisted by the caller.
 	 */
 	genradix_for_each_reverse(&c->journal_entries, radix_iter, _i) {
 		i = *_i;
@@ -1391,8 +1403,8 @@ int bch2_journal_read(struct bch_fs *c, struct journal_start_info *info)
 		if (journal_replay_ignore(i))
 			continue;
 
-		if (!info->start_seq)
-			info->start_seq = le64_to_cpu(i->j.seq) + 1;
+		if (!info->cur_seq)
+			info->cur_seq = le64_to_cpu(i->j.seq) + 1;
 
 		if (JSET_NO_FLUSH(&i->j)) {
 			i->ignore_blacklisted = true;
@@ -1417,28 +1429,28 @@ int bch2_journal_read(struct bch_fs *c, struct journal_start_info *info)
 					 le64_to_cpu(i->j.seq)))
 			i->j.last_seq = i->j.seq;
 
-		info->seq_read_start	= le64_to_cpu(i->j.last_seq);
-		info->seq_read_end	= le64_to_cpu(i->j.seq);
+		info->last_seq		= le64_to_cpu(i->j.last_seq);
+		info->replay_end	= le64_to_cpu(i->j.seq);
 		info->clean		= journal_entry_empty(&i->j);
 		break;
 	}
 
-	if (!info->start_seq) {
+	if (!info->cur_seq) {
 		bch_info(c, "journal read done, but no entries found");
 		return 0;
 	}
 
-	if (!info->seq_read_end) {
+	if (!info->replay_end) {
 		fsck_err(c, dirty_but_no_journal_entries_post_drop_nonflushes,
 			 "journal read done, but no entries found after dropping non-flushes");
 		return 0;
 	}
 
-	u64 drop_before = info->seq_read_start;
+	u64 drop_before = info->last_seq;
 	{
 		CLASS(printbuf, buf)();
 		prt_printf(&buf, "journal read done, replaying entries %llu-%llu",
-			   info->seq_read_start, info->seq_read_end);
+			   info->last_seq, info->replay_end);
 
 		/*
 		 * Drop blacklisted entries and entries older than last_seq (or start of
@@ -1449,11 +1461,11 @@ int bch2_journal_read(struct bch_fs *c, struct journal_start_info *info)
 			prt_printf(&buf, " (rewinding from %llu)", c->opts.journal_rewind);
 		}
 
-		info->seq_read_start = drop_before;
-		if (info->seq_read_end + 1 != info->start_seq)
+		info->last_seq = drop_before;
+		if (info->replay_end + 1 != info->cur_seq)
 			prt_printf(&buf, " (unflushed %llu-%llu)",
-				   info->seq_read_end + 1,
-				   info->start_seq - 1);
+				   info->replay_end + 1,
+				   info->cur_seq - 1);
 		bch_info(c, "%s", buf.buf);
 	}
 
@@ -1477,7 +1489,7 @@ int bch2_journal_read(struct bch_fs *c, struct journal_start_info *info)
 		}
 	}
 
-	try(bch2_journal_check_for_missing(c, drop_before, info->seq_read_end));
+	try(bch2_journal_check_for_missing(c, drop_before, info->replay_end));
 
 	genradix_for_each(&c->journal_entries, radix_iter, _i) {
 		union bch_replicas_padded replicas = {

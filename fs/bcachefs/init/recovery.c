@@ -721,11 +721,11 @@ use_clean:
 
 		}
 
-		journal_start.start_seq = le64_to_cpu(clean->journal_seq) + 1;
+		journal_start.cur_seq = le64_to_cpu(clean->journal_seq) + 1;
 	}
 
-	c->journal_replay_seq_start	= journal_start.seq_read_start;
-	c->journal_replay_seq_end	= journal_start.seq_read_end;
+	c->journal_replay_seq_start	= journal_start.last_seq;
+	c->journal_replay_seq_end	= journal_start.replay_end;
 
 	zero_out_btree_mem_ptr(&c->journal_keys);
 
@@ -768,20 +768,20 @@ use_clean:
 	 * journal sequence numbers:
 	 */
 	if (!c->sb.clean)
-		journal_start.start_seq += JOURNAL_BUF_NR * 4;
+		journal_start.cur_seq += JOURNAL_BUF_NR * 4;
 
-	if (journal_start.seq_read_end &&
-	    journal_start.seq_read_end + 1 != journal_start.start_seq) {
-		u64 blacklist_seq = journal_start.seq_read_end + 1;
+	if (journal_start.replay_end &&
+	    journal_start.replay_end + 1 != journal_start.cur_seq) {
+		u64 blacklist_seq = journal_start.replay_end + 1;
 		try(bch2_journal_log_msg(c, "blacklisting entries %llu-%llu",
-					 blacklist_seq, journal_start.start_seq));
-		try(bch2_journal_seq_blacklist_add(c, blacklist_seq, journal_start.start_seq));
+					 blacklist_seq, journal_start.cur_seq));
+		try(bch2_journal_seq_blacklist_add(c, blacklist_seq, journal_start.cur_seq));
 	}
 
 	try(bch2_journal_log_msg(c, "starting journal at entry %llu, replaying %llu-%llu",
-				 journal_start.start_seq,
-				 journal_start.seq_read_start,
-				 journal_start.seq_read_end));
+				 journal_start.cur_seq,
+				 journal_start.last_seq,
+				 journal_start.replay_end));
 	try(bch2_fs_journal_start(&c->journal, journal_start));
 
 	/*
@@ -986,7 +986,7 @@ int bch2_fs_initialize(struct bch_fs *c)
 	 * journal_res_get() will crash if called before this has
 	 * set up the journal.pin FIFO and journal.cur pointer:
 	 */
-	struct journal_start_info journal_start = { .start_seq = 1 };
+	struct journal_start_info journal_start = { .cur_seq = 1 };
 	try(bch2_fs_journal_start(&c->journal, journal_start));
 
 	try(bch2_set_may_go_rw(c));

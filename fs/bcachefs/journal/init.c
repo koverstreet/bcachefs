@@ -362,25 +362,21 @@ int bch2_fs_journal_start(struct journal *j, struct journal_start_info info)
 	bool had_entries = false;
 	int ret = 0;
 
-	/*
-	 *
-	 * XXX pick most recent non blacklisted sequence number
-	 */
+	/* Don't reuse sequence numbers that are blacklisted: */
+	info.cur_seq = max(info.cur_seq, bch2_journal_last_blacklisted_seq(c));
 
-	info.start_seq = max(info.start_seq, bch2_journal_last_blacklisted_seq(c));
-
-	if (info.start_seq >= JOURNAL_SEQ_MAX) {
+	if (info.cur_seq >= JOURNAL_SEQ_MAX) {
 		bch_err(c, "cannot start: journal seq overflow");
 		return -EINVAL;
 	}
 
 	/* Clean filesystem? */
-	u64 cur_seq	= info.start_seq;
-	u64 last_seq	= info.seq_read_start ?: info.start_seq;
+	u64 cur_seq	= info.cur_seq;
+	u64 last_seq	= info.last_seq ?: info.cur_seq;
 
 	u64 nr = cur_seq - last_seq;
 	if (nr * sizeof(struct journal_entry_pin_list) > 1U << 30) {
-		bch_err(c, "too many ntjournal fifo (%llu open entries)", nr);
+		bch_err(c, "too many journal fifo entries (%llu open entries)", nr);
 		return bch_err_throw(c, ENOMEM_journal_pin_fifo);
 	}
 
