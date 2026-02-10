@@ -380,7 +380,7 @@ u64 bch2_copygc_dev_wait_amount(struct bch_dev *ca)
 	u64 available = (usage.buckets[BCH_DATA_free] +
 			 usage.buckets[BCH_DATA_need_gc_gens] +
 			 usage.buckets[BCH_DATA_need_discard]);
-	s64 wait = available * 5 - ca->mi.nbuckets;
+	s64 wait = (available * 5 - ca->mi.nbuckets) * ca->mi.bucket_size;
 	if (wait > 0)
 		return wait;
 
