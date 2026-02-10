@@ -77,6 +77,8 @@
 /* ioctl below act on a particular file, not the filesystem as a whole: */
 
 #define BCHFS_IOC_REINHERIT_ATTRS	_IOR(0xbc, 64, const char __user *)
+#define BCHFS_IOC_SET_REFLINK_P_MAY_UPDATE_OPTS	_IO(0xbc, 65)
+#define BCHFS_IOC_PROPAGATE_REFLINK_P_OPTS	_IO(0xbc, 66)
 
 struct bch_ioctl_err_msg {
 	__u64			msg_ptr;

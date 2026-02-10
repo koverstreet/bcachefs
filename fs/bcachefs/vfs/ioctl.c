@@ -13,6 +13,8 @@
 
 #include "alloc/accounting.h"
 #include "btree/write_buffer.h"
+#include "data/reconcile/trigger.h"
+#include "data/reflink_format.h"
 
 #include "init/chardev.h"
 #include "init/fs.h"
@@ -765,6 +767,104 @@ static long bch2_ioctl_snapshot_tree(struct bch_fs *c, struct file *filp,
 	return 0;
 }
 
+static int bch2_propagate_opts_to_reflink_v(struct btree_trans *trans,
+					    struct bch_inode_opts *opts,
+					    struct bkey_s_c_reflink_p p)
+{
+	u64 idx = REFLINK_P_IDX(p.v) - le32_to_cpu(p.v->front_pad);
+	u64 end = REFLINK_P_IDX(p.v) + p.k->size + le32_to_cpu(p.v->back_pad);
+	u32 restart_count = trans->restart_count;
+
+	int ret = for_each_btree_key_commit(trans, iter, BTREE_ID_reflink,
+				POS(0, idx),
+				BTREE_ITER_intent|BTREE_ITER_not_extents, k,
+				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+		if (bpos_ge(bkey_start_pos(k.k), POS(0, end)))
+			break;
+
+		bch2_update_reconcile_opts(trans, NULL, opts, &iter, 0, k,
+					   SET_NEEDS_RECONCILE_opt_change);
+	}));
+
+	/* suppress trans_was_restarted() check */
+	trans->restart_count = restart_count;
+	return ret;
+}
+
+static long bch2_ioc_set_reflink_p_may_update_opts(struct bch_fs *c,
+						   struct file *file,
+						   struct bch_inode_info *inode)
+{
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	try(bch2_request_incompat_feature(c, bcachefs_metadata_version_reflink_p_may_update_opts));
+
+	subvol_inum inum = inode_inum(inode);
+
+	CLASS(btree_trans, trans)(c);
+
+	return for_each_btree_key_in_subvolume_max(trans, iter,
+			BTREE_ID_extents,
+			POS(inum.inum, 0),
+			POS(inum.inum, U64_MAX),
+			inum.subvol,
+			BTREE_ITER_intent, k, ({
+		int ret = 0;
+		if (k.k->type == KEY_TYPE_reflink_p &&
+		    !REFLINK_P_MAY_UPDATE_OPTIONS(bkey_s_c_to_reflink_p(k).v)) {
+			struct bkey_i_reflink_p *p =
+				bch2_bkey_make_mut_typed(trans, &iter, &k, 0, reflink_p);
+			ret = PTR_ERR_OR_ZERO(p);
+			if (!ret) {
+				SET_REFLINK_P_MAY_UPDATE_OPTIONS(&p->v, true);
+				ret = bch2_trans_commit(trans, NULL, NULL,
+							BCH_TRANS_COMMIT_no_enospc);
+			}
+			if (!ret) {
+				struct bch_inode_opts opts;
+				ret = bch2_bkey_get_io_opts(trans, NULL, k, &opts) ?:
+				      bch2_propagate_opts_to_reflink_v(trans, &opts,
+								      bkey_s_c_to_reflink_p(k));
+			}
+		}
+		ret;
+	}));
+}
+
+static long bch2_ioc_propagate_reflink_p_opts(struct bch_fs *c,
+				       struct file *file,
+				       struct bch_inode_info *inode)
+{
+	if (!inode_owner_or_capable(file_mnt_idmap(file), &inode->v) &&
+	    !capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	subvol_inum inum = inode_inum(inode);
+
+	CLASS(btree_trans, trans)(c);
+
+	return for_each_btree_key_in_subvolume_max(trans, iter,
+			BTREE_ID_extents,
+			POS(inum.inum, 0),
+			POS(inum.inum, U64_MAX),
+			inum.subvol,
+			0, k, ({
+		int ret = 0;
+		if (k.k->type == KEY_TYPE_reflink_p) {
+			if (REFLINK_P_MAY_UPDATE_OPTIONS(bkey_s_c_to_reflink_p(k).v)) {
+				struct bch_inode_opts opts;
+				ret = bch2_bkey_get_io_opts(trans, NULL, k, &opts) ?:
+				      bch2_propagate_opts_to_reflink_v(trans, &opts,
+								      bkey_s_c_to_reflink_p(k));
+			} else if (!capable(CAP_SYS_ADMIN)) {
+				ret = bch_err_throw(c, reflink_p_may_update_options_unset);
+			}
+		}
+		ret;
+	}));
+}
+
 long bch2_fs_file_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
 	struct bch_inode_info *inode = file_bch_inode(file);
@@ -775,6 +875,14 @@ long bch2_fs_file_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 	case BCHFS_IOC_REINHERIT_ATTRS:
 		ret = bch2_ioc_reinherit_attrs(c, file, inode,
 					       (void __user *) arg);
+		break;
+
+	case BCHFS_IOC_SET_REFLINK_P_MAY_UPDATE_OPTS:
+		ret = bch2_ioc_set_reflink_p_may_update_opts(c, file, inode);
+		break;
+
+	case BCHFS_IOC_PROPAGATE_REFLINK_P_OPTS:
+		ret = bch2_ioc_propagate_reflink_p_opts(c, file, inode);
 		break;
 
 	case FS_IOC_GETVERSION:

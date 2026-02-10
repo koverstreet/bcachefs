@@ -271,6 +271,7 @@
 	x(BCH_ERR_data_update_fail,	data_update_fail_no_snapshot)		\
 	x(BCH_ERR_data_update_fail,	data_update_fail_no_rw_devs)		\
 	x(BCH_ERR_data_update_fail,	data_update_fail_need_copygc)		\
+	x(EPERM,			reflink_p_may_update_options_unset)	\
 	x(EINVAL,			device_state_not_allowed)		\
 	x(EINVAL,			member_info_missing)			\
 	x(EINVAL,			mismatched_block_size)			\
