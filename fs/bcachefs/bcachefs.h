@@ -486,6 +486,9 @@ BCH_DEBUG_PARAMS_ALL()
 	x(journal_flush_write)			\
 	x(journal_noflush_write)		\
 	x(journal_flush_seq)			\
+	x(journal_pin_flush_btree)		\
+	x(journal_pin_flush_key_cache)		\
+	x(journal_pin_flush_other)		\
 	x(blocked_journal_low_on_space)		\
 	x(blocked_journal_low_on_pin)		\
 	x(blocked_journal_max_in_flight)	\

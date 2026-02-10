@@ -609,6 +609,7 @@ static size_t journal_flush_pins(struct journal *j,
 				 unsigned min_any,
 				 unsigned min_key_cache)
 {
+	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct journal_entry_pin *pin;
 	size_t nr_flushed = 0;
 	journal_pin_flush_fn flush_fn;
@@ -656,12 +657,23 @@ static size_t journal_flush_pins(struct journal *j,
 		if (min_any)
 			min_any--;
 
+		u64 start_time = local_clock();
 		err = flush_fn(j, pin, seq);
 
 		scoped_guard(spinlock, &j->lock) {
+			enum journal_pin_type type = journal_pin_type(pin, flush_fn);
+
+			enum bch_time_stats flush_time =
+				type <= JOURNAL_PIN_TYPE_btree0
+				? BCH_TIME_journal_pin_flush_btree
+				: type == JOURNAL_PIN_TYPE_key_cache
+				? BCH_TIME_journal_pin_flush_key_cache
+				: BCH_TIME_journal_pin_flush_other;
+			bch2_time_stats_update(&c->times[flush_time], start_time);
+
 			/* Pin might have been dropped or rearmed: */
 			if (likely(!err && !j->flush_in_progress_dropped))
-				list_move(&pin->list, &journal_seq_pin(j, seq)->flushed[journal_pin_type(pin, flush_fn)]);
+				list_move(&pin->list, &journal_seq_pin(j, seq)->flushed[type]);
 			j->flush_in_progress = NULL;
 			j->flush_in_progress_dropped = false;
 		}
@@ -1058,4 +1070,84 @@ void bch2_journal_pins_to_text(struct printbuf *out, struct journal *j)
 
 	while (!bch2_journal_seq_pins_to_text(out, j, &seq))
 		seq++;
+}
+
+static void bch2_time_stats_summary_to_text(struct printbuf *out,
+					    const char *name,
+					    struct bch2_time_stats *stats)
+{
+	prt_printf(out, "%s:\t%llu\t", name, stats->duration_stats.n);
+	bch2_pr_time_units(out, mean_and_variance_get_mean(stats->duration_stats));
+	prt_tab(out);
+	bch2_pr_time_units(out, stats->max_duration);
+	prt_newline(out);
+}
+
+void bch2_journal_reclaim_to_text(struct printbuf *out, struct journal *j)
+{
+	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+	unsigned long now = jiffies;
+
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 36);
+
+	prt_printf(out, "nr direct reclaim:\t%llu\n",		j->nr_direct_reclaim);
+	prt_printf(out, "nr background reclaim:\t%llu\n",	j->nr_background_reclaim);
+	prt_printf(out, "reclaim kicked:\t%u\n",		j->reclaim_kicked);
+	prt_printf(out, "last flushed:\t%u ms ago\n",
+		   jiffies_to_msecs(now - j->last_flushed));
+	prt_printf(out, "next reclaim:\t%u ms\n",
+		   time_after(j->next_reclaim, now)
+		   ? jiffies_to_msecs(j->next_reclaim - now) : 0);
+
+	struct journal_entry_pin *pin = READ_ONCE(j->flush_in_progress);
+	if (pin)
+		prt_printf(out, "flush in progress:\t%ps\n", pin->flush);
+
+	printbuf_tabstops_reset(out);
+	printbuf_tabstop_push(out, 24);
+	printbuf_tabstop_push(out, 12);
+	printbuf_tabstop_push(out, 12);
+
+	prt_newline(out);
+	prt_printf(out, "Pin flush time stats:\tcount\tavg\tmax\n");
+	bch2_time_stats_summary_to_text(out, "  btree",     &c->times[BCH_TIME_journal_pin_flush_btree]);
+	bch2_time_stats_summary_to_text(out, "  key_cache", &c->times[BCH_TIME_journal_pin_flush_key_cache]);
+	bch2_time_stats_summary_to_text(out, "  other",     &c->times[BCH_TIME_journal_pin_flush_other]);
+
+	prt_newline(out);
+	prt_printf(out, "Blocked time stats:\tcount\tavg\tmax\n");
+	bch2_time_stats_summary_to_text(out, "  low_on_space",       &c->times[BCH_TIME_blocked_journal_low_on_space]);
+	bch2_time_stats_summary_to_text(out, "  low_on_pin",         &c->times[BCH_TIME_blocked_journal_low_on_pin]);
+	bch2_time_stats_summary_to_text(out, "  max_in_flight",      &c->times[BCH_TIME_blocked_journal_max_in_flight]);
+	bch2_time_stats_summary_to_text(out, "  max_open",           &c->times[BCH_TIME_blocked_journal_max_open]);
+	bch2_time_stats_summary_to_text(out, "  write_buffer_flush", &c->times[BCH_TIME_blocked_journal_write_buffer_flush]);
+	bch2_time_stats_summary_to_text(out, "  write_buffer_full",  &c->times[BCH_TIME_blocked_write_buffer_full]);
+
+	prt_newline(out);
+	prt_printf(out, "Oldest pins:\n");
+	{
+		u64 seq = 0;
+		unsigned nr = 0;
+
+		while (nr < 8 && !bch2_journal_seq_pins_to_text(out, j, &seq)) {
+			seq++;
+			nr++;
+		}
+	}
+
+	struct task_struct *t = READ_ONCE(j->reclaim_thread);
+	if (t)
+		get_task_struct(t);
+
+	prt_newline(out);
+
+	if (t) {
+		prt_printf(out, "Reclaim thread:\n");
+		scoped_guard(printbuf_indent, out)
+			bch2_prt_task_backtrace(out, t, 0, GFP_KERNEL);
+		put_task_struct(t);
+	} else {
+		prt_printf(out, "Reclaim thread not running\n");
+	}
 }
