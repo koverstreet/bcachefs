@@ -75,6 +75,9 @@ void bch2_reflink_p_to_text(struct printbuf *out, struct bch_fs *c,
 
 	if (REFLINK_P_ERROR(p.v))
 		prt_str(out, " error");
+
+	if (REFLINK_P_MAY_UPDATE_OPTIONS(p.v))
+		prt_str(out, " may_update_opts");
 }
 
 bool bch2_reflink_p_merge(struct bch_fs *c, struct bkey_s _l, struct bkey_s_c _r)
