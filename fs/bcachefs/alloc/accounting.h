@@ -104,7 +104,7 @@ int bch2_disk_accounting_mod(struct btree_trans *, struct disk_accounting_pos *,
 do {									\
 	memset(&(_k), 0, sizeof(_k));					\
 	(_k).type	= BCH_DISK_ACCOUNTING_##_type;			\
-	(_k)._type	= (struct bch_acct_##_type) { __VA_ARGS__ };	\
+	(_k)._type	= (bch_acct_##_type) { __VA_ARGS__ };		\
 } while (0)
 
 #define bch2_disk_accounting_mod2(_trans, _gc, _v, ...)			\
