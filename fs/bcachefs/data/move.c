@@ -581,6 +581,8 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
+		if (ctxt->stats)
+			atomic64_add(bp.v->bucket_len, &ctxt->stats->sectors_seen_phys);
 		if (bch2_err_matches(ret, BCH_ERR_data_update_fail))
 			ret = 0; /* failure for this extent, keep going */
 		if (bch2_err_matches(ret, EAGAIN) ||

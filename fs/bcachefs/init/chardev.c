@@ -341,6 +341,7 @@ static ssize_t bch2_data_job_read(struct file *file, char __user *buf,
 	};
 
 	if (ctx->arg.op == BCH_DATA_OP_scrub) {
+		e.p.sectors_done = atomic64_read(&ctx->stats.sectors_seen_phys);
 		CLASS(bch2_dev_tryget_noerror, ca)(c, ctx->arg.scrub.dev);
 		if (ca) {
 			struct bch_dev_usage_full u;
