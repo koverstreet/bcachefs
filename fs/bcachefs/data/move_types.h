@@ -24,7 +24,6 @@ struct bch_move_stats {
 	atomic64_t		keys_moved;
 	atomic64_t		keys_raced;
 	atomic64_t		sectors_seen;
-	atomic64_t		sectors_seen_phys;
 	atomic64_t		sectors_moved;
 	atomic64_t		sectors_raced;
 	atomic64_t		sectors_error_corrected;
