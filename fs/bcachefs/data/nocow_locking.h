@@ -28,9 +28,9 @@ static inline void bch2_bucket_nocow_unlock(struct bucket_nocow_lock_table *t, s
 	__bch2_bucket_nocow_unlock(t, bucket_to_u64(bucket), flags);
 }
 
-void bch2_bkey_nocow_unlock(struct bch_fs *, struct bkey_s_c, int);
-bool bch2_bkey_nocow_trylock(struct bch_fs *, struct bkey_ptrs_c, int);
-void bch2_bkey_nocow_lock(struct bch_fs *, struct bkey_ptrs_c, int);
+void bch2_bkey_nocow_unlock(struct bch_fs *, struct bkey_s_c, unsigned, int);
+bool bch2_bkey_nocow_trylock(struct bch_fs *, struct bkey_ptrs_c, unsigned, int);
+void bch2_bkey_nocow_lock(struct bch_fs *, struct bkey_ptrs_c, unsigned, int);
 
 void bch2_nocow_locks_to_text(struct printbuf *, struct bucket_nocow_lock_table *);
 

@@ -697,7 +697,7 @@ void bch2_data_update_exit(struct data_update *update, int ret)
 	update->bvecs = NULL;
 
 	if (c->opts.nocow_enabled)
-		bch2_bkey_nocow_unlock(c, k, 0);
+		bch2_bkey_nocow_unlock(c, k, update->ptrs_held, 0);
 	bkey_put_dev_refs(c, k, update->ptrs_held);
 	bch2_disk_reservation_put(c, &update->op.res);
 	bch2_bkey_buf_exit(&update->k);
@@ -1324,7 +1324,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 	m->ptrs_held = bkey_get_dev_refs(c, k);
 
 	if (c->opts.nocow_enabled) {
-		if (!bch2_bkey_nocow_trylock(c, ptrs, 0)) {
+		if (!bch2_bkey_nocow_trylock(c, ptrs, m->ptrs_held, 0)) {
 			if (!ctxt) {
 				/* We're being called from the promote path:
 				 * there is a btree_trans on the stack that's
@@ -1338,12 +1338,12 @@ int bch2_data_update_init(struct btree_trans *trans,
 			bool locked = false;
 			if (ctxt)
 				move_ctxt_wait_event(ctxt,
-					(locked = bch2_bkey_nocow_trylock(c, ptrs, 0)) ||
+					(locked = bch2_bkey_nocow_trylock(c, ptrs, m->ptrs_held, 0)) ||
 					list_empty(&ctxt->ios));
 			if (!locked) {
 				if (ctxt)
 					bch2_trans_unlock(ctxt->trans);
-				bch2_bkey_nocow_lock(c, ptrs, 0);
+				bch2_bkey_nocow_lock(c, ptrs, m->ptrs_held, 0);
 			}
 		}
 	}
@@ -1365,7 +1365,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 	return 0;
 out_nocow_unlock:
 	if (c->opts.nocow_enabled)
-		bch2_bkey_nocow_unlock(c, k, 0);
+		bch2_bkey_nocow_unlock(c, k, m->ptrs_held, 0);
 out:
 	BUG_ON(!ret);
 
