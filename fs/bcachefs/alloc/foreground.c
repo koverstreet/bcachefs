@@ -577,6 +577,15 @@ err:
 		event_inc_trace(c, bucket_alloc_fail, buf,
 			bucket_alloc_to_text(&buf, c, req, ob));
 
+	if (!bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
+		unsigned idx = req->trace.nr % ARRAY_SIZE(req->trace.entries);
+		struct alloc_trace_entry *e = &req->trace.entries[idx];
+
+		e->dev		= ca->dev_idx;
+		e->err		= ret;
+		req->trace.nr++;
+	}
+
 	return ob;
 }
 
@@ -1586,6 +1595,27 @@ static inline bool dev_may_alloc(struct bch_fs *c, struct bch_dev *ca, struct al
 		(ca->mi.data_allowed & BIT(req->data_type));
 }
 
+static void alloc_trace_to_text(struct printbuf *out, struct bch_fs *c,
+			       struct alloc_trace *trace)
+{
+	if (!trace->nr)
+		return;
+
+	unsigned start = trace->nr > ARRAY_SIZE(trace->entries)
+		? trace->nr - ARRAY_SIZE(trace->entries) : 0;
+
+	prt_printf(out, "Allocation attempts (%u total):\n", trace->nr);
+	scoped_guard(printbuf_indent, out)
+		for (unsigned i = start; i < trace->nr; i++) {
+			struct alloc_trace_entry *e =
+				&trace->entries[i % ARRAY_SIZE(trace->entries)];
+
+			prt_printf(out, "dev %u -> %s\n",
+				   e->dev,
+				   e->err ? bch2_err_str(e->err) : "ok");
+		}
+}
+
 static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_request *req, int err)
 {
 	CLASS(printbuf, buf)();
@@ -1615,6 +1645,9 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_r
 			bch2_devs_list_to_text(&buf, c, req->devs_have);
 			prt_newline(&buf);
 		}
+
+		alloc_trace_to_text(&buf, c, &req->trace);
+		prt_newline(&buf);
 	}
 
 	if (err == -BCH_ERR_bucket_alloc_blocked) {

@@ -75,6 +75,15 @@ struct alloc_request {
 	enum bch_data_type	scratch_data_type;
 	struct open_buckets	scratch_ptrs;
 	struct bch_devs_mask	scratch_devs_may_alloc;
+
+	/* Allocation attempt trace — dumped on allocator stuck */
+	struct alloc_trace {
+		u8		nr;
+		struct alloc_trace_entry {
+			u8	dev;
+			s16	err;
+		}		entries[16];
+	} trace;
 };
 
 void bch2_dev_alloc_list(struct bch_fs *,
@@ -260,6 +269,7 @@ static inline struct alloc_request *alloc_request_get(struct btree_trans *trans,
 	req->watermark		= watermark;
 	req->flags		= flags;
 	req->devs_have		= devs_have;
+	req->trace.nr		= 0;
 	return req;
 }
 
