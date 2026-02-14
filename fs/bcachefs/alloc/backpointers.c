@@ -7,11 +7,14 @@
 
 #include "btree/bbpos.h"
 #include "btree/cache.h"
+#include "btree/read.h"
 #include "btree/update.h"
 #include "btree/interior.h"
 #include "btree/write_buffer.h"
 
 #include "data/checksum.h"
+
+#include "sb/io.h"
 
 #include "init/error.h"
 #include "init/progress.h"
@@ -460,15 +463,12 @@ static int kill_replica_if_checksum_bad(struct btree_trans *trans,
 	struct extent_ptr_decoded p;
 	int ret = 0;
 
-	if (bkey_is_btree_ptr(extent.k))
-		return false;
-
 	bkey_for_each_ptr_decode(extent.k, ptrs, p, entry)
 		if (p.ptr.dev == dev)
 			goto found;
 	BUG();
 found:
-	if (!p.crc.csum_type)
+	if (!bkey_is_btree_ptr(extent.k) && !p.crc.csum_type)
 		return false;
 
 	struct bch_dev *ca = bch2_dev_get_ioref(c, dev, READ,
@@ -476,7 +476,9 @@ found:
 	if (!ca)
 		return false;
 
-	size_t bytes = p.crc.compressed_size << 9;
+	size_t bytes = bkey_is_btree_ptr(extent.k)
+		? c->opts.btree_node_size
+		: p.crc.compressed_size << 9;
 	void *data_buf __free(kvfree) = kvmalloc(bytes, GFP_KERNEL);
 	if (!data_buf) {
 		enumerated_ref_put(&ca->io_ref[READ],
@@ -495,12 +497,37 @@ found:
 	if (ret)
 		goto err;
 
-	struct nonce nonce = extent_nonce(extent.k->bversion, p.crc);
-	struct bch_csum csum = bch2_checksum(c, p.crc.csum_type, nonce, data_buf, bytes);
-	if (!bch2_crc_cmp(csum, p.crc.csum))
-		return false;
+	bool bad;
 
-	prt_printf(&buf, "extents pointing to same space, but first extent checksum bad - dropping:\n");
+	if (bkey_is_btree_ptr(extent.k)) {
+		struct btree_node *bn = data_buf;
+
+		if (le64_to_cpu(bn->magic) != bset_magic(c)) {
+			bad = true;
+		} else if (bch2_checksum_type_valid(c, BSET_CSUM_TYPE(&bn->keys))) {
+			struct nonce nonce = btree_nonce(&bn->keys, 0);
+			struct bch_csum csum = csum_vstruct(c, BSET_CSUM_TYPE(&bn->keys),
+							    nonce, bn);
+			bad = bch2_crc_cmp(bn->csum, csum);
+		} else {
+			bad = false;
+		}
+
+		if (!bad && extent.k->type == KEY_TYPE_btree_ptr_v2)
+			bad = le64_to_cpu(bn->keys.seq) !=
+			      le64_to_cpu(bkey_s_c_to_btree_ptr_v2(extent).v->seq);
+	} else {
+		struct nonce nonce = extent_nonce(extent.k->bversion, p.crc);
+		struct bch_csum csum = bch2_checksum(c, p.crc.csum_type, nonce,
+						     data_buf, bytes);
+		bad = bch2_crc_cmp(csum, p.crc.csum);
+	}
+
+	if (!bad)
+		goto out;
+
+	prt_printf(&buf, "duplicate extents pointing to same space on dev %u, "
+		   "checksum bad or wrong btree node - dropping:\n", dev);
 	bch2_btree_id_to_text(&buf, btree);
 	prt_str(&buf, " ");
 	bch2_bkey_val_to_text(&buf, c, extent);
@@ -512,6 +539,7 @@ found:
 	if (fsck_err(trans, dup_backpointer_to_bad_csum_extent, "%s", buf.buf))
 		ret = drop_dev_and_update(trans, btree, extent, dev) ?: 1;
 fsck_err:
+out:
 err:
 	enumerated_ref_put(&ca->io_ref[READ],
 			   BCH_DEV_READ_REF_check_extent_checksums);
