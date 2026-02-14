@@ -553,6 +553,12 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 	set_bit(BCH_FS_rw, &c->flags);
 	set_bit(BCH_FS_was_rw, &c->flags);
 
+	if (test_and_clear_bit(BCH_FS_sb_dirty, &c->flags)) {
+		guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+		guard(mutex)(&c->sb_lock);
+		bch2_write_super(c);
+	}
+
 	enumerated_ref_start(&c->writes);
 
 	int ret = bch2_journal_reclaim_start(&c->journal) ?:
@@ -1028,7 +1034,7 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 			__set_bit_le64(BCH_FSCK_ERR_ptr_to_missing_backpointer, ext->errors_silent);
 		}
 
-		/* Don't write the superblock, defer that until we go rw */
+		set_bit(BCH_FS_sb_dirty, &c->flags);
 	}
 
 	if (c->sb.clean)
