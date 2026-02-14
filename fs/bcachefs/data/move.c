@@ -310,7 +310,8 @@ int bch2_move_extent(struct moving_context *ctxt,
 		ret = bch_err_throw(c, transaction_restart_nested);
 	}
 
-	if (!bch2_err_matches(ret, BCH_ERR_transaction_restart) && ctxt->stats)
+	if (!bch2_err_matches(ret, BCH_ERR_transaction_restart) && ctxt->stats &&
+	    !ctxt->stats->phys)
 		atomic64_add(!bkey_is_btree_ptr(k.k)
 			     ? k.k->size
 			     : c->opts.btree_node_size >> 9, &ctxt->stats->sectors_seen);
@@ -581,6 +582,8 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
+		if (ctxt->stats)
+			atomic64_add(bp.v->bucket_len, &ctxt->stats->sectors_seen);
 		if (bch2_err_matches(ret, BCH_ERR_data_update_fail))
 			ret = 0; /* failure for this extent, keep going */
 		if (bch2_err_matches(ret, EAGAIN) ||
