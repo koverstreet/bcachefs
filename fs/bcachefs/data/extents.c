@@ -1199,12 +1199,12 @@ bool bch2_bkey_in_target(struct bch_fs *c, struct bkey_s_c k, unsigned target)
 	return true;
 }
 
-bool bch2_bkey_has_dev_bad_or_evacuating(struct bch_fs *c, struct bkey_s_c k)
+bool bch2_bkey_has_ptr_bad_or_evacuating(struct bch_fs *c, struct bkey_s_c k)
 {
 	guard(rcu)();
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	bkey_for_each_ptr(ptrs, ptr)
-		if (bch2_dev_bad_or_evacuating_rcu(c, ptr->dev))
+		if (bch2_ptr_bad_or_evacuating_rcu(c, ptr))
 			return true;
 	return false;
 }
