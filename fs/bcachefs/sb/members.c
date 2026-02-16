@@ -247,7 +247,11 @@ void bch2_member_to_text(struct printbuf *out,
 	prt_newline(out);
 
 	prt_printf(out, "Target size:\t");
-	prt_units_u64(out, target_device_size << 9);
+	if (target_device_size) {
+		prt_units_u64(out, target_device_size << 9);
+	} else {
+		prt_printf(out, "Inactive");
+	}
 	prt_newline(out);
 
 	for (unsigned i = 0; i < BCH_MEMBER_ERROR_NR; i++)
@@ -262,7 +266,14 @@ void bch2_member_to_text(struct printbuf *out,
 
 	prt_printf(out, "First bucket:\t%u\n", le16_to_cpu(m->first_bucket));
 	prt_printf(out, "Buckets:\t%llu\n", le64_to_cpu(m->nbuckets));
-	prt_printf(out, "Target buckets:\t%llu\n", le64_to_cpu(m->target_nbuckets));
+
+	prt_printf(out, "Target buckets:\t");
+	if (target_device_size) {
+		prt_printf(out, "%llu", le64_to_cpu(m->target_nbuckets));
+	} else {
+		prt_printf(out, "Inactive");
+	}
+	prt_newline(out);
 
 	prt_printf(out, "Last mount:\t");
 	if (m->last_mount)
