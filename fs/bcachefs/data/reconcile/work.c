@@ -321,7 +321,7 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 			guard(rcu)();
 
 			bkey_for_each_ptr(ptrs, ptr) {
-				if (bch2_dev_bad_or_evacuating(c, ptr->dev))
+				if (bch2_ptr_bad_or_evacuating_rcu(c, ptr))
 					data_opts->ptrs_kill |= ptr_bit;
 				ptr_bit <<= 1;
 			}
@@ -335,7 +335,7 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 						if (d < 0)
 							return d;
 
-						if (bch2_dev_bad_or_evacuating(c, p.ptr.dev) ||
+						if (bch2_ptr_bad_or_evacuating(c, &p.ptr) ||
 						    (!p.ptr.cached &&
 						     d && durability.total - d >= r->data_replicas)) {
 							data_opts->ptrs_kill |= ptr_bit;
@@ -369,7 +369,7 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 				if (d < 0)
 					return d;
 
-				if (bch2_dev_bad_or_evacuating(c, p.ptr.dev) ||
+				if (bch2_ptr_bad_or_evacuating(c, &p.ptr) ||
 				    (!p.ptr.cached &&
 				     d && durability.online - d >= r->data_replicas)) {
 					data_opts->ptrs_kill |= ptr_bit;
