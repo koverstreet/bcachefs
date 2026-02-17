@@ -18,7 +18,7 @@ struct bch_member_cpu {
 	u8			valid;
 	u8			btree_bitmap_shift;
 	u64			btree_allocated_bitmap;
-	u64 			target_nbuckets; /* (!= 0) => pending resize */
+	u64 			target_nbuckets; /* 0 => no pending resize, [first_bucket + BCH_MIN_NR_NBUCKETS, nbuckets) => shrink, other => illegal */
 };
 
 #endif /* _BCACHEFS_SB_MEMBERS_H */
