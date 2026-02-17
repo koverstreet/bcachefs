@@ -1265,7 +1265,7 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 		lockdep_assert_held(&c->state_lock);
 
 	if (resize && ca->buckets_nouse)
-		return bch_err_throw(c, no_resize_with_buckets_nouse);
+		return bch_err_throw(c, no_resize_with_buckets_nouse); // TODO: make this work
 
 	bucket_gens = bch2_kvmalloc(struct_size(bucket_gens, b, nbuckets),
 				    GFP_KERNEL|__GFP_ZERO);
