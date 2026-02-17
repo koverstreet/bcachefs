@@ -32,6 +32,8 @@ int bch2_dev_add(struct bch_fs *, const char *, struct printbuf *);
 int bch2_dev_online(struct bch_fs *, const char *, struct printbuf *);
 int bch2_dev_offline(struct bch_fs *, struct bch_dev *, int, struct printbuf *);
 int bch2_dev_resize(struct bch_fs *, struct bch_dev *, u64, struct printbuf *);
+int bch2_dev_grow(struct bch_fs *, struct bch_dev *, u64, struct printbuf *);
+int bch2_dev_shrink(struct bch_fs *, struct bch_dev *, u64, struct printbuf *);
 
 int __bch2_dev_resize_alloc(struct bch_dev *, u64, u64);
 
@@ -40,4 +42,3 @@ struct bch_dev *bch2_dev_lookup(struct bch_fs *, const char *);
 extern const struct blk_holder_ops bch2_sb_handle_bdev_ops;
 
 #endif /* _BCACHEFS_INIT_DEV_H */
-

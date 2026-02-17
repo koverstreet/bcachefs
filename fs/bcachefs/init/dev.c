@@ -1227,40 +1227,55 @@ int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags, struct pri
 	return 0;
 }
 
-int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets, struct printbuf *err)
+int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err)
 {
 	u64 old_nbuckets;
-	int ret = 0;
 
 	guard(rwsem_write)(&c->state_lock);
 	old_nbuckets = ca->mi.nbuckets;
 
-	if (nbuckets < ca->mi.nbuckets) {
+	if (new_nbuckets > old_nbuckets) {
+		return bch2_dev_grow(c, ca, new_nbuckets, err);
+	} else if (new_nbuckets < old_nbuckets) {
+		return bch2_dev_shrink(c, ca, new_nbuckets, err);
+	} else {
+		return 0;
+	}
+}
+
+int bch2_dev_grow(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err)
+{
+	int ret = 0;
+
+	u64 old_nbuckets = ca->mi.nbuckets;
+
+	if (new_nbuckets < old_nbuckets) {
 		prt_printf(err, "Cannot shrink yet\n");
 		return bch_err_throw(c, EINVAL_dev_resize_shrink);
 	}
 
-	bool wakeup_reconcile_pending = nbuckets > ca->mi.nbuckets;
+	/* we have more space -> wake up pending */
+	bool wakeup_reconcile_pending = new_nbuckets > old_nbuckets;
 	struct reconcile_scan s = { .type = RECONCILE_SCAN_pending };
 	if (wakeup_reconcile_pending)
 		try(bch2_set_reconcile_needs_scan(c, s, false));
 
-	if (nbuckets > BCH_MEMBER_NBUCKETS_MAX) {
+	if (new_nbuckets > BCH_MEMBER_NBUCKETS_MAX) {
 		prt_printf(err, "New device size too big (%llu greater than max %u)\n",
-			   nbuckets, BCH_MEMBER_NBUCKETS_MAX);
+			   new_nbuckets, BCH_MEMBER_NBUCKETS_MAX);
 		return bch_err_throw(c, device_size_too_big);
 	}
 
 	if (bch2_dev_is_online(ca) &&
 	    get_capacity(ca->disk_sb.bdev->bd_disk) <
-	    ca->mi.bucket_size * nbuckets) {
+	    ca->mi.bucket_size * new_nbuckets) {
 		prt_printf(err, "New size %llu larger than device size %llu\n",
-			   ca->mi.bucket_size * nbuckets,
+			   ca->mi.bucket_size * new_nbuckets,
 			   get_capacity(ca->disk_sb.bdev->bd_disk));
 		return bch_err_throw(c, device_size_too_small);
 	}
 
-	ret = bch2_dev_buckets_resize(c, ca, nbuckets);
+	ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
 	if (ret) {
 		prt_printf(err, "bch2_dev_buckets_resize() error: %s\n", bch2_err_str(ret));
 		return ret;
@@ -1275,13 +1290,13 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets, struct p
 	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 		guard(mutex)(&c->sb_lock);
 		struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
-		m->nbuckets = cpu_to_le64(nbuckets);
+		m->nbuckets = cpu_to_le64(new_nbuckets);
 
 		bch2_write_super(c);
 	}
 
 	if (ca->mi.freespace_initialized) {
-		ret = __bch2_dev_resize_alloc(ca, old_nbuckets, nbuckets);
+		ret = __bch2_dev_resize_alloc(ca, old_nbuckets, new_nbuckets);
 		if (ret) {
 			prt_printf(err, "__bch2_dev_resize_alloc() error: %s\n", bch2_err_str(ret));
 			return ret;
@@ -1293,6 +1308,19 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets, struct p
 	if (wakeup_reconcile_pending)
 		try(bch2_set_reconcile_needs_scan(c, s, true));
 	return 0;
+}
+
+int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err) {
+	/* validate shrink size */
+	/* write & commit target_nbuckets */
+	/* block allocation (buckets_nouse) */
+	/* trigger reconcile range scan -> should kick off evacuation from range */
+	/* somehow wait for reconcile to finish */
+	/* zero target_nbuckets */
+	/* validate that no pointers are left into to-be-shrunk region */
+	/* write & commit new_nbuckets */
+	/* update free-space accounting */
+	/* resize in-memory data structures */
 }
 
 /* Resize on mount */
