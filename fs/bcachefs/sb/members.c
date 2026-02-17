@@ -162,30 +162,34 @@ static int validate_member(struct printbuf *err,
 			   struct bch_sb *sb,
 			   int i)
 {
-	if (le64_to_cpu(m.nbuckets) > BCH_MEMBER_NBUCKETS_MAX) {
+	u64 nbuckets = le64_to_cpu(m.nbuckets);
+
+	if (nbuckets > BCH_MEMBER_NBUCKETS_MAX) {
 		prt_printf(err, "device %u: too many buckets (got %llu, max %u)",
-			   i, le64_to_cpu(m.nbuckets), BCH_MEMBER_NBUCKETS_MAX);
+			   i, nbuckets, BCH_MEMBER_NBUCKETS_MAX);
 		return -BCH_ERR_invalid_sb_members;
 	}
 
-	if (le64_to_cpu(m.nbuckets) -
-	    le16_to_cpu(m.first_bucket) < BCH_MIN_NR_NBUCKETS) {
+	u16 first_bucket = first_bucket;
+
+	if (nbuckets - first_bucket < BCH_MIN_NR_NBUCKETS) {
 		prt_printf(err, "device %u: not enough buckets (got %llu, min %u)",
 			   i, le64_to_cpu(m.nbuckets), BCH_MIN_NR_NBUCKETS);
 		return -BCH_ERR_invalid_sb_members;
 	}
 
-	if (le16_to_cpu(m.bucket_size) <
-	    le16_to_cpu(sb->block_size)) {
+	u16 bucket_size = le16_to_cpu(m.bucket_size);
+	u16 block_size = le16_to_cpu(sb->block_size);
+
+	if (bucket_size < block_size) {
 		prt_printf(err, "device %u: bucket size %u smaller than block size %u",
-			   i, le16_to_cpu(m.bucket_size), le16_to_cpu(sb->block_size));
+			   i, bucket_size, block_size);
 		return -BCH_ERR_invalid_sb_members;
 	}
 
-	if (le16_to_cpu(m.bucket_size) <
-	    BCH_SB_BTREE_NODE_SIZE(sb)) {
+	if (bucket_size < BCH_SB_BTREE_NODE_SIZE(sb)) {
 		prt_printf(err, "device %u: bucket size %u smaller than btree node size %llu",
-			   i, le16_to_cpu(m.bucket_size), BCH_SB_BTREE_NODE_SIZE(sb));
+			   i, bucket_size, BCH_SB_BTREE_NODE_SIZE(sb));
 		return -BCH_ERR_invalid_sb_members;
 	}
 
