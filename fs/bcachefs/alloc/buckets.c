@@ -1224,24 +1224,34 @@ int __bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
 
 /* Startup/shutdown: */
 
+void bch2_dev_buckets_nouse_free(struct bch_fs *c, struct bch_dev *ca)
+{
+	kvfree_rcu_mightsleep(ca->buckets_nouse);
+	ca->buckets_nouse = NULL;
+}
 void bch2_buckets_nouse_free(struct bch_fs *c)
 {
 	for_each_member_device(c, ca) {
-		kvfree_rcu_mightsleep(ca->buckets_nouse);
-		ca->buckets_nouse = NULL;
+		bch2_dev_buckets_nouse_free(c, ca);
 	}
 }
 
+int bch2_dev_buckets_nouse_alloc(struct bch_fs *c, struct bch_dev *ca)
+{
+	BUG_ON(ca->buckets_nouse);
+
+	ca->buckets_nouse = bch2_kvmalloc(BITS_TO_LONGS(ca->mi.nbuckets) *
+				    sizeof(unsigned long),
+				    GFP_KERNEL|__GFP_ZERO);
+	if (!ca->buckets_nouse)
+		return bch_err_throw(c, ENOMEM_buckets_nouse);
+
+	return 0;
+}
 int bch2_buckets_nouse_alloc(struct bch_fs *c)
 {
 	for_each_member_device(c, ca) {
-		BUG_ON(ca->buckets_nouse);
-
-		ca->buckets_nouse = bch2_kvmalloc(BITS_TO_LONGS(ca->mi.nbuckets) *
-					    sizeof(unsigned long),
-					    GFP_KERNEL|__GFP_ZERO);
-		if (!ca->buckets_nouse)
-			return bch_err_throw(c, ENOMEM_buckets_nouse);
+		try(bch2_dev_buckets_nouse_alloc(c, ca));
 	}
 
 	return 0;
