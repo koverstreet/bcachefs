@@ -1046,7 +1046,7 @@ static bool may_reuse_stripe(struct bch_fs *c,
 	unsigned nr_data = old->nr_blocks - old->nr_redundant;
 
 	for (unsigned i = 0; i < nr_data; i++)
-		if (!bch2_ptr_bad_or_evacuating(c, &old->ptrs[i]) &&
+		if (!bch2_dev_bad_or_evacuating(c, old->ptrs[i].dev) &&
 		    stripe_blockcount_get(old, i))
 			__clear_bit(old->ptrs[i].dev, devs_may_alloc.d);
 
