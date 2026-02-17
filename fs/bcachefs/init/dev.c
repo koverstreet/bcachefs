@@ -1399,10 +1399,12 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 		bool empty = false;
 		try(tail_is_empty(c, ca, new_nbuckets, err, &empty));
 
+		/* do a definitive check */
 		if (empty) {
-			/* do a definitive check */
-			CLASS(btree_trans, trans)(c);
-			try(bch2_btree_write_buffer_flush_sync(trans));
+			{
+				CLASS(btree_trans, trans)(c);
+				try(bch2_btree_write_buffer_flush_sync(trans));
+			}
 
 			try(tail_is_empty(c, ca, new_nbuckets, err, &empty));
 			if (empty) {
@@ -1453,6 +1455,7 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			return ret;
 		}
 
+		// TODO: make this path shrink-compatible
 		if (ca->mi.freespace_initialized) {
 			ret = __bch2_dev_resize_alloc(ca, old_nbuckets, new_nbuckets);
 			if (ret) {
