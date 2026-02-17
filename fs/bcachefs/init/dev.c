@@ -202,6 +202,7 @@
  * remaining devices automatically.
  */
 
+#include "alloc/buckets.h"
 #include "bcachefs.h"
 
 #include "alloc/accounting.h"
@@ -212,8 +213,13 @@
 #include "alloc/replicas.h"
 #include "alloc/foreground.h"
 
+#include "bcachefs_format.h"
+#include "btree/bkey_types.h"
 #include "btree/interior.h"
 
+#include "btree/iter.h"
+#include "btree/types.h"
+#include "btree/write_buffer.h"
 #include "data/ec/init.h"
 #include "data/migrate.h"
 #include "data/reconcile/work.h"
@@ -227,8 +233,11 @@
 #include "init/fs.h"
 
 #include "linux/bitmap.h"
+#include "linux/sched.h"
+#include "linux/sched/signal.h"
 #include "sb/members.h"
 #include "sb/members_format.h"
+#include "util/util.h"
 
 #define x(n)		#n,
 const char * const bch2_dev_read_refs[] = {
@@ -1234,7 +1243,6 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 {
 	u64 old_nbuckets;
 
-	guard(rwsem_write)(&c->state_lock);
 	old_nbuckets = ca->mi.nbuckets;
 
 	if (new_nbuckets > old_nbuckets) {
@@ -1249,7 +1257,7 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 /* requires write state lock */
 int bch2_dev_grow(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err)
 {
-	lockdep_assert_held(&c->state_lock);
+	guard(rwsem_write)(&c->state_lock);
 
 	int ret = 0;
 
@@ -1315,54 +1323,147 @@ int bch2_dev_grow(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct
 	return 0;
 }
 
+
+static int tail_is_empty(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err, bool *empty) {
+	struct bpos bp_start = bucket_pos_to_bp_start(ca, POS(ca->dev_idx, new_nbuckets));
+	struct bpos bp_end = bucket_pos_to_bp_start(ca, POS(ca->dev_idx, ca->mi.nbuckets));
+
+	CLASS(btree_trans, trans)(c);
+	CLASS(backpointer_scan_iter, iter)(BTREE_ID_backpointers, bp_start, NULL);
+
+	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
+	wb_maybe_flush_init(&last_flushed);
+
+	struct bkey_s_c_backpointer bp = bch2_bp_scan_iter_peek(trans, &iter, bp_end, &last_flushed);
+
+	try(bkey_err(bp));
+
+	*empty = !bp.k;
+	return 0;
+}
+
+
 // TODO: resume shrink on startup
 int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err) {
-	/* validate shrink size */
 	u64 old_nbuckets = ca->mi.nbuckets;
-	if (new_nbuckets >= old_nbuckets) {
-		return 0;
+
+	int ret = 0;
+
+	scoped_guard(rwsem_write, &c->state_lock) {
+		/* validate shrink size */
+		if (new_nbuckets >= old_nbuckets) {
+			return 0;
+		}
+
+		u64 first_bucket = ca->mi.first_bucket;
+		if (new_nbuckets < first_bucket + BCH_MIN_NR_NBUCKETS) {
+			prt_printf(err, "New device size too small (%llu smaller than min %llu)\n",
+				   new_nbuckets, first_bucket + BCH_MIN_NR_NBUCKETS);
+			return bch_err_throw(c, device_size_too_small);
+		}
+
+		if (ca->mi.target_nbuckets) {
+			prt_printf(err, "Device already resizing (current target: %llu, new target: %llu\n", ca->mi.target_nbuckets, new_nbuckets);
+			return bch_err_throw(c, device_already_resizing);
+		}
+
+		/* write & commit target_nbuckets */
+		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+			guard(mutex)(&c->sb_lock);
+			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
+			m->target_nbuckets = cpu_to_le64(new_nbuckets);
+
+			bch2_write_super(c);
+		}
+
+		/* block allocation */
+		ret = bch2_dev_buckets_nouse_alloc(c, ca);
+		if (ret) {
+			prt_printf(err, "error allocating buckets_nouse for dev %u: %s\n", ca->dev_idx, bch2_err_str(ret));
+			return ret;
+		}
+
+		bitmap_set(ca->buckets_nouse, new_nbuckets, old_nbuckets - new_nbuckets);
+		bch2_reset_alloc_cursors(c);
+
+		/* trigger reconcile range scan -> should kick off evacuation from range */
+		struct reconcile_scan s = {
+			.type = RECONCILE_SCAN_device, // TODO(performance): make this range-based
+			.dev = ca->dev_idx,
+		};
+		ret = bch2_set_reconcile_needs_scan(c, s, true);
+	};
+
+	/* wait for to-be-shrunk reason to be empty */
+	while (true) {
+		bool empty = false;
+		try(tail_is_empty(c, ca, new_nbuckets, err, &empty));
+
+		if (empty) {
+			/* do a definitive check */
+			CLASS(btree_trans, trans)(c);
+			try(bch2_btree_write_buffer_flush_sync(trans));
+
+			try(tail_is_empty(c, ca, new_nbuckets, err, &empty));
+			if (empty) {
+				break;
+			}
+		}
+
+		bch2_reconcile_wakeup(c);
+
+		if (signal_pending(current))
+			return -EINTR;
+
+		schedule_timeout_killable(HZ/2);
 	}
 
-	u64 first_bucket = ca->mi.first_bucket;
-	if (new_nbuckets < first_bucket + BCH_MIN_NR_NBUCKETS) {
-		prt_printf(err, "New device size too small (%llu smaller than min %llu)\n",
-			   new_nbuckets, first_bucket + BCH_MIN_NR_NBUCKETS);
-		return bch_err_throw(c, device_size_too_small);
+
+	scoped_guard(rwsem_write, &c->state_lock) {
+		/* zero target_nbuckets */
+		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+			guard(mutex)(&c->sb_lock);
+			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
+			m->target_nbuckets = 0;
+
+			bch2_write_super(c);
+		}
+
+		/* re-check that tail is really empty */
+		bool empty = false;
+		try(tail_is_empty(c, ca, new_nbuckets, err, &empty));
+		if (!empty) {
+			prt_printf(err, "Shrink failed: still has data\n");
+			return -EBUSY;
+		}
+
+		/* write & commit new_nbuckets */
+		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+			guard(mutex)(&c->sb_lock);
+			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
+			m->nbuckets = new_nbuckets;
+
+			bch2_write_super(c);
+		}
+		/* resize in-memory data structures */
+		bch2_dev_buckets_nouse_free(c, ca);
+		int ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
+		if (ret) {
+			prt_printf(err, "bch2_dev_buckets_resize() error: %s\n", bch2_err_str(ret));
+			return ret;
+		}
+
+		if (ca->mi.freespace_initialized) {
+			ret = __bch2_dev_resize_alloc(ca, old_nbuckets, new_nbuckets);
+			if (ret) {
+				prt_printf(err, "__bch2_dev_resize_alloc() error: %s\n", bch2_err_str(ret));
+				return ret;
+			}
+		}
+
+		bch2_recalc_capacity(c);
 	}
-
-	/* write & commit target_nbuckets */
-	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
-		guard(mutex)(&c->sb_lock);
-		struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
-		m->target_nbuckets = cpu_to_le64(new_nbuckets);
-
-		bch2_write_super(c);
-	}
-
-	/* block allocation (buckets_nouse) */
-	bitmap_set(ca->buckets_nouse, new_nbuckets, old_nbuckets - new_nbuckets);
-	bch2_reset_alloc_cursors(c);
-	/* trigger reconcile range scan -> should kick off evacuation from range */
-	/* somehow wait for reconcile to finish */
-	/* zero target_nbuckets */
-	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
-		guard(mutex)(&c->sb_lock);
-		struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
-		m->target_nbuckets = 0;
-
-		bch2_write_super(c);
-	}
-	/* validate that no pointers are left into to-be-shrunk region */
-	/* write & commit new_nbuckets */
-	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
-		guard(mutex)(&c->sb_lock);
-		struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
-		m->nbuckets = new_nbuckets;
-
-		bch2_write_super(c);
-	}
-	/* update free-space accounting */
-	/* resize in-memory data structures */
+	return 0;
 }
 
 /* Resize on mount */

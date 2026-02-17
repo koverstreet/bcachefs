@@ -280,6 +280,7 @@
 	x(EINVAL,			bucket_size_too_small)			\
 	x(EINVAL,			device_size_too_small)			\
 	x(EINVAL,			device_size_too_big)			\
+	x(EINVAL,			device_already_resizing)		\
 	x(EINVAL,			device_not_a_member_of_filesystem)	\
 	x(EINVAL,			device_has_been_removed)		\
 	x(EINVAL,			device_splitbrain)			\
