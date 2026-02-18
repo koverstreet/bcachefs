@@ -267,6 +267,8 @@ enum bch_write_flags;
 int bch2_bucket_alloc_set_trans(struct btree_trans *, struct alloc_request *,
 				struct dev_stripe_state *);
 
+static bool dev_and_region_matches(struct open_bucket *ob, struct bch_dev *ca);
+
 int bch2_alloc_sectors_req(struct btree_trans *, struct alloc_request *,
 			   struct write_point_specifier,
 			   struct write_point **);

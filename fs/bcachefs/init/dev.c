@@ -1324,6 +1324,7 @@ int bch2_dev_grow(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct
 }
 
 
+// TODO: make sure everything is caught here
 static int tail_is_empty(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err, bool *empty) {
 	struct bpos bp_start = bucket_pos_to_bp_start(ca, POS(ca->dev_idx, new_nbuckets));
 	struct bpos bp_end = bucket_pos_to_bp_start(ca, POS(ca->dev_idx, ca->mi.nbuckets));
@@ -1367,7 +1368,7 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			return bch_err_throw(c, device_already_resizing);
 		}
 
-		/* write & commit target_nbuckets */
+		/* write & commit target_nbuckets - also stops new allocations */
 		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 			guard(mutex)(&c->sb_lock);
 			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
@@ -1376,7 +1377,8 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			bch2_write_super(c);
 		}
 
-		/* block allocation - done by setting target_nbuckets */
+		/* close open buckets in the to-be-shrunk region */
+		bch2_open_buckets_stop(c, ca, false);
 		bch2_reset_alloc_cursors(c); // avoid churn
 
 		/* trigger reconcile range scan -> should kick off evacuation from range */
@@ -1409,6 +1411,7 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			}
 		}
 
+		/* make sure reconcile is actually running */
 		bch2_reconcile_wakeup(c);
 
 		if (signal_pending(current))
@@ -1444,13 +1447,16 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 
 			bch2_write_super(c);
 		}
+
 		/* resize in-memory data structures */
+		/* resize buckets */
 		ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
 		if (ret) {
 			prt_printf(err, "bch2_dev_buckets_resize() error: %s\n", bch2_err_str(ret));
 			return ret;
 		}
 
+		/* resize alloc info - see dev_remove */
 		// TODO: make this path shrink-compatible
 		if (ca->mi.freespace_initialized) {
 			ret = __bch2_dev_resize_alloc(ca, old_nbuckets, new_nbuckets);

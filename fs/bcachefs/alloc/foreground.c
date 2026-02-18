@@ -902,6 +902,11 @@ static int bucket_alloc_set_partial(struct bch_fs *c,
 	return 0;
 }
 
+/* Returns whether the @open_buckets device matches @ca, and if we're currently shrinking, whether it falls into the to-be-shrunk region */
+static bool dev_and_region_matches(struct open_bucket *ob, struct bch_dev *ca) {
+	return ob->dev == ca->dev_idx && (!ca->mi.target_nbuckets || ob->bucket >= ca->mi.target_nbuckets);
+}
+
 /**
  * should_drop_bucket - check if this is open_bucket should go away
  * @ob:		open_bucket to predicate on
@@ -923,7 +928,7 @@ static bool should_drop_bucket(struct open_bucket *ob, struct bch_fs *c,
 	if (ec) {
 		return ob->ec != NULL;
 	} else if (ca) {
-		bool drop = ob->dev == ca->dev_idx;
+		bool drop = dev_and_region_matches(ob, ca);
 
 		if (!drop && ob->ec) {
 			guard(mutex)(&ob->ec->lock);
@@ -934,7 +939,7 @@ static bool should_drop_bucket(struct open_bucket *ob, struct bch_fs *c,
 					continue;
 
 				struct open_bucket *ob2 = a->open_buckets + ob->ec->blocks[i];
-				drop |= ob2->dev == ca->dev_idx;
+				drop |= dev_and_region_matches(ob2, ca);
 			}
 		}
 
@@ -960,13 +965,14 @@ static void bch2_writepoint_stop(struct bch_fs *c, struct bch_dev *ca,
 	wp->ptrs = ptrs;
 }
 
+/* stop open buckets on @ca. If we're shrinking, only stop buckets in to-be-shrunk region */
 void bch2_open_buckets_stop(struct bch_fs *c, struct bch_dev *ca,
 			    bool ec)
 {
 	struct bch_fs_allocator *a = &c->allocator;
 	unsigned i;
 
-	/* Next, close write points that point to this device... */
+	/* Next, close write points that point to this device or the to-be-shrunk region... */
 	for (i = 0; i < ARRAY_SIZE(a->write_points); i++)
 		bch2_writepoint_stop(c, ca, ec, &a->write_points[i]);
 
