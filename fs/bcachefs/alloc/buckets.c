@@ -1224,39 +1224,6 @@ int __bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
 
 /* Startup/shutdown: */
 
-void bch2_dev_buckets_nouse_free(struct bch_fs *c, struct bch_dev *ca)
-{
-	kvfree_rcu_mightsleep(ca->buckets_nouse);
-	ca->buckets_nouse = NULL;
-}
-void bch2_buckets_nouse_free(struct bch_fs *c)
-{
-	for_each_member_device(c, ca) {
-		bch2_dev_buckets_nouse_free(c, ca);
-	}
-}
-
-int bch2_dev_buckets_nouse_alloc(struct bch_fs *c, struct bch_dev *ca)
-{
-	BUG_ON(ca->buckets_nouse);
-
-	ca->buckets_nouse = bch2_kvmalloc(BITS_TO_LONGS(ca->mi.nbuckets) *
-				    sizeof(unsigned long),
-				    GFP_KERNEL|__GFP_ZERO);
-	if (!ca->buckets_nouse)
-		return bch_err_throw(c, ENOMEM_buckets_nouse);
-
-	return 0;
-}
-int bch2_buckets_nouse_alloc(struct bch_fs *c)
-{
-	for_each_member_device(c, ca) {
-		try(bch2_dev_buckets_nouse_alloc(c, ca));
-	}
-
-	return 0;
-}
-
 static void bucket_gens_free_rcu(struct rcu_head *rcu)
 {
 	struct bucket_gens *buckets =
@@ -1273,9 +1240,6 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 
 	if (resize)
 		lockdep_assert_held(&c->state_lock);
-
-	if (resize && ca->buckets_nouse)
-		return bch_err_throw(c, no_resize_with_buckets_nouse); // TODO: make this work
 
 	bucket_gens = bch2_kvmalloc(struct_size(bucket_gens, b, nbuckets),
 				    GFP_KERNEL|__GFP_ZERO);
@@ -1309,7 +1273,6 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 
 void bch2_dev_buckets_free(struct bch_dev *ca)
 {
-	kvfree(ca->buckets_nouse);
 	kvfree(rcu_dereference_protected(ca->bucket_gens, 1));
 	free_percpu(ca->usage);
 }
