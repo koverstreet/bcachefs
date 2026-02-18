@@ -229,7 +229,7 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c,
 	if (unlikely(is_superblock_bucket(c, ca, bucket)))
 		return NULL;
 
-	if (unlikely(bch2_bucket_nouse(ca, bucket) || (ca->mi.target_nbuckets && bucket >= ca->mi.target_nbuckets))) {
+	if (unlikely(ca->mi.target_nbuckets && bucket >= ca->mi.target_nbuckets)) {
 		req->counters.skipped_nouse++;
 		return NULL;
 	}

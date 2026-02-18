@@ -502,7 +502,6 @@ struct bch_dev {
 	GENRADIX(struct bucket)	buckets_gc;
 	struct bucket_gens __rcu *bucket_gens;
 	u8			*oldest_gen;
-	unsigned long		*buckets_nouse;
 
 	struct bucket_bitmap	bucket_backpointer_mismatch;
 	struct bucket_bitmap	bucket_backpointer_empty;
