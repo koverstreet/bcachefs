@@ -1476,7 +1476,7 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 int __bch2_dev_resize_alloc(struct bch_dev *ca, u64 old_nbuckets, u64 new_nbuckets)
 {
 	struct bch_fs *c = ca->fs;
-	u64 v[3] = { new_nbuckets - old_nbuckets, 0, 0 };
+	s64 v[3] = { (s64) new_nbuckets - (s64) old_nbuckets, 0, 0 };
 
 	return bch2_trans_commit_do(ca->fs, NULL, NULL, 0,
 			bch2_disk_accounting_mod2(trans, false, v, dev_data_type,
