@@ -126,7 +126,7 @@ static bool should_cancel_stripe(struct bch_fs *c, struct ec_stripe_new *s, stru
 			continue;
 
 		struct open_bucket *ob = c->allocator.open_buckets + s->blocks[i];
-		if (ob->dev == ca->dev_idx)
+		if (dev_and_region_matches(ob, ca))
 			return true;
 	}
 
