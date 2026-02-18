@@ -170,7 +170,7 @@ static int validate_member(struct printbuf *err,
 		return -BCH_ERR_invalid_sb_members;
 	}
 
-	u16 first_bucket = first_bucket;
+	u16 first_bucket = le16_to_cpu(m.first_bucket);
 
 	if (nbuckets - first_bucket < BCH_MIN_NR_NBUCKETS) {
 		prt_printf(err, "device %u: not enough buckets (got %llu, min %u)",
