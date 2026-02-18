@@ -1385,6 +1385,10 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			.dev = ca->dev_idx,
 		};
 		ret = bch2_set_reconcile_needs_scan(c, s, true);
+		if (ret) {
+			prt_printf(err, "Failed to run device reconcile scan: %s\n", bch2_err_str(ret));
+			return ret;
+		}
 	};
 
 	/* wait for to-be-shrunk reason to be empty */
@@ -1441,7 +1445,7 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			bch2_write_super(c);
 		}
 		/* resize in-memory data structures */
-		int ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
+		ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
 		if (ret) {
 			prt_printf(err, "bch2_dev_buckets_resize() error: %s\n", bch2_err_str(ret));
 			return ret;
