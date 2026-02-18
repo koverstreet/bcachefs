@@ -1378,7 +1378,7 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 		}
 
 		/* close open buckets in the to-be-shrunk region */
-		bch2_open_buckets_stop(c, ca, false);
+		bch2_open_buckets_stop(c, ca, false, new_nbuckets);
 		bch2_reset_alloc_cursors(c); // avoid churn
 
 		/* trigger reconcile range scan -> should kick off evacuation from range */

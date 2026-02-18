@@ -1601,7 +1601,7 @@ void bch2_dev_allocator_remove(struct bch_fs *c, struct bch_dev *ca)
 	 */
 	bch2_recalc_capacity(c);
 
-	bch2_open_buckets_stop(c, ca, false);
+	bch2_open_buckets_stop(c, ca, false, 0);
 
 	/*
 	 * Wake up threads that were blocked on allocation, so they can notice

@@ -267,7 +267,10 @@ enum bch_write_flags;
 int bch2_bucket_alloc_set_trans(struct btree_trans *, struct alloc_request *,
 				struct dev_stripe_state *);
 
-static bool dev_and_region_matches(struct open_bucket *ob, struct bch_dev *ca);
+/* Returns whether the @open_buckets device matches @ca and whether the @open_bucket falls behind the cutoff */
+static inline bool dev_and_region_matches(struct open_bucket *ob, struct bch_dev *ca, u64 tail_cutoff) {
+	return ob->dev == ca->dev_idx && ob->bucket >= tail_cutoff;
+}
 
 int bch2_alloc_sectors_req(struct btree_trans *, struct alloc_request *,
 			   struct write_point_specifier,
@@ -371,7 +374,7 @@ void bch2_alloc_sectors_append_ptrs(struct bch_fs *, struct write_point *,
 				    struct bkey_i *, unsigned, bool);
 void bch2_alloc_sectors_done(struct bch_fs *, struct write_point *);
 
-void bch2_open_buckets_stop(struct bch_fs *c, struct bch_dev *, bool);
+void bch2_open_buckets_stop(struct bch_fs *c, struct bch_dev *, bool, u64 tail_cutoff);
 
 static inline struct write_point_specifier writepoint_hashed(unsigned long v)
 {
