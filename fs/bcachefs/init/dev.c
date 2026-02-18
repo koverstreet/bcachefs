@@ -1376,15 +1376,8 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			bch2_write_super(c);
 		}
 
-		/* block allocation */
-		ret = bch2_dev_buckets_nouse_alloc(c, ca);
-		if (ret) {
-			prt_printf(err, "error allocating buckets_nouse for dev %u: %s\n", ca->dev_idx, bch2_err_str(ret));
-			return ret;
-		}
-
-		bitmap_set(ca->buckets_nouse, new_nbuckets, old_nbuckets - new_nbuckets);
-		bch2_reset_alloc_cursors(c);
+		/* block allocation - done by setting target_nbuckets */
+		bch2_reset_alloc_cursors(c); // avoid churn
 
 		/* trigger reconcile range scan -> should kick off evacuation from range */
 		struct reconcile_scan s = {
@@ -1448,7 +1441,6 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			bch2_write_super(c);
 		}
 		/* resize in-memory data structures */
-		bch2_dev_buckets_nouse_free(c, ca);
 		int ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
 		if (ret) {
 			prt_printf(err, "bch2_dev_buckets_resize() error: %s\n", bch2_err_str(ret));
