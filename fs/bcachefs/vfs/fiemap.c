@@ -163,6 +163,7 @@ bch2_next_fiemap_pagecache_extent(struct btree_trans *trans, struct bch_inode_in
 }
 
 static int bch2_next_fiemap_extent(struct btree_trans *trans,
+				   struct btree_iter *iter,
 				   struct bch_inode_info *inode,
 				   u64 start, u64 end,
 				   struct bch_fiemap_extent *cur)
@@ -170,9 +171,8 @@ static int bch2_next_fiemap_extent(struct btree_trans *trans,
 	u32 snapshot;
 	try(bch2_subvolume_get_snapshot(trans, inode->ei_inum.subvol, &snapshot));
 
-	CLASS(btree_iter, iter)(trans, BTREE_ID_extents,
-				SPOS(inode->ei_inum.inum, start, snapshot), 0);
-	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_max(&iter, POS(inode->ei_inum.inum, end)));
+	bch2_btree_iter_set_pos(iter, SPOS(inode->ei_inum.inum, start, snapshot));
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_max(iter, POS(inode->ei_inum.inum, end)));
 
 	u64 pagecache_end = k.k ? max(start, bkey_start_offset(k.k)) : end;
 
@@ -195,10 +195,10 @@ static int bch2_next_fiemap_extent(struct btree_trans *trans,
 	 * and we don't provide a way for userspace to lock that out.
 	 */
 	if (k.k &&
-	    bkey_le(bpos_max(iter.pos, bkey_start_pos(k.k)),
+	    bkey_le(bpos_max(iter->pos, bkey_start_pos(k.k)),
 		    pagecache_start)) {
 		bch2_bkey_buf_reassemble(&cur->kbuf, k);
-		bch2_cut_front(trans->c, iter.pos, cur->kbuf.k);
+		bch2_cut_front(trans->c, iter->pos, cur->kbuf.k);
 		bch2_cut_back(POS(inode->ei_inum.inum, end), cur->kbuf.k);
 		cur->flags = 0;
 	} else if (k.k) {
@@ -219,7 +219,7 @@ static int bch2_next_fiemap_extent(struct btree_trans *trans,
 				   bkey_start_offset(&k->k) + offset_into_extent),
 			       k);
 		bch2_key_resize(&k->k, sectors);
-		k->k.p = iter.pos;
+		k->k.p = iter->pos;
 		k->k.p.offset += k->k.size;
 	}
 
@@ -246,10 +246,11 @@ int bch2_fiemap(struct inode *vinode, struct fiemap_extent_info *info,
 	bch2_bkey_buf_init(&prev.kbuf);
 
 	CLASS(btree_trans, trans)(c);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_extents, POS_MIN, 0);
 
 	while (start < end) {
 		ret = lockrestart_do(trans,
-			bch2_next_fiemap_extent(trans, ei, start, end, &cur));
+			bch2_next_fiemap_extent(trans, &iter, ei, start, end, &cur));
 		if (ret)
 			goto err;
 
