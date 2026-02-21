@@ -124,7 +124,7 @@ int bch2_disk_accounting_mod(struct btree_trans *trans,
 		     a = (void *) bkey_next(&a->k_i))
 			if (bpos_eq(a->k.p, pos)) {
 				BUG_ON(nr != bch2_accounting_counters(&a->k));
-				acc_u64s(a->v.d, d, nr);
+				acc_s64s(a->v.d, d, nr);
 
 				if (bch2_accounting_key_is_zero(accounting_i_to_s_c(a))) {
 					unsigned offset = (u64 *) a -

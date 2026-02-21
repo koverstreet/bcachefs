@@ -666,6 +666,16 @@ static inline void percpu_u64_set(u64 __percpu *dst, u64 src)
 	this_cpu_write(*dst, src);
 }
 
+static inline void acc_s64s(u64 *acc, const s64 *src, unsigned nr)
+{
+	for (unsigned i = 0; i < nr; i++)
+		if (src[i] >= 0) {
+			acc[i] += src[i];
+		} else {
+			acc[i] -= abs(src[i]);
+		}
+}
+
 static inline void acc_u64s(u64 *acc, const u64 *src, unsigned nr)
 {
 	for (unsigned i = 0; i < nr; i++)
