@@ -1464,6 +1464,19 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			prt_printf(err, "error truncating alloc info: %s\n", bch2_err_str(ret));
 			return ret;
 		}
+
+		/* account disk space */
+		// see __bch2_dev_resize_alloc
+		s64 v[3] = { (s64) new_nbuckets - (s64) old_nbuckets, 0, 0 };
+		ret = bch2_trans_commit_do(ca->fs, NULL, NULL, 0,
+				bch2_disk_accounting_mod2(trans, false, v, dev_data_type,
+							  .dev = ca->dev_idx,
+							  .data_type = BCH_DATA_free));
+		if (ret) {
+			prt_printf(err, "error accounting disk space: %s\n", bch2_err_str(ret));
+			return ret;
+		}
+
 		// TODO: figure out what parts of this path still need doing
 		// if (ca->mi.freespace_initialized) {
 		// 	ret = __bch2_dev_resize_alloc(ca, old_nbuckets, new_nbuckets);
