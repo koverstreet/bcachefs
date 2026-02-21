@@ -233,8 +233,10 @@
 #include "init/fs.h"
 
 #include "linux/bitmap.h"
+#include "linux/byteorder/generic.h"
 #include "linux/sched.h"
 #include "linux/sched/signal.h"
+#include "sb/io.h"
 #include "sb/members.h"
 #include "sb/members_format.h"
 #include "util/util.h"
@@ -1323,6 +1325,29 @@ int bch2_dev_grow(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct
 	return 0;
 }
 
+static int drop_sbs_after_cutoff(struct bch_fs *c, struct bch_dev *ca, u64 cutoff) {
+	u64 cutoff_sector = bucket_to_sector(ca, cutoff);
+
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+	guard(mutex)(&c->sb_lock);
+
+	struct bch_sb_layout *layout = &ca->disk_sb.sb->layout;
+
+	u64 max_sectors = 1 << layout->sb_max_size_bits;
+
+	u8 i;
+	/* offsets are sorted in ascending order, see validate_sb_layout() overlapping checks for evidence */
+	for (i = 0; i < layout->nr_superblocks; i++) {
+		u64 offset = le64_to_cpu(layout->sb_offset[i]);
+		if (offset + max_sectors > cutoff_sector) {
+			break;
+		}
+	}
+
+	layout->nr_superblocks = i;
+
+	return bch2_write_super(c);
+}
 
 // TODO: make sure everything is caught here.
 // Fore example journals and superblocks might need special handling
@@ -1449,7 +1474,12 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			bch2_write_super(c);
 		}
 
-		/* resize in-memory data structures */
+		/* drop references to now-truncated superblock copies */
+		ret = drop_sbs_after_cutoff(c, ca, new_nbuckets);
+		if (ret) {
+			prt_printf(err, "Error dropping superblocks after cutoff: %s\n", bch2_err_str(ret));
+			return ret;
+		}
 
 		/* resize buckets */
 		ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
@@ -1466,7 +1496,7 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 		}
 
 		/* account disk space */
-		// - BCH_DATA_free is somehow still off by 2
+		// - BCH_DATA_free is somehow still off by the amount of superblocks
 		// - BCH_DATA_sb isn't updated at all yet - should we relocate them or just accept that we have less copies and adjust?
 		s64 v[3] = { -(s64) (old_nbuckets - new_nbuckets), 0, 0 };
 		ret = bch2_trans_commit_do(ca->fs, NULL, NULL, 0,
