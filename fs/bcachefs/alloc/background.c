@@ -1418,8 +1418,7 @@ int bch2_dev_truncate_alloc(struct bch_fs *c, struct bch_dev *ca, u64 cutoff)
 		bch2_btree_delete_range(c, BTREE_ID_bucket_gens, start, end,
 					BTREE_TRIGGER_norun) ?:
 		bch2_btree_delete_range(c, BTREE_ID_alloc, start, end,
-					BTREE_TRIGGER_norun) ?:
-		bch2_dev_usage_remove(c, ca);
+					BTREE_TRIGGER_norun);
 	bch_err_msg_dev(ca, ret, "truncating dev alloc info");
 	return ret;
 }

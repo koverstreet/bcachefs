@@ -1466,8 +1466,9 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 		}
 
 		/* account disk space */
-		// see __bch2_dev_resize_alloc
-		s64 v[3] = { (s64) new_nbuckets - (s64) old_nbuckets, 0, 0 };
+		// - BCH_DATA_free is somehow still off by 2
+		// - BCH_DATA_sb isn't updated at all yet - should we relocate them or just accept that we have less copies and adjust?
+		s64 v[3] = { -(s64) (old_nbuckets - new_nbuckets), 0, 0 };
 		ret = bch2_trans_commit_do(ca->fs, NULL, NULL, 0,
 				bch2_disk_accounting_mod2(trans, false, v, dev_data_type,
 							  .dev = ca->dev_idx,
