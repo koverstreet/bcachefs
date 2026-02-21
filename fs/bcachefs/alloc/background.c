@@ -1398,6 +1398,32 @@ fsck_err:
 
 /* device removal */
 
+int bch2_dev_truncate_alloc(struct bch_fs *c, struct bch_dev *ca, u64 cutoff)
+{
+	struct bpos start	= POS(ca->dev_idx, cutoff);
+	struct bpos end		= POS(ca->dev_idx, U64_MAX);
+	int ret;
+
+	/*
+	 * We clear the LRU and need_discard btrees first so that we don't race
+	 * with bch2_do_invalidates() and bch2_do_discards()
+	 */
+	ret =   bch2_dev_truncate_lrus(c, ca, cutoff) ?:
+		bch2_btree_delete_range(c, BTREE_ID_need_discard, start, end,
+					BTREE_TRIGGER_norun) ?:
+		bch2_btree_delete_range(c, BTREE_ID_freespace, start, end,
+					BTREE_TRIGGER_norun) ?:
+		bch2_btree_delete_range(c, BTREE_ID_backpointers, start, end,
+					BTREE_TRIGGER_norun) ?:
+		bch2_btree_delete_range(c, BTREE_ID_bucket_gens, start, end,
+					BTREE_TRIGGER_norun) ?:
+		bch2_btree_delete_range(c, BTREE_ID_alloc, start, end,
+					BTREE_TRIGGER_norun) ?:
+		bch2_dev_usage_remove(c, ca);
+	bch_err_msg_dev(ca, ret, "truncating dev alloc info");
+	return ret;
+}
+
 int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct bpos start	= POS(ca->dev_idx, 0);

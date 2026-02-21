@@ -1324,7 +1324,8 @@ int bch2_dev_grow(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct
 }
 
 
-// TODO: make sure everything is caught here
+// TODO: make sure everything is caught here.
+// Fore example journals and superblocks might need special handling
 static int tail_is_empty(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err, bool *empty) {
 	struct bpos bp_start = bucket_pos_to_bp_start(ca, POS(ca->dev_idx, new_nbuckets));
 	struct bpos bp_end = bucket_pos_to_bp_start(ca, POS(ca->dev_idx, ca->mi.nbuckets));
@@ -1449,6 +1450,7 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 		}
 
 		/* resize in-memory data structures */
+
 		/* resize buckets */
 		ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
 		if (ret) {
@@ -1456,15 +1458,20 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			return ret;
 		}
 
-		/* resize alloc info - see dev_remove */
-		// TODO: make this path shrink-compatible
-		if (ca->mi.freespace_initialized) {
-			ret = __bch2_dev_resize_alloc(ca, old_nbuckets, new_nbuckets);
-			if (ret) {
-				prt_printf(err, "__bch2_dev_resize_alloc() error: %s\n", bch2_err_str(ret));
-				return ret;
-			}
+		/* truncate alloc info */
+		ret = bch2_dev_truncate_alloc(c, ca, new_nbuckets);
+		if (ret) {
+			prt_printf(err, "error truncating alloc info: %s\n", bch2_err_str(ret));
+			return ret;
 		}
+		// TODO: figure out what parts of this path still need doing
+		// if (ca->mi.freespace_initialized) {
+		// 	ret = __bch2_dev_resize_alloc(ca, old_nbuckets, new_nbuckets);
+		// 	if (ret) {
+		// 		prt_printf(err, "__bch2_dev_resize_alloc() error: %s\n", bch2_err_str(ret));
+		// 		return ret;
+		// 	}
+		// }
 
 		bch2_recalc_capacity(c);
 	}
