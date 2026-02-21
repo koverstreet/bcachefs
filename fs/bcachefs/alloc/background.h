@@ -330,6 +330,7 @@ int bch2_trigger_alloc(struct btree_trans *, enum btree_id, unsigned,
 		       struct bkey_s_c, struct bkey_s,
 		       enum btree_iter_update_trigger_flags);
 
+int bch2_dev_truncate_alloc(struct bch_fs *c, struct bch_dev *ca, u64 cutoff);
 int bch2_dev_remove_alloc(struct bch_fs *, struct bch_dev *);
 
 void bch2_recalc_capacity(struct bch_fs *);
