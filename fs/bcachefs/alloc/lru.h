@@ -70,8 +70,7 @@ static inline int bch2_lru_change(struct btree_trans *trans,
 		: 0;
 }
 
-int bch2_dev_truncate_lrus(struct bch_fs *c, struct bch_dev *ca, u64 cutoff);
-int bch2_dev_remove_lrus(struct bch_fs *, struct bch_dev *);
+int bch2_dev_remove_lrus(struct bch_fs *, struct bch_dev *, u64);
 
 struct wb_maybe_flush;
 int bch2_lru_check_set(struct btree_trans *, u16, u64, u64, struct bkey_s_c,

@@ -1408,7 +1408,7 @@ int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca, u64 cutoff)
 	 * We clear the LRU and need_discard btrees first so that we don't race
 	 * with bch2_do_invalidates() and bch2_do_discards()
 	 */
-	ret =   bch2_dev_remove_lrus(c, ca) ?:
+	ret =   bch2_dev_remove_lrus(c, ca, cutoff) ?:
 		bch2_btree_delete_range(c, BTREE_ID_need_discard, start, end,
 					BTREE_TRIGGER_norun) ?:
 		bch2_btree_delete_range(c, BTREE_ID_freespace, start, end,
@@ -1419,7 +1419,7 @@ int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca, u64 cutoff)
 					BTREE_TRIGGER_norun) ?:
 		bch2_btree_delete_range(c, BTREE_ID_alloc, start, end,
 					BTREE_TRIGGER_norun) ?:
-		bch2_dev_usage_remove(c, ca, cutoff);
+		((cutoff == 0) ? bch2_dev_usage_remove(c, ca) : 0);
 	bch_err_msg_dev(ca, ret, "removing dev alloc info");
 	return ret;
 }

@@ -1486,15 +1486,16 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 			guard(mutex)(&c->sb_lock);
 			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
-
-			bch2_write_super(c);
 			m->nbuckets = cpu_to_le64(new_nbuckets);
+
+			try(bch2_write_super(c));
 		}
 
-		/* resize buckets */
-		ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
+
+		/* update accounting info - has to happen before truncating alloc info */
+		ret = bch2_dev_truncate_accounting(c, ca, old_nbuckets, new_nbuckets);
 		if (ret) {
-			prt_printf(err, "bch2_dev_buckets_resize() error: %s\n", bch2_err_str(ret));
+			prt_printf(err, "error updating accounting info: %s\n", bch2_err_str(ret));
 			return ret;
 		}
 
@@ -1502,6 +1503,13 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 		ret = bch2_dev_remove_alloc(c, ca, new_nbuckets);
 		if (ret) {
 			prt_printf(err, "error truncating alloc info: %s\n", bch2_err_str(ret));
+			return ret;
+		}
+
+		/* resize buckets */
+		ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
+		if (ret) {
+			prt_printf(err, "bch2_dev_buckets_resize() error: %s\n", bch2_err_str(ret));
 			return ret;
 		}
 
