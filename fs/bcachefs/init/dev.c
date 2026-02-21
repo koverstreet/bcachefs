@@ -889,7 +889,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 	 */
 	__bch2_dev_offline(c, ca);
 
-	ret = bch2_dev_remove_alloc(c, ca);
+	ret = bch2_dev_remove_alloc(c, ca, 0);
 	if (ret) {
 		prt_printf(err, "bch2_dev_remove_alloc() error: %s\n", bch2_err_str(ret));
 		goto err;
@@ -1499,22 +1499,9 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 		}
 
 		/* truncate alloc info */
-		ret = bch2_dev_truncate_alloc(c, ca, new_nbuckets);
+		ret = bch2_dev_remove_alloc(c, ca, new_nbuckets);
 		if (ret) {
 			prt_printf(err, "error truncating alloc info: %s\n", bch2_err_str(ret));
-			return ret;
-		}
-
-		/* account disk space */
-		// - BCH_DATA_free is somehow still off by the amount of superblocks
-		// - BCH_DATA_sb isn't updated at all yet - should we relocate them or just accept that we have less copies and adjust?
-		s64 v[3] = { -(s64) (old_nbuckets - new_nbuckets), 0, 0 };
-		ret = bch2_trans_commit_do(ca->fs, NULL, NULL, 0,
-				bch2_disk_accounting_mod2(trans, false, v, dev_data_type,
-							  .dev = ca->dev_idx,
-							  .data_type = BCH_DATA_free));
-		if (ret) {
-			prt_printf(err, "error accounting disk space: %s\n", bch2_err_str(ret));
 			return ret;
 		}
 

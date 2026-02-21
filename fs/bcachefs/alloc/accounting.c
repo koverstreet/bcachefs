@@ -1174,7 +1174,7 @@ int bch2_accounting_read(struct bch_fs *c)
 	return accounting_read_mem_fixups(trans);
 }
 
-int bch2_dev_usage_remove(struct bch_fs *c, struct bch_dev *ca)
+int bch2_dev_usage_remove(struct bch_fs *c, struct bch_dev *ca, u64 cutoff)
 {
 	CLASS(btree_trans, trans)(c);
 
@@ -1193,7 +1193,7 @@ int bch2_dev_usage_remove(struct bch_fs *c, struct bch_dev *ca)
 							 disk_accounting_pos_to_bpos(&start),
 							 disk_accounting_pos_to_bpos(&end),
 							 BTREE_ITER_all_snapshots, k, ret) {
-				if (k.k->type != KEY_TYPE_accounting)
+				if (k.k->type != KEY_TYPE_accounting || k.k->p.offset < cutoff)
 					continue;
 
 				struct disk_accounting_pos acc;
