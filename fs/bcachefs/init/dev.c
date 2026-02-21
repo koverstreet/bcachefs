@@ -1486,9 +1486,9 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 			guard(mutex)(&c->sb_lock);
 			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
-			m->nbuckets = new_nbuckets;
 
 			bch2_write_super(c);
+			m->nbuckets = cpu_to_le64(new_nbuckets);
 		}
 
 		/* resize buckets */
