@@ -203,6 +203,7 @@
  */
 
 #include "alloc/buckets.h"
+#include "asm-generic/bug.h"
 #include "bcachefs.h"
 
 #include "alloc/accounting.h"
@@ -1344,6 +1345,8 @@ static int drop_sbs_after_cutoff(struct bch_fs *c, struct bch_dev *ca, u64 cutof
 		}
 	}
 
+	BUG_ON(i == 0);
+
 	layout->nr_superblocks = i;
 
 	return bch2_write_super(c);
@@ -1419,7 +1422,7 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 		}
 	};
 
-	/* wait for to-be-shrunk reason to be empty */
+	/* wait for to-be-shrunk region to be empty */
 	while (true) {
 		bool empty = false;
 		try(tail_is_empty(c, ca, new_nbuckets, err, &empty));
@@ -1465,6 +1468,20 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			return -EBUSY;
 		}
 
+		/* drop references to now-truncated superblock copies */
+		ret = drop_sbs_after_cutoff(c, ca, new_nbuckets);
+		if (ret) {
+			prt_printf(err, "Error dropping superblocks after cutoff: %s\n", bch2_err_str(ret));
+			return ret;
+		}
+
+		/* mark superblock buckets as metadata - mirroring the grow path. TODO: not sure if this is necessary here */
+		ret = bch2_trans_mark_dev_sb(c, ca, BTREE_TRIGGER_transactional);
+		if (ret) {
+			prt_printf(err, "bch2_trans_mark_dev_sb() error: %s\n", bch2_err_str(ret));
+			return ret;
+		}
+
 		/* write & commit new_nbuckets */
 		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 			guard(mutex)(&c->sb_lock);
@@ -1472,13 +1489,6 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			m->nbuckets = new_nbuckets;
 
 			bch2_write_super(c);
-		}
-
-		/* drop references to now-truncated superblock copies */
-		ret = drop_sbs_after_cutoff(c, ca, new_nbuckets);
-		if (ret) {
-			prt_printf(err, "Error dropping superblocks after cutoff: %s\n", bch2_err_str(ret));
-			return ret;
 		}
 
 		/* resize buckets */
