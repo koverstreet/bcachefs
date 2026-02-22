@@ -669,6 +669,17 @@ int bch2_evacuate_data(struct moving_context *ctxt,
 				     evacuate_pred, &arg);
 }
 
+int bch2_evacuate_phys(struct bch_fs *c, unsigned dev, u64 start, u64 end)
+{
+	struct evacuate_arg arg = { .dev = dev };
+
+	return bch2_move_data_phys(c, dev, start, end,
+				   ~0U, NULL, NULL,
+				   writepoint_hashed(0),
+				   true,
+				   evacuate_pred, &arg);
+}
+
 static int evacuate_bucket_pred(struct btree_trans *trans, void *_arg,
 				enum btree_id btree, struct bkey_s_c k,
 				struct bch_inode_opts *io_opts,
