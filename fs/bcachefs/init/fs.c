@@ -1064,7 +1064,7 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 		}
 	}
 
-#ifndef CONFIG_RUST
+#if defined(__KERNEL__) && !defined(CONFIG_RUST)
 	bch_warn(c, "kernel does not have CONFIG_RUST enabled; "
 		 "this will be required for bcachefs in the near future - "
 		 "please alert your distribution or kernel developers "
