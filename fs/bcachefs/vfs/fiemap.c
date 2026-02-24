@@ -239,8 +239,8 @@ int bch2_fiemap(struct inode *vinode, struct fiemap_extent_info *info,
 	if (start + len < start)
 		return -EINVAL;
 
-	start >>= 9;
 	u64 end = (start + len) >> 9;
+	start >>= 9;
 
 	bch2_bkey_buf_init(&cur.kbuf);
 	bch2_bkey_buf_init(&prev.kbuf);
