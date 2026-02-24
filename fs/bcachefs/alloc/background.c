@@ -803,7 +803,8 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 		if (is_empty_delta < 0 &&
 		    (new_a->data_type != BCH_DATA_sb &&
 		     new_a->data_type != BCH_DATA_journal) &&
-		    !bch2_bucket_is_open_safe(c, new.k->p.inode, new.k->p.offset)) {
+		    !bch2_bucket_is_open_safe(c, new.k->p.inode, new.k->p.offset) &&
+		    !bch2_bucket_nouse(ca, new.k->p.offset)) {
 			CLASS(printbuf, buf)();
 			log_fsck_err_on(true, trans,
 				alloc_key_bucket_nonempty_to_empty_not_open,
