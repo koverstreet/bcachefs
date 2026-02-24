@@ -186,7 +186,7 @@ static void __bch2_dev_do_discards(struct bch_dev *ca)
 			bch2_discard_one_bucket(trans, ca, &iter, &discard_pos_done, &s, false)));
 
 	if (s.need_journal_commit > dev_buckets_available(ca, BCH_WATERMARK_normal))
-		bch2_journal_flush_async(&c->journal, NULL);
+		bch2_journal_flush_async(&c->journal, BCH_WATERMARK_reclaim, NULL);
 
 	event_inc_trace(c, bucket_discard_worker, buf, ({
 		prt_printf(&buf, "ret %s\ndev %s\n", bch2_err_str(ret), ca->name);

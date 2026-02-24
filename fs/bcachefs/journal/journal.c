@@ -733,7 +733,7 @@ void bch2_journal_entry_res_resize(struct journal *j,
  * necessary
  */
 int bch2_journal_flush_seq_async(struct journal *j, u64 seq,
-				 struct closure *parent)
+				 unsigned flags, struct closure *parent)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct journal_buf *buf;
@@ -778,7 +778,7 @@ recheck_need_open:
 		 * livelock:
 		 */
 		sched_annotate_sleep();
-		try(bch2_journal_res_get(j, &res, jset_u64s(0), 0, NULL));
+		try(bch2_journal_res_get(j, &res, jset_u64s(0), flags, NULL));
 
 		seq = res.seq;
 		buf = journal_seq_to_buf(j, seq);
@@ -836,7 +836,7 @@ int bch2_journal_flush_seq(struct journal *j, u64 seq, unsigned task_state)
 		return 0;
 
 	ret = wait_event_state(j->wait,
-			       (ret2 = bch2_journal_flush_seq_async(j, seq, NULL)),
+			       (ret2 = bch2_journal_flush_seq_async(j, seq, 0, NULL)),
 			       task_state);
 
 	if (!ret)
@@ -849,9 +849,9 @@ int bch2_journal_flush_seq(struct journal *j, u64 seq, unsigned task_state)
  * bch2_journal_flush_async - if there is an open journal entry, or a journal
  * still being written, write it and wait for the write to complete
  */
-void bch2_journal_flush_async(struct journal *j, struct closure *parent)
+void bch2_journal_flush_async(struct journal *j, unsigned flags, struct closure *parent)
 {
-	bch2_journal_flush_seq_async(j, atomic64_read(&j->seq), parent);
+	bch2_journal_flush_seq_async(j, atomic64_read(&j->seq), flags, parent);
 }
 
 int bch2_journal_flush(struct journal *j)
