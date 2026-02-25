@@ -18,6 +18,7 @@
 #include <linux/dcache.h>
 #include <linux/posix_acl_xattr.h>
 #include <linux/xattr.h>
+#include <linux/security.h>
 
 static const struct xattr_handler *bch2_xattr_type_to_handler(unsigned);
 
@@ -163,6 +164,40 @@ static int bch2_xattr_get_trans(struct btree_trans *trans, struct bch_inode_info
 	return ret;
 }
 
+static inline int bch2_prepare_xattr(struct bkey_i_xattr **ptr,
+			struct btree_trans *trans,
+			const char *name, const void *value, size_t size,
+			int type)
+{
+	struct bkey_i_xattr *xattr;
+	unsigned namelen = strlen(name);
+	unsigned u64s = BKEY_U64s +
+		xattr_val_u64s(namelen, size);
+
+	if (u64s > U8_MAX)
+		return -ERANGE;
+	if (trans) {
+		xattr = bch2_trans_kmalloc(trans, u64s * sizeof(u64));
+		if (IS_ERR(xattr))
+			return PTR_ERR(xattr);
+	} else {
+		xattr = kzalloc(u64s * sizeof(u64), GFP_NOFS);
+		if (!xattr)
+			return -ENOMEM;
+	}
+
+	bkey_xattr_init(&xattr->k_i);
+	xattr->k.u64s		= u64s;
+	xattr->v.x_type		= type;
+	xattr->v.x_name_len	= namelen;
+	xattr->v.x_val_len	= cpu_to_le16(size);
+	memcpy(xattr->v.x_name_and_value, name, namelen);
+	memcpy(xattr_val(&xattr->v), value, size);
+
+	(*ptr) = xattr;
+	return 0;
+}
+
 int bch2_xattr_set(struct btree_trans *trans, subvol_inum inum,
 		   struct bch_inode_unpacked *inode_u,
 		   const char *name, const void *value, size_t size,
@@ -190,24 +225,7 @@ int bch2_xattr_set(struct btree_trans *trans, subvol_inum inum,
 	int ret;
 	if (value) {
 		struct bkey_i_xattr *xattr;
-		unsigned namelen = strlen(name);
-		unsigned u64s = BKEY_U64s +
-			xattr_val_u64s(namelen, size);
-
-		if (u64s > U8_MAX)
-			return -ERANGE;
-
-		xattr = bch2_trans_kmalloc(trans, u64s * sizeof(u64));
-		if (IS_ERR(xattr))
-			return PTR_ERR(xattr);
-
-		bkey_xattr_init(&xattr->k_i);
-		xattr->k.u64s		= u64s;
-		xattr->v.x_type		= type;
-		xattr->v.x_name_len	= namelen;
-		xattr->v.x_val_len	= cpu_to_le16(size);
-		memcpy(xattr->v.x_name_and_value, name, namelen);
-		memcpy(xattr_val(&xattr->v), value, size);
+		try(bch2_prepare_xattr(&xattr, trans, name, value, size, type));
 
 		ret = bch2_hash_set(trans, bch2_xattr_hash_desc, &hash_info,
 			      inum, &xattr->k_i,
@@ -225,6 +243,60 @@ int bch2_xattr_set(struct btree_trans *trans, subvol_inum inum,
 		ret = flags & XATTR_REPLACE ? -ENODATA : 0;
 
 	return ret;
+}
+
+static int __bch2_init_security_cb(struct inode *inode,
+			   const struct xattr *xattr_array, void *fs_data)
+{
+	const struct xattr *xattrs = xattr_array;
+	struct bch_security_xattrs *sec_xattrs = fs_data;
+	int cnt = 0;
+	for (const struct xattr *i=xattrs; i->name != NULL; i++) cnt++;
+	sec_xattrs->xattrs = kcalloc(cnt + 1, sizeof(struct bkey_i_xattr*), GFP_NOFS);
+	if (sec_xattrs->xattrs == NULL) {
+		return -ENOMEM;
+	}
+	for (struct bkey_i_xattr **i=sec_xattrs->xattrs; xattrs->name != NULL; xattrs++, i++) {
+		int ret = bch2_prepare_xattr(i, NULL, xattrs->name, xattrs->value, xattrs->value_len, KEY_TYPE_XATTR_INDEX_SECURITY);
+		if (ret) {
+			bch2_free_security_xattrs(*sec_xattrs);
+			sec_xattrs->xattrs = NULL;
+			return ret;
+		}
+	}
+	return 0;
+}
+
+int bch2_init_security_xattrs(struct bch_security_xattrs *sec_xattrs,
+			struct inode *inode, struct inode *dir,
+			const struct qstr *name)
+{
+	/*
+	 * Trans in bcachefs could restart with struct inode be reused,
+	 * and security_inode_init_security doesn't has promise about idempotency,
+	 * so we must save our xattrs.
+	 */
+	int ret = security_inode_init_security(inode, dir, name,
+					&__bch2_init_security_cb, sec_xattrs);
+	if (ret == -EOPNOTSUPP)
+		return 0;
+	return ret;
+}
+
+int bch2_apply_security_xattrs_trans(struct bch_security_xattrs sec_xattrs,
+				struct bch_fs *c,
+				struct btree_trans *trans, subvol_inum subvol_inum,
+				struct bch_inode_unpacked *inode_u)
+{
+
+	struct bch_hash_info hash_info;
+	try(bch2_hash_info_init(c, inode_u, &hash_info));
+	for (struct bkey_i_xattr **i=sec_xattrs.xattrs; i != NULL && (*i) != NULL; i++) {
+		try(bch2_hash_set(trans, bch2_xattr_hash_desc, &hash_info,
+			      subvol_inum, &(*i)->k_i,
+			      STR_HASH_must_create));
+	}
+	return 0;
 }
 
 struct xattr_buf {

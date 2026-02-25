@@ -560,11 +560,12 @@ __bch2_create(struct mnt_idmap *idmap,
 	struct bch_inode_info *inode;
 	struct bch_inode_unpacked inode_u;
 	struct posix_acl *default_acl = NULL, *acl = NULL;
+	struct bch_security_xattrs sec_xattrs;
 	subvol_inum inum;
 	struct bch_subvolume subvol;
 	u64 journal_seq = 0;
-	kuid_t kuid;
-	kgid_t kgid;
+	kuid_t kuid = mapped_fsuid(idmap, i_user_ns(&dir->v));
+	kgid_t kgid = mapped_fsgid(idmap, i_user_ns(&dir->v));
 	int ret;
 
 	/*
@@ -573,94 +574,118 @@ __bch2_create(struct mnt_idmap *idmap,
 	 */
 	ret = posix_acl_create(&dir->v, &mode, &default_acl, &acl);
 	if (ret)
-		return ERR_PTR(ret);
+		goto acl_fail;
 
 	inode = __bch2_new_inode(c, GFP_NOFS);
 	if (unlikely(!inode)) {
-		posix_acl_release(default_acl);
-		posix_acl_release(acl);
-		return ERR_PTR(-ENOMEM);
+		ret = -ENOMEM;
+		goto inode_fail;
 	}
 
 	bch2_inode_init_early(c, &inode_u);
 
-	if (!(flags & BCH_CREATE_TMPFILE))
-		mutex_lock(&dir->ei_update_lock);
+	/*
+	 * Prefill some field of inode so security modules will be able to read them.
+	 */
+	inode->v.i_uid = kuid;
+	inode->v.i_gid = kgid;
+	inode->v.i_mode = mode;
+	inode->v.i_rdev = rdev;
+	memset(&sec_xattrs, 0, sizeof(struct bch_security_xattrs));
+	ret = (flags & BCH_CREATE_SNAPSHOT) ? 0 :
+			bch2_init_security_xattrs(&sec_xattrs,
+				&inode->v, &dir->v,
+		  		&dentry->d_name);
+	if (ret)
+		goto lsm_fail;
+
 	/*
 	 * posix_acl_create() calls get_acl -> btree transaction, don't start
 	 * ours until after, ei->update_lock must also be taken first:
 	 */
-	CLASS(btree_trans, trans)(c);
-retry:
-	bch2_trans_begin(trans);
+	{
+		/* transaction zone */
+		if (!(flags & BCH_CREATE_TMPFILE))
+			mutex_lock(&dir->ei_update_lock);
+		CLASS(btree_trans, trans)(c);
 
-	kuid = mapped_fsuid(idmap, i_user_ns(&dir->v));
-	kgid = mapped_fsgid(idmap, i_user_ns(&dir->v));
-	ret   = bch2_subvol_is_ro_trans(trans, dir->ei_inum.subvol) ?:
-		bch2_create_trans(trans,
-				  inode_inum(dir), &dir_u, &inode_u,
-				  !(flags & BCH_CREATE_TMPFILE)
-				  ? &dentry->d_name : NULL,
-				  from_kuid(i_user_ns(&dir->v), kuid),
-				  from_kgid(i_user_ns(&dir->v), kgid),
-				  mode, rdev,
-				  default_acl, acl, snapshot_src, flags) ?:
-		bch2_quota_acct(c, bch_qid(&inode_u), Q_INO, 1,
-				KEY_TYPE_QUOTA_PREALLOC);
-	if (unlikely(ret))
-		goto err_before_quota;
+		do {
+			bch2_trans_begin(trans);
 
-	inum.subvol = inode_u.bi_subvol ?: dir->ei_inum.subvol;
-	inum.inum = inode_u.bi_inum;
+			ret   = bch2_subvol_is_ro_trans(trans, dir->ei_inum.subvol) ?:
+				bch2_create_trans(trans,
+						  inode_inum(dir), &dir_u, &inode_u,
+						  !(flags & BCH_CREATE_TMPFILE)
+						  ? &dentry->d_name : NULL,
+						  from_kuid(i_user_ns(&dir->v), kuid),
+						  from_kgid(i_user_ns(&dir->v), kgid),
+						  mode, rdev,
+						  default_acl, acl, &sec_xattrs, snapshot_src, flags) ?:
+				bch2_quota_acct(c, bch_qid(&inode_u), Q_INO, 1,
+						KEY_TYPE_QUOTA_PREALLOC);
+			if(unlikely(ret))
+				continue;
 
-	ret   = bch2_subvolume_get(trans, inum.subvol, true, &subvol) ?:
-		bch2_trans_commit(trans, NULL, &journal_seq, 0);
+			inum.subvol = inode_u.bi_subvol ?: dir->ei_inum.subvol;
+			inum.inum = inode_u.bi_inum;
+
+			ret   = bch2_subvolume_get(trans, inum.subvol, true, &subvol) ?:
+				bch2_trans_commit(trans, NULL, &journal_seq, 0);
+
+			if(unlikely(ret)) {
+				bch2_quota_acct(c, bch_qid(&inode_u), Q_INO, -1,
+						KEY_TYPE_QUOTA_WARN);
+				continue;
+			}
+
+			if (!(flags & BCH_CREATE_TMPFILE))
+				bch2_inode_update_after_write(trans, dir, &dir_u,
+						      ATTR_MTIME|ATTR_CTIME|ATTR_SIZE);
+		}
+		while(ret && bch2_err_matches(ret, BCH_ERR_transaction_restart));
+
+		if (!(flags & BCH_CREATE_TMPFILE)) {
+			mutex_unlock(&dir->ei_update_lock);
+		}
+
+		if(unlikely(ret))
+			goto trans_fail;
+
+		bch2_vfs_inode_init(trans, inum, inode, &inode_u, &subvol);
+
+		set_cached_acl(&inode->v, ACL_TYPE_ACCESS, acl);
+		set_cached_acl(&inode->v, ACL_TYPE_DEFAULT, default_acl);
+
+		/*
+		 * we must insert the new inode into the inode cache before calling
+		 * bch2_trans_exit() and dropping locks, else we could race with another
+		 * thread pulling the inode in and modifying it:
+		 *
+		 * also, calling bch2_inode_hash_insert() without passing in the
+		 * transaction object is sketchy - if we could ever end up in
+		 * __wait_on_freeing_inode(), we'd risk deadlock.
+		 *
+		 * But that shouldn't be possible, since we still have the inode locked
+		 * that we just created, and we _really_ can't take a transaction
+		 * restart here.
+		 */
+		inode = bch2_inode_hash_insert(c, NULL, inode);
+	}
+trans_fail:
+	bch2_free_security_xattrs(sec_xattrs);
+lsm_fail:
 	if (unlikely(ret)) {
-		bch2_quota_acct(c, bch_qid(&inode_u), Q_INO, -1,
-				KEY_TYPE_QUOTA_WARN);
-err_before_quota:
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			goto retry;
-		goto err_trans;
+		make_bad_inode(&inode->v);
+		iput(&inode->v);
 	}
-
-	if (!(flags & BCH_CREATE_TMPFILE)) {
-		bch2_inode_update_after_write(trans, dir, &dir_u,
-					      ATTR_MTIME|ATTR_CTIME|ATTR_SIZE);
-		mutex_unlock(&dir->ei_update_lock);
-	}
-
-	bch2_vfs_inode_init(trans, inum, inode, &inode_u, &subvol);
-
-	set_cached_acl(&inode->v, ACL_TYPE_ACCESS, acl);
-	set_cached_acl(&inode->v, ACL_TYPE_DEFAULT, default_acl);
-
-	/*
-	 * we must insert the new inode into the inode cache before calling
-	 * bch2_trans_exit() and dropping locks, else we could race with another
-	 * thread pulling the inode in and modifying it:
-	 *
-	 * also, calling bch2_inode_hash_insert() without passing in the
-	 * transaction object is sketchy - if we could ever end up in
-	 * __wait_on_freeing_inode(), we'd risk deadlock.
-	 *
-	 * But that shouldn't be possible, since we still have the inode locked
-	 * that we just created, and we _really_ can't take a transaction
-	 * restart here.
-	 */
-	inode = bch2_inode_hash_insert(c, NULL, inode);
-err:
+inode_fail:
 	posix_acl_release(default_acl);
 	posix_acl_release(acl);
+acl_fail:
+	if(unlikely(ret)) {
+		return ERR_PTR(ret);
+	}
 	return inode;
-err_trans:
-	if (!(flags & BCH_CREATE_TMPFILE))
-		mutex_unlock(&dir->ei_update_lock);
-
-	make_bad_inode(&inode->v);
-	iput(&inode->v);
-	inode = ERR_PTR(ret);
-	goto err;
 }
 
 /* methods */
@@ -998,7 +1023,7 @@ retry:
 					from_kuid(i_user_ns(&src_dir->v), current_fsuid()),
 					from_kgid(i_user_ns(&src_dir->v), current_fsgid()),
 					S_IFCHR|WHITEOUT_MODE, 0,
-					NULL, NULL, (subvol_inum) { 0 }, 0) ?:
+					NULL, NULL, NULL, (subvol_inum) { 0 }, 0) ?:
 		      bch2_quota_acct(c, bch_qid(whiteout_inode_u), Q_INO, 1,
 				      KEY_TYPE_QUOTA_PREALLOC);
 		if (unlikely(ret))

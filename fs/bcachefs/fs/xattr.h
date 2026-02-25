@@ -3,6 +3,8 @@
 #define _BCACHEFS_XATTR_H
 
 #include "str_hash.h"
+#include "snapshots/types.h"
+#include <linux/slab.h>
 
 extern const struct bch_hash_desc bch2_xattr_hash_desc;
 
@@ -47,4 +49,22 @@ ssize_t bch2_xattr_list(struct dentry *, char *, size_t);
 
 extern const struct xattr_handler * const bch2_xattr_handlers[];
 
+struct bch_security_xattrs {
+	struct bkey_i_xattr** xattrs;
+};
+
+int bch2_init_security_xattrs(struct bch_security_xattrs *sec_xattrs,
+			struct inode *inode, struct inode *dir,
+			const struct qstr *name);
+int bch2_apply_security_xattrs_trans(struct bch_security_xattrs sec_xattrs,
+				struct bch_fs *c,
+				struct btree_trans *trans, subvol_inum subvol_inum,
+				struct bch_inode_unpacked *inode_u);
+static inline void bch2_free_security_xattrs(struct bch_security_xattrs sec_xattrs) {
+	if (!sec_xattrs.xattrs) return;
+	for (struct bkey_i_xattr **i=sec_xattrs.xattrs; (*i) != NULL; i++) {
+		kfree(*i);
+	}
+	kfree(sec_xattrs.xattrs);
+}
 #endif /* _BCACHEFS_XATTR_H */
