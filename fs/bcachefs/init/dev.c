@@ -1403,7 +1403,7 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
 			m->target_nbuckets = cpu_to_le64(new_nbuckets);
 
-			bch2_write_super(c);
+			try(bch2_write_super(c));
 		}
 
 		/* close open buckets in the to-be-shrunk region */
@@ -1421,6 +1421,14 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			return ret;
 		}
 	};
+
+	/*  TODO:
+	 *  When we evacuate data, the original is left in place and marked as cached, just like when moving it for target/compression regions.
+	 *  We need to somehow handle this:
+	 *  - Maybe we can just not count it in tail_is_empty() and just shrink it away - but this would likely leave some metadata incorrect
+	 *  - We could just make it completely remove the data if it is evacuating, instead of marking it as cached
+	 *  - We could make passes that check for cached buckets in the tail, and close/remove those - we may actually need to handle buckets anyways
+	 */
 
 	/* wait for to-be-shrunk region to be empty */
 	while (true) {
