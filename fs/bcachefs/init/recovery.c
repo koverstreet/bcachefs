@@ -381,6 +381,48 @@ static int journal_sort_seq_cmp(const void *_l, const void *_r)
 
 DEFINE_DARRAY_NAMED(darray_journal_keys, struct journal_key *)
 
+typedef struct {
+	struct bch_fs		*c;
+	struct journal_key	*start;
+	struct journal_key	*next;
+	struct journal_key	*end;
+	bool			have_allocated;
+	struct closure		cl;
+} journal_replay_thr;
+
+DEFINE_DARRAY(journal_replay_thr);
+
+static CLOSURE_CALLBACK(do_journal_replay_thread)
+{
+	closure_type(thr, journal_replay_thr, cl);
+	struct bch_fs *c = thr->c;
+
+	CLASS(btree_trans, trans)(c);
+
+	for (; thr->next < thr->end; thr->next++) {
+		cond_resched();
+
+		if (thr->next->allocated)
+			thr->have_allocated = true;
+
+		int ret = (c->journal.watermark ||
+			   (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) &&
+			    !get_random_u32_below(8))) ? -1 :
+			commit_do(trans, NULL, NULL,
+				  BCH_TRANS_COMMIT_journal_replay|
+				  BCH_TRANS_COMMIT_no_enospc|
+				  BCH_TRANS_COMMIT_no_skip_noops|
+				  BCH_TRANS_COMMIT_journal_reclaim|
+				  BCH_TRANS_COMMIT_skip_accounting_apply|
+				  (!thr->next->allocated ? BCH_TRANS_COMMIT_no_journal_res : 0),
+			     bch2_journal_replay_key(trans, thr->next));
+		if (ret)
+			break;
+	}
+
+	closure_return(cl);
+}
+
 int bch2_journal_replay(struct bch_fs *c)
 {
 	struct journal_keys *keys = &c->journal_keys;
@@ -430,34 +472,54 @@ int bch2_journal_replay(struct bch_fs *c)
 	set_bit(BCH_FS_accounting_replay_done, &c->flags);
 
 	/*
-	 * First, attempt to replay keys in sorted order. This is more
-	 * efficient - better locality of btree access -  but some might fail if
-	 * that would cause a journal deadlock.
+	 * Replay keys in sorted order using multiple threads. This is more
+	 * efficient - better locality of btree access - but some might fail if
+	 * that would cause a journal deadlock; those get collected and retried
+	 * below in journal sequence order.
 	 */
-	darray_for_each(*keys, k) {
-		cond_resched();
+	{
+		unsigned nr_threads = min_t(unsigned, num_online_cpus(), keys->nr);
+		unsigned keys_per_thread = nr_threads ? DIV_ROUND_UP(keys->nr, nr_threads) : 0;
 
-		/*
-		 * k->allocated means the key wasn't read in from the journal,
-		 * rather it was from early repair code
-		 */
-		if (k->allocated)
-			immediate_flush = true;
+		CLASS(darray_journal_replay_thr, thrs)();
+		struct closure cl;
+		closure_init_stack(&cl);
 
-		/* Skip fastpath if we're low on space in the journal */
-		ret = c->journal.watermark ? -1 :
-			commit_do(trans, NULL, NULL,
-				  BCH_TRANS_COMMIT_journal_replay|
-				  BCH_TRANS_COMMIT_no_enospc|
-				  BCH_TRANS_COMMIT_no_skip_noops|
-				  BCH_TRANS_COMMIT_journal_reclaim|
-				  BCH_TRANS_COMMIT_skip_accounting_apply|
-				  (!k->allocated ? BCH_TRANS_COMMIT_no_journal_res : 0),
-			     bch2_journal_replay_key(trans, k));
-		if (ret ||
-		    (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) &&
-		     !get_random_u32_below(8)))
-			try(darray_push(&keys_sorted, k));
+		for (unsigned i = 0; i < nr_threads; i++) {
+			struct journal_key *start = keys->data + i * keys_per_thread;
+			struct journal_key *end = keys->data + min_t(size_t,
+						(i + 1) * keys_per_thread, keys->nr);
+
+			try(darray_push(&thrs, ((journal_replay_thr) {
+				.c	= c,
+				.start	= start,
+				.next	= start,
+				.end	= end,
+			})));
+		}
+
+		darray_for_each(thrs, i)
+			closure_call(&i->cl, do_journal_replay_thread,
+				     system_unbound_wq, &cl);
+		closure_sync_unbounded(&cl);
+
+		size_t keys_replayed = 0;
+		darray_for_each(thrs, i) {
+			if (i->have_allocated)
+				immediate_flush = true;
+			keys_replayed += i->next - i->start;
+			for (struct journal_key *k = i->next; k < i->end; k++) {
+				if (k->allocated)
+					immediate_flush = true;
+				ret = darray_push(&keys_sorted, k);
+				if (ret)
+					return ret;
+			}
+		}
+
+		if (keys_sorted.nr)
+			bch_info(c, "journal replay: %zu keys done in parallel, %zu remaining for slowpath",
+				 keys_replayed, keys_sorted.nr);
 	}
 
 	bch2_trans_unlock_long(trans);
@@ -480,6 +542,7 @@ int bch2_journal_replay(struct bch_fs *c)
 			replay_now_at(j, j->replay_journal_seq_end);
 
 		ret = commit_do(trans, NULL, NULL,
+				BCH_TRANS_COMMIT_journal_replay|
 				BCH_TRANS_COMMIT_no_enospc|
 				BCH_TRANS_COMMIT_no_skip_noops|
 				BCH_TRANS_COMMIT_skip_accounting_apply|
