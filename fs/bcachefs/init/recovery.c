@@ -471,32 +471,39 @@ int bch2_journal_replay(struct bch_fs *c)
 
 	set_bit(BCH_FS_accounting_replay_done, &c->flags);
 
+	unsigned nr_threads = min_t(unsigned, num_online_cpus(), keys->nr);
+	unsigned keys_per_thread = nr_threads ? DIV_ROUND_UP(keys->nr, nr_threads) : 0;
+
+	CLASS(darray_journal_replay_thr, thrs)();
+	struct closure cl;
+	closure_init_stack(&cl);
+
+	for (unsigned i = 0; i < nr_threads; i++) {
+		struct journal_key *start = keys->data + i * keys_per_thread;
+		struct journal_key *end = keys->data + min_t(size_t,
+					(i + 1) * keys_per_thread, keys->nr);
+
+		try(darray_push(&thrs, ((journal_replay_thr) {
+			.c	= c,
+			.start	= start,
+			.next	= start,
+			.end	= end,
+		})));
+	}
+
 	/*
-	 * Replay keys in sorted order using multiple threads. This is more
-	 * efficient - better locality of btree access - but some might fail if
-	 * that would cause a journal deadlock; those get collected and retried
-	 * below in journal sequence order.
+	 * Replay keys in sorted order using multiple threads - better locality
+	 * of btree access. When journal pressure forces a fallback to sequential
+	 * replay (needed to unpin old journal entries), replay just enough to
+	 * relieve pressure, then go back to multithreaded.
 	 */
-	{
-		unsigned nr_threads = min_t(unsigned, num_online_cpus(), keys->nr);
-		unsigned keys_per_thread = nr_threads ? DIV_ROUND_UP(keys->nr, nr_threads) : 0;
+	for (;;) {
+		bch2_trans_unlock_long(trans);
 
-		CLASS(darray_journal_replay_thr, thrs)();
-		struct closure cl;
-		closure_init_stack(&cl);
+		keys_sorted.nr = 0;
 
-		for (unsigned i = 0; i < nr_threads; i++) {
-			struct journal_key *start = keys->data + i * keys_per_thread;
-			struct journal_key *end = keys->data + min_t(size_t,
-						(i + 1) * keys_per_thread, keys->nr);
-
-			try(darray_push(&thrs, ((journal_replay_thr) {
-				.c	= c,
-				.start	= start,
-				.next	= start,
-				.end	= end,
-			})));
-		}
+		darray_for_each(thrs, i)
+			i->start = i->next;
 
 		darray_for_each(thrs, i)
 			closure_call(&i->cl, do_journal_replay_thread,
@@ -508,56 +515,66 @@ int bch2_journal_replay(struct bch_fs *c)
 			if (i->have_allocated)
 				immediate_flush = true;
 			keys_replayed += i->next - i->start;
-			for (struct journal_key *k = i->next; k < i->end; k++) {
-				if (k->allocated)
-					immediate_flush = true;
-				ret = darray_push(&keys_sorted, k);
-				if (ret)
-					return ret;
+			for (struct journal_key *k = i->next; k < i->end; k++)
+				if (!k->overwritten)
+					try(darray_push(&keys_sorted, k));
+		}
+
+		if (!keys_sorted.nr)
+			break;
+
+		bch_info(c, "journal replay: %zu keys done in parallel, %zu remaining for slowpath",
+			 keys_replayed, keys_sorted.nr);
+
+		/*
+		 * Replay keys in journal sequence order, unpinning journal
+		 * entries to free up journal space. Once pressure is relieved,
+		 * loop back to the multithreaded fast path.
+		 */
+		sort_nonatomic(keys_sorted.data, keys_sorted.nr,
+			       sizeof(keys_sorted.data[0]),
+			       journal_sort_seq_cmp, NULL);
+
+		u64 seq_before = 0;
+
+		darray_for_each(keys_sorted, kp) {
+			cond_resched();
+
+			struct journal_key *k = *kp;
+
+			if (k->allocated)
+				immediate_flush = true;
+
+			if (!k->allocated)
+				replay_now_at(j, c->journal_entries_base_seq + k->journal_seq_offset);
+			else
+				replay_now_at(j, j->replay_journal_seq_end);
+
+			ret = commit_do(trans, NULL, NULL,
+					BCH_TRANS_COMMIT_journal_replay|
+					BCH_TRANS_COMMIT_no_enospc|
+					BCH_TRANS_COMMIT_no_skip_noops|
+					BCH_TRANS_COMMIT_skip_accounting_apply|
+					(!k->allocated
+					 ? BCH_TRANS_COMMIT_no_journal_res|BCH_WATERMARK_reclaim
+					 : 0),
+				     bch2_journal_replay_key(trans, k));
+			if (ret) {
+				CLASS(printbuf, buf)();
+				bch2_btree_id_level_to_text(&buf, k->btree_id, k->level);
+				bch_err_msg(c, ret, "while replaying key at %s:", buf.buf);
+				return ret;
+			}
+
+			BUG_ON(k->btree_id != BTREE_ID_accounting && !k->overwritten);
+
+			if (!c->journal.watermark) {
+				if (!seq_before)
+					seq_before = j->replay_journal_seq;
+				if (j->replay_journal_seq >= seq_before + 2)
+					break;
 			}
 		}
-
-		if (keys_sorted.nr)
-			bch_info(c, "journal replay: %zu keys done in parallel, %zu remaining for slowpath",
-				 keys_replayed, keys_sorted.nr);
-	}
-
-	bch2_trans_unlock_long(trans);
-	/*
-	 * Now, replay any remaining keys in the order in which they appear in
-	 * the journal, unpinning those journal entries as we go:
-	 */
-	sort_nonatomic(keys_sorted.data, keys_sorted.nr,
-		       sizeof(keys_sorted.data[0]),
-		       journal_sort_seq_cmp, NULL);
-
-	darray_for_each(keys_sorted, kp) {
-		cond_resched();
-
-		struct journal_key *k = *kp;
-
-		if (!k->allocated)
-			replay_now_at(j, c->journal_entries_base_seq + k->journal_seq_offset);
-		else
-			replay_now_at(j, j->replay_journal_seq_end);
-
-		ret = commit_do(trans, NULL, NULL,
-				BCH_TRANS_COMMIT_journal_replay|
-				BCH_TRANS_COMMIT_no_enospc|
-				BCH_TRANS_COMMIT_no_skip_noops|
-				BCH_TRANS_COMMIT_skip_accounting_apply|
-				(!k->allocated
-				 ? BCH_TRANS_COMMIT_no_journal_res|BCH_WATERMARK_reclaim
-				 : 0),
-			     bch2_journal_replay_key(trans, k));
-		if (ret) {
-			CLASS(printbuf, buf)();
-			bch2_btree_id_level_to_text(&buf, k->btree_id, k->level);
-			bch_err_msg(c, ret, "while replaying key at %s:", buf.buf);
-			return ret;
-		}
-
-		BUG_ON(k->btree_id != BTREE_ID_accounting && !k->overwritten);
 	}
 
 	bch2_trans_unlock_long(trans);
