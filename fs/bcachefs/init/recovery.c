@@ -454,7 +454,9 @@ int bch2_journal_replay(struct bch_fs *c)
 				  BCH_TRANS_COMMIT_skip_accounting_apply|
 				  (!k->allocated ? BCH_TRANS_COMMIT_no_journal_res : 0),
 			     bch2_journal_replay_key(trans, k));
-		if (ret)
+		if (ret ||
+		    (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) &&
+		     !get_random_u32_below(8)))
 			try(darray_push(&keys_sorted, k));
 	}
 
