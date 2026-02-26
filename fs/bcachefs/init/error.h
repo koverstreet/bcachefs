@@ -174,6 +174,17 @@ void bch2_free_fsck_errs(struct bch_fs *);
 #define ret_fsck_err_on(cond, c, _err_type, ...)			\
 	__ret_fsck_err_on(cond, c, FSCK_CAN_FIX|FSCK_CAN_IGNORE, _err_type, __VA_ARGS__)
 
+#define ret_log_fsck_err(c, _err_type, ...)				\
+	__ret_fsck_err(c, FSCK_CAN_IGNORE, _err_type, __VA_ARGS__)
+
+#define ret_log_fsck_err_on(cond, ...)					\
+({									\
+	bool _ret = unlikely(!!(cond));					\
+	if (_ret)							\
+		ret_log_fsck_err(__VA_ARGS__);				\
+	_ret;								\
+})
+
 enum bch_validate_flags;
 __printf(5, 6)
 int __bch2_bkey_fsck_err(struct bch_fs *,

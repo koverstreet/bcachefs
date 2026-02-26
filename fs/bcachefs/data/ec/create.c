@@ -238,18 +238,10 @@ static int stripe_update_extent(struct btree_trans *trans,
 		if (old_stripe == new_stripe ||
 		    p.ec.idx != old_stripe->k.p.offset) {
 			CLASS(printbuf, buf)();
-			prt_printf(&buf, "Found unrelated stripe pointer when updating extent\n");
-			bch2_bkey_val_to_text(&buf, c, k);
-			prt_str(&buf, "\nNew: ");
-			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&new_stripe->k_i));
-
-			if (old_stripe != new_stripe) {
-				prt_str(&buf, "\nOld: ");
-				bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&old_stripe->k_i));
-			}
-
-			bch2_fs_inconsistent(c, "%s", buf.buf);
-			return bch_err_throw(c, erasure_coding_stripe_update_err);
+			ret_log_fsck_err(trans, stripe_update_stale_stripe_ptr,
+				"dropping stale stripe pointer (idx %llu) while updating extent\n%s",
+				(u64) p.ec.idx,
+				(bch2_bkey_val_to_text(&buf, c, k), buf.buf));
 		}
 	}
 
@@ -277,8 +269,8 @@ static int stripe_update_extent(struct btree_trans *trans,
 	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, BKEY_EXTENT_U64s_MAX * sizeof(u64)));
 	bkey_reassemble(n, k);
 
-	if (old_stripe != new_stripe)
-		bch2_bkey_drop_stripe_ptr(c, bkey_i_to_s(n), old_stripe->k.p.offset);
+	if (p.has_ec)
+		bch2_bkey_drop_stripe_ptr(c, bkey_i_to_s(n), p.ec.idx);
 
 	struct bch_extent_ptr *ec_ptr = bch2_bkey_has_device(c, bkey_i_to_s(n), old_block.dev);
 	ec_ptr->dev	= new_block.dev;
@@ -306,7 +298,6 @@ static int stripe_update_extent(struct btree_trans *trans,
 
 	event_inc_trace(c, stripe_update_extent, buf,
 		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(n)));
-
 	return 0;
 }
 
