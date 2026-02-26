@@ -139,4 +139,13 @@ void bch2_new_stripes_to_text(struct printbuf *, struct bch_fs *);
 struct moving_context;
 int bch2_stripe_repair(struct moving_context *, struct btree_iter *, struct bkey_s_c_stripe);
 
+void bch2_logged_op_stripe_update_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
+
+#define bch2_bkey_ops_logged_op_stripe_update ((struct bkey_ops) {	\
+	.val_to_text	= bch2_logged_op_stripe_update_to_text,		\
+	.min_val_size	= 40,						\
+})
+
+int bch2_resume_logged_op_stripe_update(struct btree_trans *, struct bkey_i *);
+
 #endif /* _BCACHEFS_DATA_EC_CREATE_H */

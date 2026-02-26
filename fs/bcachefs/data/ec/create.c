@@ -7,6 +7,7 @@
 #include "alloc/foreground.h"
 #include "alloc/lru.h"
 
+#include "btree/bkey_buf.h"
 #include "btree/locking.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
@@ -15,6 +16,8 @@
 #include "data/ec/io.h"
 #include "data/ec/trigger.h"
 #include "data/move.h"
+
+#include "fs/logged_ops.h"
 
 #include "init/error.h"
 
@@ -301,17 +304,13 @@ static int stripe_update_extent(struct btree_trans *trans,
 	return 0;
 }
 
-static int stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_new *s, unsigned new_blocknr)
+static int stripe_update_bucket(struct btree_trans *trans,
+				struct bkey_i_stripe *old_stripe,
+				struct bkey_i_stripe *new_stripe,
+				unsigned old_blocknr,
+				unsigned new_blocknr)
 {
 	struct bch_fs *c = trans->c;
-	unsigned old_blocknr = new_blocknr < s->old_blocks_nr
-		? s->old_block_map[new_blocknr]
-		: new_blocknr;
-
-	struct bkey_i_stripe *new_stripe = &s->new_stripe.key;
-	struct bkey_i_stripe *old_stripe = new_blocknr < s->old_blocks_nr
-		? &s->old_stripe.key
-		: new_stripe;
 
 	struct bch_extent_ptr old_block = old_stripe->v.ptrs[old_blocknr];
 	struct bch_extent_ptr new_block = new_stripe->v.ptrs[new_blocknr];
@@ -355,7 +354,7 @@ static int stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_new 
 
 	event_inc_trace(c, stripe_update_bucket, buf, ({
 		prt_printf(&buf, "Updating block %u\n", new_blocknr);
-		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&s->new_stripe.key.k_i));
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&new_stripe->k_i));
 		prt_newline(&buf);
 
 		prt_printf(&buf, "bp_to_deleted:\t%u %u\n",
@@ -371,18 +370,90 @@ static int stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_new 
 	return 0;
 }
 
-static int stripe_update_extents(struct bch_fs *c, struct ec_stripe_new *s)
+static int __stripe_update_extents(struct btree_trans *trans,
+				   struct bkey_i_stripe *old_stripe,
+				   struct bkey_i_stripe *new_stripe,
+				   const u8 *old_block_map,
+				   unsigned old_blocks_nr)
 {
-	CLASS(btree_trans, trans)(c);
-	struct bch_stripe *v = &s->new_stripe.key.v;
-	unsigned nr_data = v->nr_blocks - v->nr_redundant;
+	unsigned nr_data = new_stripe->v.nr_blocks - new_stripe->v.nr_redundant;
 
 	try(bch2_btree_write_buffer_flush_sync(trans));
 
-	for (unsigned i = 0; i < nr_data; i++)
-		try(stripe_update_bucket(trans, s, i));
+	for (unsigned i = 0; i < nr_data; i++) {
+		unsigned old_blocknr = i < old_blocks_nr
+			? old_block_map[i] : i;
+		struct bkey_i_stripe *old = i < old_blocks_nr
+			? old_stripe : new_stripe;
+
+		try(stripe_update_bucket(trans, old, new_stripe, old_blocknr, i));
+	}
 
 	return 0;
+}
+
+static int stripe_update_extents(struct bch_fs *c, struct ec_stripe_new *s)
+{
+	CLASS(btree_trans, trans)(c);
+
+	return __stripe_update_extents(trans,
+				       &s->old_stripe.key,
+				       &s->new_stripe.key,
+				       s->old_block_map,
+				       s->old_blocks_nr);
+}
+
+void bch2_logged_op_stripe_update_to_text(struct printbuf *out, struct bch_fs *c, struct bkey_s_c k)
+{
+	struct bkey_s_c_logged_op_stripe_update op = bkey_s_c_to_logged_op_stripe_update(k);
+
+	prt_printf(out, "old_idx=%llu", le64_to_cpu(op.v->old_idx));
+	prt_printf(out, " new_idx=%llu", le64_to_cpu(op.v->new_idx));
+	prt_printf(out, " old_blocks_nr=%u", op.v->old_blocks_nr);
+}
+
+int bch2_resume_logged_op_stripe_update(struct btree_trans *trans, struct bkey_i *op_k)
+{
+	struct bch_fs *c = trans->c;
+	struct bkey_i_logged_op_stripe_update *op = bkey_i_to_logged_op_stripe_update(op_k);
+	u64 old_idx = le64_to_cpu(op->v.old_idx);
+	u64 new_idx = le64_to_cpu(op->v.new_idx);
+
+	struct bkey_buf new_sk __cleanup(bch2_bkey_buf_exit);
+	bch2_bkey_buf_init(&new_sk);
+
+	struct bkey_buf old_sk __cleanup(bch2_bkey_buf_exit);
+	bch2_bkey_buf_init(&old_sk);
+
+	/* Read new stripe */
+	CLASS(btree_iter, new_iter)(trans, BTREE_ID_stripes, POS(0, new_idx), 0);
+	struct bkey_s_c new_k = bkey_try(bch2_btree_iter_peek_slot(&new_iter));
+
+	if (new_k.k->type != KEY_TYPE_stripe) {
+		bch_err(c, "logged op stripe update: new stripe %llu missing", new_idx);
+		return 0;
+	}
+
+	bch2_bkey_buf_reassemble(&new_sk, new_k);
+
+	/* Read old stripe (may be same as new, or may be gone) */
+	if (old_idx && old_idx != new_idx) {
+		CLASS(btree_iter, old_iter)(trans, BTREE_ID_stripes, POS(0, old_idx), 0);
+		struct bkey_s_c old_k = bkey_try(bch2_btree_iter_peek_slot(&old_iter));
+
+		if (old_k.k->type == KEY_TYPE_stripe)
+			bch2_bkey_buf_reassemble(&old_sk, old_k);
+		else
+			bch2_bkey_buf_reassemble(&old_sk, new_k);
+	} else {
+		bch2_bkey_buf_reassemble(&old_sk, new_k);
+	}
+
+	return __stripe_update_extents(trans,
+				       bkey_i_to_stripe(old_sk.k),
+				       bkey_i_to_stripe(new_sk.k),
+				       op->v.old_block_map,
+				       op->v.old_blocks_nr);
 }
 
 static void zero_out_rest_of_ec_bucket(struct bch_fs *c,
@@ -475,14 +546,28 @@ static int __ec_stripe_create(struct ec_stripe_new *s)
 		return bch_err_throw(c, ec_block_write);
 	}
 
+	struct bkey_i_logged_op_stripe_update op;
+	bkey_logged_op_stripe_update_init(&op.k_i);
+	op.v.old_idx		= cpu_to_le64(s->have_old_stripe
+					? s->old_stripe.key.k.p.offset : 0);
+	op.v.new_idx		= cpu_to_le64(s->new_stripe.key.k.p.offset);
+	op.v.old_blocks_nr	= s->old_blocks_nr;
+	memcpy(op.v.old_block_map, s->old_block_map, sizeof(op.v.old_block_map));
+
 	try(bch2_trans_commit_do(c, &s->res, NULL,
 				 BCH_TRANS_COMMIT_no_check_rw|
 				 BCH_TRANS_COMMIT_no_enospc,
-		ec_stripe_key_update(trans, &s->new_stripe.key)));
+		ec_stripe_key_update(trans, &s->new_stripe.key) ?:
+		__bch2_logged_op_start(trans, &op.k_i)));
 
-	try(stripe_update_extents(c, s));
+	int ret = stripe_update_extents(c, s);
 
-	return 0;
+	{
+		CLASS(btree_trans, trans)(c);
+		ret = bch2_logged_op_finish(trans, &op.k_i) ?: ret;
+	}
+
+	return ret;
 }
 
 static void stripe_put_iorefs(struct bch_fs *c, struct bch_stripe *s)

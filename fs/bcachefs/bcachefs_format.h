@@ -423,7 +423,8 @@ enum bch_bkey_type_flags {
 	x(logged_op_finsert,	33,	BKEY_TYPE_strict_btree_checks)	\
 	x(accounting,		34,	BKEY_TYPE_strict_btree_checks)	\
 	x(inode_alloc_cursor,	35,	BKEY_TYPE_strict_btree_checks)	\
-	x(extent_whiteout,	36,	BKEY_TYPE_strict_btree_checks)
+	x(extent_whiteout,	36,	BKEY_TYPE_strict_btree_checks)	\
+	x(logged_op_stripe_update, 37,	BKEY_TYPE_strict_btree_checks)
 
 enum bch_bkey_type {
 #define x(name, nr, ...) KEY_TYPE_##name	= nr,
@@ -604,6 +605,7 @@ enum btree_id_flags {
 	x(logged_ops,		17,	0,					\
 	  BIT_ULL(KEY_TYPE_logged_op_truncate)|					\
 	  BIT_ULL(KEY_TYPE_logged_op_finsert)|					\
+	  BIT_ULL(KEY_TYPE_logged_op_stripe_update)|				\
 	  BIT_ULL(KEY_TYPE_inode_alloc_cursor))					\
 	x(reconcile_work,	18,						\
 	  BTREE_IS_snapshot_field|						\

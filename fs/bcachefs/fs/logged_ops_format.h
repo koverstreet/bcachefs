@@ -32,4 +32,13 @@ struct bch_logged_op_finsert {
 	__le64			pos;
 };
 
+struct bch_logged_op_stripe_update {
+	struct bch_val		v;
+	__le64			old_idx;
+	__le64			new_idx;
+	__u8			old_blocks_nr;
+	__u8			old_block_map[16];
+	__u8			pad[7];
+};
+
 #endif /* _BCACHEFS_LOGGED_OPS_FORMAT_H */

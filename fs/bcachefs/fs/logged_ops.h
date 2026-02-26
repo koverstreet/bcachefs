@@ -6,7 +6,8 @@
 
 #define BCH_LOGGED_OPS()			\
 	x(truncate)				\
-	x(finsert)
+	x(finsert)				\
+	x(stripe_update)
 
 static inline int bch2_logged_op_update(struct btree_trans *trans, struct bkey_i *op)
 {
@@ -14,6 +15,7 @@ static inline int bch2_logged_op_update(struct btree_trans *trans, struct bkey_i
 }
 
 int bch2_resume_logged_ops(struct bch_fs *);
+int __bch2_logged_op_start(struct btree_trans *, struct bkey_i *);
 int bch2_logged_op_start(struct btree_trans *, struct bkey_i *);
 int bch2_logged_op_finish(struct btree_trans *, struct bkey_i *);
 
