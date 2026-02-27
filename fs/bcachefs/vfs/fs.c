@@ -355,7 +355,7 @@ repeat:
 			if (!trans) {
 				__wait_on_freeing_inode(c, inode, inum);
 			} else {
-				int ret = drop_locks_do(trans,
+				int ret = drop_locks_long_do(trans,
 						(__wait_on_freeing_inode(c, inode, inum), 0));
 				if (ret)
 					return ERR_PTR(ret);

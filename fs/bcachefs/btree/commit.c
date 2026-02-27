@@ -418,9 +418,9 @@ btree_key_can_insert_cached_slowpath(struct btree_trans *trans, unsigned flags,
 	int ret;
 
 	bch2_trans_unlock_updates_write(trans);
-	bch2_trans_unlock(trans);
+	bch2_trans_unlock_long(trans);
 
-	new_k = kmalloc(new_u64s * sizeof(u64), GFP_KERNEL);
+	new_k = kmalloc(new_u64s * sizeof(u64), GFP_NOFS);
 	if (!new_k) {
 		struct bch_fs *c = trans->c;
 		bch_err(c, "error allocating memory for key cache key, btree %s u64s %u",
@@ -934,7 +934,7 @@ static int __bch2_trans_commit_error(struct btree_trans *trans, unsigned flags,
 		    watermark < BCH_WATERMARK_reclaim)
 			return bch_err_throw(c, journal_reclaim_would_deadlock);
 
-		return drop_locks_do(trans,
+		return drop_locks_long_do(trans,
 			bch2_trans_journal_res_get(trans,
 					(flags & BCH_WATERMARK_MASK)|
 					JOURNAL_RES_GET_CHECK));
@@ -959,7 +959,7 @@ static int __bch2_trans_commit_error(struct btree_trans *trans, unsigned flags,
 	case -BCH_ERR_btree_insert_need_mark_replicas:
 		return drop_locks_do(trans, bch2_accounting_update_sb(trans));
 	case -BCH_ERR_btree_insert_need_journal_reclaim:
-		bch2_trans_unlock(trans);
+		bch2_trans_unlock_long(trans);
 
 		event_inc_trace(c, trans_blocked_journal_reclaim, buf, ({
 			prt_printf(&buf, "%s\n", trans->fn);

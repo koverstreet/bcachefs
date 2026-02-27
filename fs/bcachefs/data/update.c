@@ -743,7 +743,7 @@ int bch2_update_unwritten_extent(struct btree_trans *trans,
 				update->op.watermark,
 				0, &cl, &wp);
 		if (bch2_err_matches(ret, BCH_ERR_operation_blocked)) {
-			bch2_trans_unlock(trans);
+			bch2_trans_unlock_long(trans);
 			closure_sync(&cl);
 			continue;
 		}
@@ -776,7 +776,7 @@ int bch2_update_unwritten_extent(struct btree_trans *trans,
 	}
 
 	if (closure_nr_remaining(&cl) != 1) {
-		bch2_trans_unlock(trans);
+		bch2_trans_unlock_long(trans);
 		closure_sync(&cl);
 	}
 
@@ -1354,7 +1354,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 		goto out_nocow_unlock;
 	}
 
-	bch2_trans_unlock(trans);
+	bch2_trans_unlock_long(trans);
 
 	ret = bch2_data_update_bios_init(m, c, io_opts, buf_bytes);
 	if (ret)
