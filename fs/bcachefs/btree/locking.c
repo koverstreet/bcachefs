@@ -899,7 +899,7 @@ void bch2_trans_unlock_write(struct btree_trans *trans)
 int __bch2_trans_mutex_lock(struct btree_trans *trans,
 			    struct mutex *lock)
 {
-	int ret = drop_locks_do(trans, (mutex_lock(lock), 0));
+	int ret = drop_locks_long_do(trans, (mutex_lock(lock), 0));
 
 	if (ret)
 		mutex_unlock(lock);
