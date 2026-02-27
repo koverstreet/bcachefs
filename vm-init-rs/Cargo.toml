@@ -1,0 +1,12 @@
+[package]
+name = "vm-init"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rustix = { version = "1", features = ["fs", "mm", "mount", "process", "system", "time"] }
+libc = "0.2"
+
+[profile.release]
+strip = true
+lto = true
