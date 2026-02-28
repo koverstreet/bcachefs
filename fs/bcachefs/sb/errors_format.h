@@ -206,6 +206,7 @@ enum bch_fsck_flags {
 	x(stripe_to_missing_bucket_ref,				346,	FSCK_AUTOFIX)	\
 	x(bucket_stripe_ref_to_missing_stripe,			347,	FSCK_AUTOFIX)	\
 	x(bucket_stripe_ref_to_incorrect_stripe,		348,	FSCK_AUTOFIX)	\
+	x(stripe_update_stale_stripe_ptr,			354,	FSCK_AUTOFIX)	\
 	x(snapshot_tree_pos_bad,				170,	0)		\
 	x(snapshot_tree_to_missing_snapshot,			171,	0)		\
 	x(snapshot_tree_to_missing_subvol,			172,	0)		\
@@ -365,7 +366,6 @@ enum bch_fsck_flags {
 	x(vfs_i_size_bad,					343,	0)		\
 	x(vfs_i_sectors_bad,					344,	0)		\
 	x(vfs_unlink_got_wrong_inum,				349,	0)		\
-	x(stripe_update_stale_stripe_ptr,			354,	0)		\
 	x(MAX,							355,	0)
 
 enum bch_sb_error_id {
