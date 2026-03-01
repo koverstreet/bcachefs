@@ -14,7 +14,6 @@
 #include "bcachefs.h"
 
 #include "alloc/backpointers.h"
-#include "alloc/buckets_waiting_for_journal.h"
 #include "alloc/buckets.h"
 #include "alloc/check.h"
 #include "alloc/discard.h"
@@ -193,21 +192,24 @@ static inline bool may_alloc_bucket(struct bch_fs *c,
 		return false;
 	}
 
-	u64 journal_seq_ready =
-		bch2_bucket_journal_seq_ready(&c->buckets_waiting_for_journal,
-					      bucket.inode, bucket.offset);
-	if (journal_seq_ready > c->journal.flushed_seq_ondisk) {
-		if (journal_seq_ready > c->journal.flushing_seq)
-			req->counters.need_journal_commit++;
-		req->counters.skipped_need_journal_commit++;
-		return false;
-	}
-
 	if (bch2_bucket_nocow_is_locked(&c->nocow_locks, bucket)) {
 		req->counters.skipped_nocow++;
 		return false;
 	}
 
+	return true;
+}
+
+static inline bool may_alloc_bucket_journal_seq(struct bch_fs *c,
+						struct alloc_request *req,
+						u64 journal_seq_empty)
+{
+	if (journal_seq_empty > c->journal.flushed_seq_ondisk) {
+		if (journal_seq_empty > c->journal.flushing_seq)
+			req->counters.need_journal_commit++;
+		req->counters.skipped_need_journal_commit++;
+		return false;
+	}
 	return true;
 }
 
@@ -276,10 +278,14 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans,
 		return NULL;
 
 	u8 gen;
-	int ret = bch2_check_discard_freespace_key_async(trans, freespace_iter, &gen);
+	u64 journal_seq_empty;
+	int ret = bch2_check_discard_freespace_key_async(trans, freespace_iter, &gen, &journal_seq_empty);
 	if (ret < 0)
 		return ERR_PTR(ret);
 	if (ret)
+		return NULL;
+
+	if (!may_alloc_bucket_journal_seq(c, req, journal_seq_empty))
 		return NULL;
 
 	return __try_alloc_bucket(c, req, b, gen);
@@ -351,7 +357,8 @@ again:
 		if (a->data_type == BCH_DATA_free) {
 			req->counters.buckets_seen++;
 
-			ob = may_alloc_bucket(c, req, k.k->p)
+			ob = may_alloc_bucket(c, req, k.k->p) &&
+			     may_alloc_bucket_journal_seq(c, req, a->journal_seq_empty)
 				? __try_alloc_bucket(c, req, k.k->p.offset, a->gen)
 				: NULL;
 			if (ob)

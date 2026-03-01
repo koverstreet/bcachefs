@@ -324,7 +324,7 @@ static int bch2_recheck_discard_freespace_key(struct btree_trans *trans, struct 
 
 	u8 gen;
 	return k.k->type != KEY_TYPE_set
-		? __bch2_check_discard_freespace_key(trans, &iter, &gen, FSCK_ERR_SILENT)
+		? __bch2_check_discard_freespace_key(trans, &iter, &gen, NULL, FSCK_ERR_SILENT)
 		: 0;
 }
 
@@ -374,7 +374,7 @@ static int delete_discard_freespace_key(struct btree_trans *trans,
 }
 
 int __bch2_check_discard_freespace_key(struct btree_trans *trans, struct btree_iter *iter, u8 *gen,
-				       enum bch_fsck_flags fsck_flags)
+				       u64 *journal_seq_empty, enum bch_fsck_flags fsck_flags)
 {
 	struct bch_fs *c = trans->c;
 	enum bch_data_type state = iter->btree_id == BTREE_ID_need_discard
@@ -427,6 +427,8 @@ int __bch2_check_discard_freespace_key(struct btree_trans *trans, struct btree_i
 	}
 
 	*gen = a->gen;
+	if (journal_seq_empty)
+		*journal_seq_empty = a->journal_seq_empty;
 out:
 fsck_err:
 	bch2_set_btree_iter_dontneed(&alloc_iter);
@@ -436,7 +438,7 @@ fsck_err:
 static int bch2_check_discard_freespace_key(struct btree_trans *trans, struct btree_iter *iter)
 {
 	u8 gen;
-	int ret = __bch2_check_discard_freespace_key(trans, iter, &gen, 0);
+	int ret = __bch2_check_discard_freespace_key(trans, iter, &gen, NULL, 0);
 	return ret < 0 ? ret : 0;
 }
 
