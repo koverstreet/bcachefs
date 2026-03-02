@@ -25,6 +25,8 @@
 
 #include "debug/async_objs.h"
 
+#include "vfs/swap.h"
+
 #include "fs/inode.h"
 
 #include "init/dev.h"
@@ -373,7 +375,12 @@ static int bch2_write_index_default(struct bch_write_op *op)
 	CLASS(btree_trans, trans)(c);
 
 	struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
-	bch2_bkey_buf_init(&sk);
+	if (op->prealloc_bkey_buf) {
+		bch2_bkey_buf_init_prealloc(&sk, op->prealloc_bkey_buf);
+		op->prealloc_bkey_buf = NULL;
+	} else {
+		bch2_bkey_buf_init(&sk);
+	}
 
 	do {
 		bch2_trans_begin(trans);
@@ -729,12 +736,55 @@ void bch2_write_point_do_index_updates(struct work_struct *work)
 
 		op->flags |= BCH_WRITE_in_worker;
 
+		bool is_swap = (op->flags & BCH_WRITE_swap) &&
+			       bch2_swap_noreclaim_enabled;
+
+		/*
+		 * Pre-allocate the bkey spill buffer while we can still
+		 * do normal allocations.  Use GFP_NOWAIT to avoid entering
+		 * direct reclaim — the kworker context can amplify the
+		 * journal_write → reclaim → btree_shrinker → journal
+		 * deadlock.  If this fails, the old __GFP_NOFAIL path
+		 * under PF_MEMALLOC will handle it.
+		 */
+		if (is_swap && !op->prealloc_bkey_buf)
+			op->prealloc_bkey_buf = kmalloc(2048, GFP_NOWAIT);
+
+		/*
+		 * Swap write ops must not enter direct reclaim —
+		 * we're already in the swap writeback path and
+		 * reclaim would try to swap more pages → deadlock.
+		 */
+		unsigned int noreclaim_flags = 0;
+		if (is_swap)
+			noreclaim_flags = memalloc_noreclaim_save();
+
+		u64 swap_start_ns = is_swap ? ktime_get_ns() : 0;
+
 		__bch2_write_index(op);
+
+		if (unlikely(op->prealloc_bkey_buf)) {
+			kfree(op->prealloc_bkey_buf);
+			op->prealloc_bkey_buf = NULL;
+		}
 
 		if (!(op->flags & BCH_WRITE_submitted))
 			__bch2_write(op);
 		else
 			bch2_write_done(&op->cl);
+
+		if (is_swap) {
+			u64 elapsed = ktime_get_ns() - swap_start_ns;
+			memalloc_noreclaim_restore(noreclaim_flags);
+
+			if (unlikely(elapsed > 2ULL * NSEC_PER_SEC)) {
+				pr_err("bcachefs: swap kworker STALL: %llu ms in index_updates",
+				       elapsed / NSEC_PER_MSEC);
+				WARN_ON_ONCE(1);
+			}
+			if (unlikely(elapsed > 10ULL * NSEC_PER_SEC))
+				BUG();
+		}
 	}
 }
 
@@ -1560,7 +1610,15 @@ static void __bch2_write(struct bch_write_op *op)
 		(!(op->flags & BCH_WRITE_submitted) &&
 		 !(op->flags & BCH_WRITE_in_worker));
 
-	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+	/*
+	 * PF_MEMALLOC_NOFS: prevent filesystem re-entry from allocations.
+	 * For swap writes (BCH_WRITE_swap): also set PF_MEMALLOC to
+	 * prevent entering direct reclaim entirely — swap writes run
+	 * during reclaim and must not recurse into it.
+	 */
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS |
+		(((op->flags & BCH_WRITE_swap) && bch2_swap_noreclaim_enabled)
+		 ? PF_MEMALLOC : 0));
 
 	if (unlikely(op->opts.nocow &&
 		     c->opts.nocow_enabled) &&

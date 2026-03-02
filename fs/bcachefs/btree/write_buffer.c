@@ -649,8 +649,13 @@ static int btree_write_buffer_flush_seq(struct btree_trans *trans, u64 max_seq,
 		/*
 		 * On memory allocation failure, bch2_btree_write_buffer_flush_locked()
 		 * is not guaranteed to empty wb->inc:
+		 *
+		 * PF_MEMALLOC prevents entering direct reclaim while holding
+		 * wb->flushing.lock.  Without it, btree node allocation inside
+		 * the flush can enter reclaim → reclaim needs journal → journal
+		 * needs write-buffer flush → blocked on our mutex → deadlock.
 		 */
-		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS|PF_MEMALLOC) {
 			guard(mutex)(&wb->flushing.lock);
 			ret = bch2_btree_write_buffer_flush_locked(trans, caller);
 		}
@@ -706,8 +711,10 @@ static int bch2_btree_write_buffer_flush_nocheck_rw(struct btree_trans *trans)
 	int ret = 0;
 
 	if (mutex_trylock(&wb->flushing.lock)) {
-		bch2_trans_unlock_long(trans);
-		ret = bch2_btree_write_buffer_flush_locked(trans, WB_FLUSH_tryflush);
+		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS|PF_MEMALLOC) {
+			bch2_trans_unlock_long(trans);
+			ret = bch2_btree_write_buffer_flush_locked(trans, WB_FLUSH_tryflush);
+		}
 		mutex_unlock(&wb->flushing.lock);
 	}
 
@@ -793,7 +800,7 @@ static int bch2_btree_write_buffer_flush_thread(void *arg)
 		if (kthread_should_stop())
 			break;
 
-		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS|PF_MEMALLOC) {
 			guard(mutex)(&wb->flushing.lock);
 			CLASS(btree_trans, trans)(c);
 			do {

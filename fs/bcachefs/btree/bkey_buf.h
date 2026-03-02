@@ -56,6 +56,12 @@ static inline void bch2_bkey_buf_init(struct bkey_buf *s)
 	bkey_init(&s->k->k);
 }
 
+static inline void bch2_bkey_buf_init_prealloc(struct bkey_buf *s, void *buf)
+{
+	s->k = buf;
+	bkey_init(&s->k->k);
+}
+
 static inline void bch2_bkey_buf_exit(struct bkey_buf *s)
 {
 	if (s->k != (void *) s->onstack)

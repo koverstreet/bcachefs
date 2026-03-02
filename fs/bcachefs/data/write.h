@@ -56,6 +56,7 @@ static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
 	op->new_i_size		= U64_MAX;
 	op->i_sectors_delta	= 0;
 	op->devs_need_flush	= NULL;
+	op->prealloc_bkey_buf	= NULL;
 }
 
 CLOSURE_CALLBACK(bch2_write);

@@ -341,6 +341,13 @@ inline void bch2_btree_insert_key_leaf(struct btree_trans *trans,
 	if (b->sib_u64s[1] != U16_MAX && live_u64s_added < 0)
 		b->sib_u64s[1] = max(0, (int) b->sib_u64s[1] + live_u64s_added);
 
+	if (unlikely(b->nr.live_u64s * 5 > btree_max_u64s(c) * 4) &&
+	    b->c.btree_id == BTREE_ID_extents && b->c.level == 0)
+		bch_info_ratelimited(c,
+			"swap: extents leaf at %u%% fill (%u/%zu u64s)",
+			(unsigned)(b->nr.live_u64s * 100 / btree_max_u64s(c)),
+			b->nr.live_u64s, btree_max_u64s(c));
+
 	if (u64s_added > live_u64s_added &&
 	    bch2_maybe_compact_whiteouts(c, b))
 		bch2_trans_node_reinit_iter(trans, b);

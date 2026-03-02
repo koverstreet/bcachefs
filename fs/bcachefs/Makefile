@@ -124,7 +124,8 @@ bcachefs-y		:=			\
 	vfs/io.o				\
 	vfs/buffered.o				\
 	vfs/direct.o				\
-	vfs/pagecache.o
+	vfs/pagecache.o				\
+	vfs/swap.o
 
 ifdef CONFIG_DEBUG_FS
 	bcachefs-y += debug/async_objs.o
