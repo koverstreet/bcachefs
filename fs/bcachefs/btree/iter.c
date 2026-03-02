@@ -3510,6 +3510,9 @@ u32 bch2_trans_begin(struct btree_trans *trans)
 
 	now = local_clock();
 
+	if (!trans->last_yield_time)
+		trans->last_yield_time = now;
+
 	if (!IS_ENABLED(CONFIG_BCACHEFS_NO_LATENCY_ACCT) &&
 	    time_after64(now, trans->last_begin_time + 10))
 		__bch2_time_stats_update(&btree_trans_stats(trans)->duration,
@@ -3517,10 +3520,11 @@ u32 bch2_trans_begin(struct btree_trans *trans)
 
 	if (!trans->restarted &&
 	    (need_resched() ||
-	     time_after64(now, trans->last_begin_time + BTREE_TRANS_MAX_LOCK_HOLD_TIME_NS))) {
+	     time_after64(now, trans->last_yield_time + BTREE_TRANS_MAX_LOCK_HOLD_TIME_NS))) {
 		bch2_trans_unlock(trans);
 		cond_resched();
 		now = local_clock();
+		trans->last_yield_time = now;
 	}
 	trans->last_begin_time = now;
 

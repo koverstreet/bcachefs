@@ -219,6 +219,7 @@ static inline void trans_set_unlocked(struct btree_trans *trans)
 		lock_release(&trans->dep_map, _THIS_IP_);
 		trans->locked = false;
 		trans->last_unlock_ip = _RET_IP_;
+		trans->last_yield_time = 0;
 
 		if (!trans->pf_memalloc_nofs)
 			current->flags &= ~PF_MEMALLOC_NOFS;
