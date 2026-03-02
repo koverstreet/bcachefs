@@ -89,9 +89,22 @@ int bch2_logged_op_start(struct btree_trans *trans, struct bkey_i *k)
 			 __bch2_logged_op_start(trans, k));
 }
 
+/*
+ * Callers must hold a write ref (BCH_WRITE_REF_stripe_create,
+ * BCH_WRITE_REF_fallocate, VFS sb->s_writers, or recovery context).
+ *
+ * We use no_check_rw because the logged operation has already completed
+ * and the cleanup delete must succeed regardless of fs shutdown state —
+ * otherwise we get spurious EROFS during umount.
+ *
+ * TODO: post Rust conversion, encode the write ref requirement in the
+ * type system so the compiler enforces it.
+ */
 int bch2_logged_op_finish(struct btree_trans *trans, struct bkey_i *k)
 {
-	int ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+	int ret = commit_do(trans, NULL, NULL,
+			    BCH_TRANS_COMMIT_no_check_rw|
+			    BCH_TRANS_COMMIT_no_enospc,
 			    bch2_btree_delete(trans, BTREE_ID_logged_ops, k->k.p, 0));
 	/*
 	 * This needs to be a fatal error because we've left an unfinished
