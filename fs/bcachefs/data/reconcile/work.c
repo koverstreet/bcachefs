@@ -1144,12 +1144,24 @@ typedef struct {
 
 DEFINE_DARRAY(reconcile_phys_thr);
 
+/*
+ * Destructor ordering: closure_return() must be the last thing before the
+ * function returns, but __cleanup destructors run after closure_return()
+ * signals the parent — which can then free the thrs darray containing the
+ * reconcile_phys_thr (and its embedded bch_move_stats) that
+ * moving_context.stats still points to. So we manage moving_context
+ * lifetime manually here.
+ *
+ * This is a general hazard with __cleanup + closure_return: the parent
+ * can wake and free resources before the child's destructors run. In Rust
+ * this will be enforced by Drop ordering.
+ */
 static CLOSURE_CALLBACK(do_reconcile_phys_thread)
 {
 	closure_type(thr, reconcile_phys_thr, cl);
 	struct bch_fs *c = thr->c;
 
-	struct moving_context ctxt __cleanup(bch2_moving_ctxt_exit);
+	struct moving_context ctxt;
 	bch2_moving_ctxt_init(&ctxt, c, NULL, &thr->stats,
 			      writepoint_ptr(&c->allocator.reconcile_write_point),
 			      true);
@@ -1160,6 +1172,7 @@ static CLOSURE_CALLBACK(do_reconcile_phys_thread)
 	darray_make_room(&work, RECONCILE_WORK_BUF_NR);
 	if (!work.size) {
 		bch_err(c, "%s: unable to allocate memory", __func__);
+		bch2_moving_ctxt_exit(&ctxt);
 		closure_return(cl);
 		return;
 	}
@@ -1196,6 +1209,7 @@ static CLOSURE_CALLBACK(do_reconcile_phys_thread)
 			break;
 	}
 
+	bch2_moving_ctxt_exit(&ctxt);
 	closure_return(cl);
 }
 
