@@ -147,7 +147,7 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 		goto out;
 commit:
 	ret = bch2_trans_commit(trans, NULL, NULL,
-				BCH_WATERMARK_btree|
+				BCH_WATERMARK_reclaim|
 				BCH_TRANS_COMMIT_no_check_rw|
 				BCH_TRANS_COMMIT_no_enospc);
 	if (ret)
