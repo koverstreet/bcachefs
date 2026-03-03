@@ -1352,7 +1352,7 @@ static int drop_sbs_after_cutoff(struct bch_fs *c, struct bch_dev *ca, u64 cutof
 	return bch2_write_super(c);
 }
 
-// TODO: make sure everything is caught here.
+// TODO: make sure everything is caught here. Maybe look at bch2_dev_has_data for this
 // Fore example journals and superblocks might need special handling
 static int tail_is_empty(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err, bool *empty) {
 	struct bpos bp_start = bucket_pos_to_bp_start(ca, POS(ca->dev_idx, new_nbuckets));
@@ -1466,6 +1466,24 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			m->target_nbuckets = 0;
 
 			bch2_write_super(c);
+		}
+
+		/* flush interior updates - mirroring dev remove path */
+		bch2_btree_interior_updates_flush(c);
+
+		/* flush journal - mirroring dev remove path */
+		bch2_journal_flush_all_pins(&c->journal);
+
+		ret = bch2_journal_flush_device_pins(&c->journal, ca->dev_idx);
+		if (ret) {
+			prt_printf(err, "bch2_journal_flush_device_pins() error: %s\n", bch2_err_str(ret));
+			return ret;
+		}
+
+		ret = bch2_journal_flush(&c->journal);
+		if (ret) {
+			prt_printf(err, "bch2_journal_flush() error: %s\n", bch2_err_str(ret));
+			return ret;
 		}
 
 		/* re-check that tail is really empty */
