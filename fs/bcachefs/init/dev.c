@@ -1034,7 +1034,7 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets, struct p
 
 	if (nbuckets < ca->mi.nbuckets) {
 		prt_printf(err, "Cannot shrink yet\n");
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_dev_resize_shrink);
 	}
 
 	bool wakeup_reconcile_pending = nbuckets > ca->mi.nbuckets;

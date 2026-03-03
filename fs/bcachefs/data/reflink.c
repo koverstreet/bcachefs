@@ -735,7 +735,7 @@ static int bch2_gc_write_reflink_key(struct btree_trans *trans,
 	    r->offset != k.k->p.offset ||
 	    r->size != k.k->size) {
 		bch_err(c, "unexpected inconsistency walking reflink table at gc finish");
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_reflink_gc_table_mismatch);
 	}
 
 	if (ret_fsck_err_on(r->refcount != le64_to_cpu(*refcount),

@@ -734,7 +734,7 @@ int bch2_btree_perf_test(struct bch_fs *c, const char *testname,
 
 	if (nr == 0 || nr_threads == 0) {
 		pr_err("nr of iterations or threads is not allowed to be 0");
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_test_zero_nr_or_threads);
 	}
 
 	atomic_set(&j.ready, nr_threads);
@@ -777,7 +777,7 @@ int bch2_btree_perf_test(struct bch_fs *c, const char *testname,
 
 	if (!j.fn) {
 		pr_err("unknown test %s", testname);
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_test_unknown_test);
 	}
 
 	//pr_info("running test %s:", testname);

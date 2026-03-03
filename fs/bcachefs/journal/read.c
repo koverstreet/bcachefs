@@ -954,7 +954,7 @@ int bch2_jset_validate(struct bch_fs *c,
 			BCH_VERSION_MAJOR(version),
 			BCH_VERSION_MINOR(version))) {
 		/* don't try to continue: */
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_journal_entry_version_incompatible);
 	}
 
 	if (journal_entry_err_on(!bch2_checksum_type_valid(c, JSET_CSUM_TYPE(jset)),
@@ -1008,7 +1008,7 @@ static int jset_validate_early(struct bch_fs *c,
 			BCH_VERSION_MAJOR(version),
 			BCH_VERSION_MINOR(version))) {
 		/* don't try to continue: */
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_journal_validate_version_incompatible);
 	}
 
 	size_t bytes = vstruct_bytes(jset);

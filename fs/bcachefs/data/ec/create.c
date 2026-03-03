@@ -140,7 +140,7 @@ static int ec_stripe_key_update(struct btree_trans *trans,
 	if (bch2_fs_inconsistent_on(k.k->type,
 				    c, "error creating stripe: got existing key\n%s",
 				    (bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ec_stripe_create_existing_key);
 
 	return bch2_trans_update(trans, &iter, new_mut, 0);
 }

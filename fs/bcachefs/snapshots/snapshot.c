@@ -599,7 +599,7 @@ static int bch2_snapshot_node_create_children(struct btree_trans *trans, u32 par
 
 	if (n_parent->v.children[0] || n_parent->v.children[1]) {
 		bch_err(trans->c, "Trying to add child snapshot nodes to parent that already has children");
-		return -EINVAL;
+		return bch_err_throw(trans->c, EINVAL_snapshot_parent_already_has_children);
 	}
 
 	ret = create_snapids(trans, parent, le32_to_cpu(n_parent->v.tree),

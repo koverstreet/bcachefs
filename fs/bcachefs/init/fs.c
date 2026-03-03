@@ -1060,13 +1060,13 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 	if (BCH_SB_INITIALIZED(c->disk_sb.sb)) {
 		if (!(c->sb.features & BIT_ULL(BCH_FEATURE_new_extent_overwrite))) {
 			prt_str(out, "feature new_extent_overwrite not set, filesystem no longer supported\n");
-			return -EINVAL;
+			return bch_err_throw(c, EINVAL_missing_new_extent_overwrite);
 		}
 
 		if (c->sb.version_min < bcachefs_metadata_version_btree_ptr_sectors_written) {
 			prt_str(out, "version_min < version_btree_ptr_sectors_written\n");
 			prt_str(out, "filesystem needs upgrade from older version; run fsck from older bcachefs-tools to fix\n");
-			return -EINVAL;
+			return bch_err_throw(c, EINVAL_version_min_too_old);
 		}
 	}
 
@@ -1169,7 +1169,7 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	if (!IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE) &&
 	    c->opts.block_size > PAGE_SIZE) {
 		prt_printf(out, "cannot mount bs > ps filesystem without CONFIG_TRANSPARENT_HUGEPAGE\n");
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_block_size_needs_thp);
 	}
 #endif
 
@@ -1219,13 +1219,13 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 				   unicode_major(BCH_FS_DEFAULT_UTF8_ENCODING),
 				   unicode_minor(BCH_FS_DEFAULT_UTF8_ENCODING),
 				   unicode_rev(BCH_FS_DEFAULT_UTF8_ENCODING));
-			return -EINVAL;
+			return bch_err_throw(c, EINVAL_utf8_load_failed);
 		}
 	}
 #else
 	if (c->sb.features & BIT_ULL(BCH_FEATURE_casefolding)) {
 		prt_printf(out, "Cannot mount a filesystem with casefolding on a kernel without CONFIG_UNICODE\n");
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_casefolding_no_unicode);
 	}
 #endif
 
@@ -1303,7 +1303,7 @@ static int bch2_fs_may_start(struct bch_fs *c, struct printbuf *err)
 
 	if (c->opts.no_version_check) {
 		prt_printf(err, "Cannot start with opts.no_version_check\n");
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_no_version_check_start);
 	}
 
 	switch (c->opts.degraded) {

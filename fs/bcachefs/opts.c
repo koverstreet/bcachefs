@@ -408,7 +408,7 @@ int bch2_opt_parse(struct bch_fs *c,
 		if (!val) {
 			prt_printf(err, "%s: required value",
 				   opt->attr.name);
-			return -EINVAL;
+			return -BCH_ERR_EINVAL_opt_parse_uint_required;
 		}
 
 		if (*val != '-') {
@@ -431,7 +431,7 @@ int bch2_opt_parse(struct bch_fs *c,
 		if (!val) {
 			prt_printf(err, "%s: required value",
 				   opt->attr.name);
-			return -EINVAL;
+			return -BCH_ERR_EINVAL_opt_parse_str_required;
 		}
 
 		ret = match_string(opt->choices, -1, val);

@@ -585,7 +585,7 @@ int bch2_disable_encryption(struct bch_fs *c)
 
 	struct bch_sb_field_crypt *crypt = bch2_sb_field_get(c->disk_sb.sb, crypt);
 	if (!crypt)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_disable_encryption_no_crypt);
 
 	/* is key encrypted? */
 	ret = 0;

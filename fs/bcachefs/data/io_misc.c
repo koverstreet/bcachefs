@@ -345,7 +345,7 @@ static int adjust_i_size(struct btree_trans *trans, subvol_inum inum,
 			return -EFBIG;
 
 		if (offset >= inode_u.bi_size)
-			return -EINVAL;
+			return bch_err_throw(trans->c, EINVAL_finsert_offset_past_eof);
 	}
 
 	inode_u.bi_size += len;

@@ -164,7 +164,7 @@ static int bch2_ioc_setlabel(struct bch_fs *c,
 		bch_err(c,
 			"unable to set label with more than %d bytes",
 			BCH_SB_LABEL_SIZE - 1);
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_setlabel_too_long);
 	}
 
 	try(mnt_want_write_file(file));
@@ -209,7 +209,7 @@ static int bch2_ioc_goingdown(struct bch_fs *c, u32 __user *arg)
 		bch2_fs_emergency_read_only(c, &msg.m);
 		return 0;
 	default:
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_goingdown_bad_flags);
 	}
 }
 
@@ -231,14 +231,14 @@ static long __bch2_ioctl_subvolume_create(struct bch_fs *c, struct file *filp,
 	if (arg.flags & ~(BCH_SUBVOL_SNAPSHOT_CREATE|
 			  BCH_SUBVOL_SNAPSHOT_RO)) {
 		prt_str(err, "invalid flasg");
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_subvol_create_bad_flags);
 	}
 
 	if (!(arg.flags & BCH_SUBVOL_SNAPSHOT_CREATE) &&
 	    (arg.src_ptr ||
 	     (arg.flags & BCH_SUBVOL_SNAPSHOT_RO))) {
 		prt_str(err, "invalid flasg");
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_subvol_create_flags_mismatch);
 	}
 
 	if (arg.flags & BCH_SUBVOL_SNAPSHOT_CREATE)
@@ -374,7 +374,7 @@ static long __bch2_ioctl_subvolume_destroy(struct bch_fs *c, struct file *filp,
 	int ret = 0;
 
 	if (arg.flags)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_subvol_destroy_bad_flags);
 
 	victim = start_removing_user_path_at(arg.dirfd, name, &path);
 	if (IS_ERR(victim))
@@ -586,7 +586,7 @@ static long bch2_ioctl_subvolume_list(struct bch_fs *c, struct file *filp,
 	try(copy_from_user_errcode(&arg, user_arg, sizeof(arg)));
 
 	if (arg.pad)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_subvol_readdir_pad);
 
 	u32 parent = inode_inum(file_bch_inode(filp)).subvol;
 	struct mnt_idmap *idmap = file_mnt_idmap(filp);
@@ -629,7 +629,7 @@ static long bch2_ioctl_subvolume_to_path(struct bch_fs *c, struct file *filp,
 	try(copy_from_user_errcode(&arg, user_arg, sizeof(arg)));
 
 	if (!arg.buf_size)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_subvol_to_path_no_buf);
 
 	CLASS(btree_trans, trans)(c);
 	CLASS(printbuf, path)();
@@ -687,7 +687,7 @@ static long bch2_ioctl_snapshot_tree(struct bch_fs *c, struct file *filp,
 	try(copy_from_user_errcode(&arg, user_arg, sizeof(arg)));
 
 	if (arg.pad)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_snapshot_tree_query_pad);
 
 	/* Querying a specific tree by ID requires CAP_SYS_ADMIN */
 	if (arg.tree_id && !capable(CAP_SYS_ADMIN))

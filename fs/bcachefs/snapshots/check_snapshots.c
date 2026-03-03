@@ -299,7 +299,7 @@ static int check_snapshot(struct btree_trans *trans,
 		    le32_to_cpu(parent.children[1]) != k.k->p.offset) {
 			bch_err(c, "snapshot parent %u missing pointer to child %llu",
 				parent_id, k.k->p.offset);
-			return -EINVAL;
+			return bch_err_throw(c, EINVAL_snapshot_parent_missing_child_ptr);
 		}
 	}
 
@@ -317,7 +317,7 @@ static int check_snapshot(struct btree_trans *trans,
 		if (le32_to_cpu(child.parent) != k.k->p.offset) {
 			bch_err(c, "snapshot child %u has wrong parent (got %u should be %llu)",
 				child_id, le32_to_cpu(child.parent), k.k->p.offset);
-			return -EINVAL;
+			return bch_err_throw(c, EINVAL_snapshot_child_bad_parent);
 		}
 	}
 
@@ -338,7 +338,7 @@ static int check_snapshot(struct btree_trans *trans,
 		if (BCH_SNAPSHOT_SUBVOL(&s) != (le32_to_cpu(subvol.snapshot) == k.k->p.offset)) {
 			bch_err(c, "snapshot node %llu has wrong BCH_SNAPSHOT_SUBVOL",
 				k.k->p.offset);
-			return -EINVAL;
+			return bch_err_throw(c, EINVAL_snapshot_bad_subvol_flag);
 		}
 	} else {
 		if (ret_fsck_err_on(s.subvol,

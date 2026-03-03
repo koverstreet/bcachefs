@@ -605,7 +605,7 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 		bch2_fs_fatal_error(c, ": journal write overran available space, %zu > %u (extra %u reserved %u/%u)",
 				    vstruct_bytes(jset), w->sectors << 9,
 				    u64s, w->u64s_reserved, j->entry_u64s_reserved);
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_journal_write_overran_available_space);
 	}
 
 	return 0;

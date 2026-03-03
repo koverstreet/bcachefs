@@ -184,7 +184,7 @@ static int bch2_snapshot_node_delete(struct btree_trans *trans, u32 id, bool del
 		prt_printf(&msg.m, "deleting node with two children:\n");
 		bch2_snapshot_tree_keys_to_text(&msg.m, trans, id);
 		bch2_snapshot_delete_nodes_to_text(&msg.m, &c->snapshots.delete, true);
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_snapshot_delete_has_two_children);
 	}
 
 	u32 parent_id = le32_to_cpu(s->v.parent);
@@ -223,7 +223,7 @@ static int bch2_snapshot_node_delete(struct btree_trans *trans, u32 id, bool del
 				   s->k.p.offset, child_id);
 			bch2_snapshot_tree_keys_to_text(&msg.m, trans, id);
 			bch2_snapshot_delete_nodes_to_text(&msg.m, &c->snapshots.delete, true);
-			return -EINVAL;
+			return bch_err_throw(c, EINVAL_snapshot_delete_interior_at_runtime);
 		}
 
 		struct bkey_i_snapshot *child =

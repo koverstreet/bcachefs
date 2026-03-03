@@ -517,7 +517,7 @@ int bch2_opt_target_parse(struct bch_fs *c, const char *val, u64 *res,
 		return 0;
 	}
 
-	return -EINVAL;
+	return bch_err_throw(c, EINVAL_opt_target_parse_not_found);
 }
 
 void bch2_target_to_text(struct printbuf *out, struct bch_fs *c, unsigned v)

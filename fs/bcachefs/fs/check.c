@@ -1962,7 +1962,7 @@ long bch2_ioctl_fsck_offline(struct bch_ioctl_fsck_offline __user *user_arg)
 	try(copy_from_user_errcode(&arg, user_arg, sizeof(arg)));
 
 	if (arg.flags)
-		return -EINVAL;
+		return -BCH_ERR_EINVAL_fsck_offline_bad_flags;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -2034,7 +2034,7 @@ static int bch2_fsck_online_thread_fn(struct thread_with_stdio *stdio)
 			prt_bitflags(&buf, bch2_recovery_passes, passes & ~online);
 			prt_printf(&buf, " online\n");
 			bch2_stdio_redirect_write(&stdio->stdio, false, buf.buf, buf.pos);
-			return -EINVAL;
+			return bch_err_throw(c, EINVAL_fsck_online_bad_passes);
 		}
 	}
 
@@ -2085,7 +2085,7 @@ static const struct thread_with_stdio_ops bch2_online_fsck_ops = {
 long bch2_ioctl_fsck_online(struct bch_fs *c, struct bch_ioctl_fsck_online arg)
 {
 	if (arg.flags)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_fsck_online_bad_flags);
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;

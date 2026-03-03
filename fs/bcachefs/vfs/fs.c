@@ -932,7 +932,7 @@ static int bch2_rename2(struct mnt_idmap *idmap,
 	int ret;
 
 	if (flags & ~(RENAME_NOREPLACE|RENAME_EXCHANGE|RENAME_WHITEOUT))
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_rename_bad_flags);
 
 	if (mode == BCH_RENAME_OVERWRITE)
 		try(filemap_write_and_wait_range(src_inode->v.i_mapping, 0, LLONG_MAX));
@@ -1362,7 +1362,7 @@ static int fssetxattr_inode_update_fn(struct btree_trans *trans,
 	if (!S_ISREG(bi->bi_mode) &&
 	    !S_ISDIR(bi->bi_mode) &&
 	    (s->flags & (BCH_INODE_nodump|BCH_INODE_noatime)) != s->flags)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_setattr_bad_file_type);
 
 	if (s->set_casefold &&
 	    s->casefold != bch2_inode_casefold(c, bi))
@@ -1677,7 +1677,7 @@ static int bch2_get_name(struct dentry *parent, char *name, struct dentry *child
 	int ret;
 
 	if (!S_ISDIR(dir->v.i_mode))
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_get_name_not_dir);
 
 	CLASS(btree_trans, trans)(c);
 	CLASS(btree_iter, iter1)(trans, BTREE_ID_dirents,
@@ -2423,7 +2423,7 @@ static int bch2_fs_reconfigure(struct fs_context *fc)
 			ret = bch2_fs_read_write(c);
 			if (ret) {
 				bch_err(c, "error going rw: %i", ret);
-				return -EINVAL;
+				return bch_err_throw(c, EINVAL_reconfigure_read_write);
 			}
 
 			sb->s_flags &= ~SB_RDONLY;

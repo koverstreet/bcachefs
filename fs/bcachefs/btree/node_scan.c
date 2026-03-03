@@ -385,7 +385,7 @@ int bch2_scan_for_btree_nodes(struct bch_fs *c)
 
 	if (!f->nodes.nr) {
 		bch_err(c, "%s: no btree nodes found", __func__);
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_node_scan_no_nodes);
 	}
 
 	if (0 && c->opts.verbose) {
@@ -405,7 +405,7 @@ int bch2_scan_for_btree_nodes(struct bch_fs *c)
 		    prev->cookie == i->cookie) {
 			if (prev->nr_ptrs == ARRAY_SIZE(prev->ptrs)) {
 				bch_err(c, "%s: found too many replicas for btree node", __func__);
-				return -EINVAL;
+				return bch_err_throw(c, EINVAL_node_scan_too_many_replicas);
 			}
 			prev->ptrs[prev->nr_ptrs++] = i->ptrs[0];
 		} else {

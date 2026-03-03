@@ -421,11 +421,11 @@ static int __bch2_xattr_bcachefs_get(const struct xattr_handler *handler,
 
 	id = bch2_opt_lookup(name);
 	if (id < 0 || !bch2_opt_is_inode_opt(id))
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_xattr_get_bad_opt);
 
 	inode_opt_id = opt_to_inode_opt(id);
 	if (inode_opt_id < 0)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_xattr_get_not_inode_opt);
 
 	opt = bch2_opt_table + id;
 
@@ -513,13 +513,13 @@ static int __bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 
 	int opt_id = bch2_opt_lookup(name);
 	if (opt_id < 0)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_xattr_set_bad_opt);
 
 	const struct bch_option *opt = bch2_opt_table + opt_id;
 
 	int inode_opt_id = opt_to_inode_opt(opt_id);
 	if (inode_opt_id < 0)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_xattr_set_not_inode_opt);
 
 	struct inode_opt_set s = { .id = inode_opt_id, .defined = value != NULL };
 	u64 v = 0;

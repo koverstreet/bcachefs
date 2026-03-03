@@ -101,7 +101,7 @@ static long bch2_ioctl_disk_add(struct bch_fs *c, struct bch_ioctl_disk arg)
 		return -EPERM;
 
 	if (arg.flags || arg.pad)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_add_bad_flags);
 
 	char *path __free(kfree) = errptr_try(strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX));
 
@@ -117,7 +117,7 @@ static long bch2_ioctl_disk_add_v2(struct bch_fs *c, struct bch_ioctl_disk_v2 ar
 		return -EPERM;
 
 	if (arg.flags || arg.pad)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_add_v2_bad_flags);
 
 	char *path __free(kfree) = errptr_try(strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX));
 
@@ -136,7 +136,7 @@ static long bch2_ioctl_disk_remove(struct bch_fs *c, struct bch_ioctl_disk arg)
 			   BCH_FORCE_IF_DEGRADED|
 			   BCH_BY_INDEX)) ||
 	    arg.pad)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_remove_bad_flags);
 
 	struct bch_dev *ca = bch2_device_lookup(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
@@ -159,7 +159,7 @@ static long bch2_ioctl_disk_remove_v2(struct bch_fs *c, struct bch_ioctl_disk_v2
 			   BCH_FORCE_IF_DEGRADED|
 			   BCH_BY_INDEX)) ||
 	    arg.pad)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_remove_v2_bad_flags);
 
 	struct bch_dev *ca = bch2_device_lookup(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
@@ -176,7 +176,7 @@ static long bch2_ioctl_disk_online(struct bch_fs *c, struct bch_ioctl_disk arg)
 		return -EPERM;
 
 	if (arg.flags || arg.pad)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_online_bad_flags);
 
 	char *path __free(kfree) = errptr_try(strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX));
 
@@ -193,7 +193,7 @@ static long bch2_ioctl_disk_online_v2(struct bch_fs *c, struct bch_ioctl_disk_v2
 		return -EPERM;
 
 	if (arg.flags || arg.pad)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_online_v2_bad_flags);
 
 	char *path __free(kfree) = errptr_try(strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX));
 
@@ -212,7 +212,7 @@ static long bch2_ioctl_disk_offline(struct bch_fs *c, struct bch_ioctl_disk arg)
 			   BCH_FORCE_IF_DEGRADED|
 			   BCH_BY_INDEX)) ||
 	    arg.pad)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_offline_bad_flags);
 
 	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
@@ -235,7 +235,7 @@ static long bch2_ioctl_disk_offline_v2(struct bch_fs *c, struct bch_ioctl_disk_v
 			   BCH_FORCE_IF_DEGRADED|
 			   BCH_BY_INDEX)) ||
 	    arg.pad)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_offline_v2_bad_flags);
 
 	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
@@ -258,7 +258,7 @@ static long bch2_ioctl_disk_set_state(struct bch_fs *c,
 			   BCH_BY_INDEX)) ||
 	    arg.pad[0] || arg.pad[1] || arg.pad[2] ||
 	    arg.new_state >= BCH_MEMBER_STATE_NR)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_set_state_bad_args);
 
 	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
 	errptr_try(ca);
@@ -283,7 +283,7 @@ static long bch2_ioctl_disk_set_state_v2(struct bch_fs *c,
 			   BCH_BY_INDEX)) ||
 	    arg.pad[0] || arg.pad[1] || arg.pad[2] ||
 	    arg.new_state >= BCH_MEMBER_STATE_NR)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_set_state_v2_bad_args);
 
 	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
 	errptr_try(ca);
@@ -354,7 +354,7 @@ static ssize_t bch2_data_job_read(struct file *file, char __user *buf,
 	}
 
 	if (len < sizeof(e))
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_data_read_short_buf);
 
 	return copy_to_user_errcode(buf, &e, sizeof(e)) ?: sizeof(e);
 }
@@ -379,7 +379,7 @@ static long bch2_ioctl_data(struct bch_fs *c,
 	}
 
 	if (arg.op >= BCH_DATA_OP_NR || arg.flags) {
-		ret = -EINVAL;
+		ret = bch_err_throw(c, EINVAL_ioctl_data_bad_op);
 		goto put_ref;
 	}
 
@@ -413,7 +413,7 @@ static noinline_for_stack long bch2_ioctl_fs_usage(struct bch_fs *c,
 	u32 replica_entries_bytes;
 
 	if (!test_bit(BCH_FS_started, &c->flags))
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_fs_usage_not_started);
 
 	if (get_user(replica_entries_bytes, &user_arg->replica_entries_bytes))
 		return -EFAULT;
@@ -449,7 +449,7 @@ static long bch2_ioctl_query_accounting(struct bch_fs *c,
 	CLASS(darray_char, accounting)();
 
 	if (!test_bit(BCH_FS_started, &c->flags))
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_query_accounting_not_started);
 
 	int ret = copy_from_user_errcode(&arg, user_arg, sizeof(arg)) ?:
 		bch2_fs_accounting_read(c, &accounting, arg.accounting_types_mask) ?:
@@ -471,7 +471,7 @@ static noinline_for_stack long bch2_ioctl_dev_usage(struct bch_fs *c,
 				 struct bch_ioctl_dev_usage __user *user_arg)
 {
 	if (!test_bit(BCH_FS_started, &c->flags))
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_dev_usage_not_started);
 
 	struct bch_ioctl_dev_usage arg;
 	try(copy_from_user_errcode(&arg, user_arg, sizeof(arg)));
@@ -480,7 +480,7 @@ static noinline_for_stack long bch2_ioctl_dev_usage(struct bch_fs *c,
 	    arg.pad[0] ||
 	    arg.pad[1] ||
 	    arg.pad[2])
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_dev_usage_bad_flags);
 
 	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
 	errptr_try(ca);
@@ -504,7 +504,7 @@ static long bch2_ioctl_dev_usage_v2(struct bch_fs *c,
 				 struct bch_ioctl_dev_usage_v2 __user *user_arg)
 {
 	if (!test_bit(BCH_FS_started, &c->flags))
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_dev_usage_v2_not_started);
 
 	struct bch_ioctl_dev_usage_v2 arg;
 	try(copy_from_user_errcode(&arg, user_arg, sizeof(arg)));
@@ -513,7 +513,7 @@ static long bch2_ioctl_dev_usage_v2(struct bch_fs *c,
 	    arg.pad[0] ||
 	    arg.pad[1] ||
 	    arg.pad[2])
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_dev_usage_v2_bad_flags);
 
 	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
 	errptr_try(ca);
@@ -551,7 +551,7 @@ static long bch2_ioctl_read_super(struct bch_fs *c,
 
 	if ((arg.flags & ~(BCH_BY_INDEX|BCH_READ_DEV)) ||
 	    arg.pad)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_read_super_bad_flags);
 
 	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(mutex)(&c->sb_lock);
@@ -579,7 +579,7 @@ static long bch2_ioctl_disk_get_idx(struct bch_fs *c,
 		return -EPERM;
 
 	if (!dev)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_get_idx_bad_dev);
 
 	guard(rcu)();
 	for_each_online_member_rcu(c, ca)
@@ -597,7 +597,7 @@ static long bch2_ioctl_disk_resize(struct bch_fs *c,
 
 	if ((arg.flags & ~BCH_BY_INDEX) ||
 	    arg.pad)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_resize_bad_flags);
 
 	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
@@ -618,7 +618,7 @@ static long bch2_ioctl_disk_resize_v2(struct bch_fs *c,
 
 	if ((arg.flags & ~BCH_BY_INDEX) ||
 	    arg.pad)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_resize_v2_bad_flags);
 
 	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
@@ -637,10 +637,10 @@ static long bch2_ioctl_disk_resize_journal(struct bch_fs *c,
 
 	if ((arg.flags & ~BCH_BY_INDEX) ||
 	    arg.pad)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_resize_journal_bad_flags);
 
 	if (arg.nbuckets > U32_MAX)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_resize_journal_too_big);
 
 	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
@@ -657,10 +657,10 @@ static long bch2_ioctl_disk_resize_journal_v2(struct bch_fs *c,
 
 	if ((arg.flags & ~BCH_BY_INDEX) ||
 	    arg.pad)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_resize_journal_v2_bad_flags);
 
 	if (arg.nbuckets > U32_MAX)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_disk_resize_journal_v2_too_big);
 
 	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
@@ -700,7 +700,7 @@ long bch2_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 	}
 
 	if (!test_bit(BCH_FS_started, &c->flags))
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_ioctl_not_started);
 
 	switch (cmd) {
 	case BCH_IOCTL_DISK_ADD:

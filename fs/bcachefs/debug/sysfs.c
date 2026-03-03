@@ -769,7 +769,7 @@ static ssize_t sysfs_opt_show(struct bch_fs *c,
 	} else if ((opt->flags & OPT_DEVICE) && opt->get_member)  {
 		v = bch2_opt_from_sb(c->disk_sb.sb, id, ca->dev_idx);
 	} else {
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_sysfs_opt_not_found);
 	}
 
 	bch2_opt_to_text(out, c, c->disk_sb.sb, opt, v, OPT_SHOW_FULL_LIST);

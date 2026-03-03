@@ -83,7 +83,7 @@ int bch2_create_trans(struct btree_trans *trans,
 		try(bch2_inode_peek(trans, &inode_iter, new_inode, snapshot_src, BTREE_ITER_intent));
 
 		if (new_inode->bi_subvol != snapshot_src.subvol) /* Not a subvolume root? */
-			return -EINVAL;
+			return bch_err_throw(c, EINVAL_snapshot_not_subvol_root);
 
 		/*
 		 * If we're not root, we have to own the subvolume being

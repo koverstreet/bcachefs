@@ -322,7 +322,7 @@ static int bch2_journal_replay_key(struct btree_trans *trans,
 						     BIT_ULL(BCH_RECOVERY_PASS_check_topology)))) {
 			bch_err(c, "have key in journal replay for btree depth that does not exist, confused\n%s",
 				buf.buf);
-			return -EINVAL;
+			return bch_err_throw(c, EINVAL_journal_replay_key_bad_btree_depth);
 		}
 
 		if (!k->allocated) {

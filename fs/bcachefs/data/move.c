@@ -755,7 +755,7 @@ int bch2_data_job(struct bch_fs *c,
 	int ret = 0;
 
 	if (op->op >= BCH_DATA_OP_NR)
-		return -EINVAL;
+		return bch_err_throw(c, EINVAL_data_job_bad_op);
 
 	bch2_move_stats_init(stats, bch2_data_ops_strs[op->op]);
 
