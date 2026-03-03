@@ -60,9 +60,15 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 	 * Get a disk reservation before (in the nocow case) calling
 	 * into the allocator:
 	 */
-	ret = bch2_disk_reservation_get(c, &res.r, sectors, new_replicas, 0);
-	if (unlikely(ret))
+	ret = bch2_disk_reservation_get(c, &res.r, sectors, new_replicas,
+				       BCH_DISK_RESERVATION_PARTIAL);
+	if (unlikely(!res.r.sectors && new_replicas)) {
+		ret = bch_err_throw(c, ENOSPC_disk_reservation);
 		goto err_noprint;
+	}
+
+	if (new_replicas)
+		sectors = res.r.sectors / new_replicas;
 
 	bch2_bkey_buf_reassemble(&old, k);
 
