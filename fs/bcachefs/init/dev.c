@@ -1483,13 +1483,6 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			return ret;
 		}
 
-		/* mark superblock buckets as metadata - mirroring the grow path. TODO: not sure if this is necessary here */
-		ret = bch2_trans_mark_dev_sb(c, ca, BTREE_TRIGGER_transactional);
-		if (ret) {
-			prt_printf(err, "bch2_trans_mark_dev_sb() error: %s\n", bch2_err_str(ret));
-			return ret;
-		}
-
 		/* write & commit new_nbuckets */
 		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 			guard(mutex)(&c->sb_lock);
