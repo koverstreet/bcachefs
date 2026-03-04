@@ -1622,6 +1622,8 @@ static void alloc_trace_to_text(struct printbuf *out, struct bch_fs *c,
 				prt_printf(out, "dev %u", e->dev);
 			else
 				prt_str(out, "no dev");
+			if (e->new_stripe_alloc)
+				prt_str(out, " new_stripe");
 			if (e->will_retry_all_devices)
 				prt_str(out, " retry_all");
 			if (e->will_retry_target_devices)

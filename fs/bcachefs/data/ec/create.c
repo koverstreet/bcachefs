@@ -853,6 +853,8 @@ static int __new_stripe_alloc_buckets(struct btree_trans *trans,
 	struct bch_stripe *v = &s->new_stripe.key.v;
 	unsigned i, j, nr_have_parity = 0, nr_have_data = 0;
 
+	req->new_stripe_alloc = true;
+
 	BUG_ON(v->nr_blocks	!= s->nr_data + s->nr_parity);
 	BUG_ON(v->nr_redundant	!= s->nr_parity);
 
