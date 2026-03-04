@@ -982,6 +982,89 @@ int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca)
 	return ret;
 }
 
+/* device shrink */
+
+struct dev_shrink_acct {
+	u64	buckets;
+	u64	sectors;
+};
+
+int bch2_dev_shrink_alloc(struct bch_fs *c, struct bch_dev *ca,
+			  u64 new_nbuckets, u64 old_nbuckets)
+{
+	struct bpos start	= POS(ca->dev_idx, new_nbuckets);
+	struct bpos end		= POS(ca->dev_idx, old_nbuckets);
+	struct dev_shrink_acct per_type[BCH_DATA_NR] = {};
+	int ret;
+
+	/*
+	 * Clear LRU entries for buckets being removed so that we don't race
+	 * with bch2_do_invalidates() and bch2_do_discards()
+	 */
+	ret = bch2_dev_shrink_lrus(c, ca, new_nbuckets);
+	if (ret)
+		goto err;
+
+	/* First pass: count buckets and sectors of each data type being removed */
+	{
+		CLASS(btree_trans, trans)(c);
+		ret = for_each_btree_key(trans, iter, BTREE_ID_alloc, start,
+				BTREE_ITER_prefetch, k, ({
+			if (bkey_ge(k.k->p, end))
+				break;
+
+			struct bch_alloc_v4 a_convert;
+			const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &a_convert);
+
+			if (a->data_type < BCH_DATA_NR) {
+				per_type[a->data_type].buckets++;
+				per_type[a->data_type].sectors += a->dirty_sectors;
+			}
+			0;
+		}));
+		if (ret)
+			goto err;
+	}
+
+	/* Count buckets with no alloc entry as free */
+	{
+		u64 total_counted = 0;
+		for (unsigned i = 0; i < BCH_DATA_NR; i++)
+			total_counted += per_type[i].buckets;
+		per_type[BCH_DATA_free].buckets += (old_nbuckets - new_nbuckets) - total_counted;
+	}
+
+	/* Update disk accounting for removed buckets */
+	for (unsigned i = 0; i < BCH_DATA_NR; i++) {
+		if (!per_type[i].buckets)
+			continue;
+
+		u64 v[3] = { -(s64) per_type[i].buckets,
+			     -(s64) per_type[i].sectors, 0 };
+		ret = bch2_trans_commit_do(c, NULL, NULL, 0,
+			bch2_disk_accounting_mod2(trans, false, v, dev_data_type,
+						  .dev = ca->dev_idx,
+						  .data_type = i));
+		if (ret)
+			goto err;
+	}
+
+	/* Delete btree entries for removed buckets */
+	ret =	bch2_btree_delete_range(c, BTREE_ID_need_discard, start, end,
+					BTREE_TRIGGER_norun) ?:
+		bch2_btree_delete_range(c, BTREE_ID_freespace, start, end,
+					BTREE_TRIGGER_norun) ?:
+		bch2_btree_delete_range(c, BTREE_ID_backpointers, start, end,
+					BTREE_TRIGGER_norun) ?:
+		bch2_btree_delete_range(c, BTREE_ID_bucket_gens, start, end,
+					BTREE_TRIGGER_norun) ?:
+		bch2_btree_delete_range(c, BTREE_ID_alloc, start, end,
+					BTREE_TRIGGER_norun);
+err:
+	bch_err_msg_dev(ca, ret, "removing alloc info for shrink");
+	return ret;
+}
+
 /* Bucket IO clocks: */
 
 static int __bch2_bucket_io_time_reset(struct btree_trans *trans, unsigned dev,

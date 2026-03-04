@@ -10,8 +10,11 @@
 
 #include "btree/interior.h"
 
+#include "alloc/buckets.h"
+
 #include "data/ec/init.h"
 #include "data/migrate.h"
+#include "data/move.h"
 #include "data/reconcile/work.h"
 
 #include "debug/sysfs.h"
@@ -1024,6 +1027,147 @@ int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags, struct pri
 	return 0;
 }
 
+static bool bucket_has_journal(struct bch_dev *ca, u64 b)
+{
+	for (unsigned i = 0; i < ca->journal.nr; i++)
+		if (b == ca->journal.buckets[i])
+			return true;
+	return false;
+}
+
+static int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
+			   u64 nbuckets, u64 old_nbuckets,
+			   struct printbuf *err)
+{
+	u64 sector_start = bucket_to_sector(ca, nbuckets);
+	u64 sector_end	 = bucket_to_sector(ca, old_nbuckets);
+	int ret;
+
+	if (nbuckets <= ca->mi.first_bucket ||
+	    nbuckets - ca->mi.first_bucket < BCH_MIN_NR_NBUCKETS) {
+		prt_printf(err, "New size too small (minimum %u usable buckets)\n",
+			   BCH_MIN_NR_NBUCKETS);
+		return -EINVAL;
+	}
+
+	/* Check for journal buckets in the region being removed */
+	for (u64 b = nbuckets; b < old_nbuckets; b++) {
+		if (bucket_has_journal(ca, b)) {
+			prt_printf(err, "Cannot shrink: bucket %llu contains journal data\n", b);
+			return -EINVAL;
+		}
+	}
+
+	/*
+	 * Drop any superblock copies that fall in the region being removed.
+	 * The primary copies at the start of the device are preserved; backup
+	 * copies near the end are simply dropped.
+	 */
+	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+		guard(mutex)(&c->sb_lock);
+
+		struct bch_sb_layout *layout = &ca->disk_sb.sb->layout;
+		u64 sb_max_size = 1ULL << layout->sb_max_size_bits;
+		unsigned new_nr = 0;
+
+		for (unsigned i = 0; i < layout->nr_superblocks; i++) {
+			u64 offset = le64_to_cpu(layout->sb_offset[i]);
+			u64 end = offset + sb_max_size;
+
+			if (end <= sector_start)
+				layout->sb_offset[new_nr++] = layout->sb_offset[i];
+		}
+
+		if (new_nr < 1) {
+			prt_printf(err, "Cannot shrink: no superblock copies would remain\n");
+			return -EINVAL;
+		}
+
+		layout->nr_superblocks = new_nr;
+		bch2_write_super(c);
+	}
+
+	/*
+	 * From this point on, errors leave the filesystem in a recoverable
+	 * state: the superblock layout has fewer copies but nbuckets hasn't
+	 * changed yet, so the device is still its original size and the
+	 * remaining SB copies are in the preserved region.
+	 */
+
+	/*
+	 * Re-mark superblock and journal bucket locations in the alloc btree
+	 * after the layout change:
+	 */
+	ret = bch2_trans_mark_dev_sb(c, ca, BTREE_TRIGGER_transactional);
+	if (ret) {
+		prt_printf(err, "bch2_trans_mark_dev_sb() error: %s\n", bch2_err_str(ret));
+		return ret;
+	}
+
+	/* Evacuate data from the tail region */
+	ret = bch2_evacuate_phys(c, ca->dev_idx, sector_start, sector_end);
+	if (ret) {
+		prt_printf(err, "Error evacuating data: %s\n", bch2_err_str(ret));
+		return ret;
+	}
+
+	/* Verify that no movable data remains in the region being removed */
+	{
+		struct bpos start = POS(ca->dev_idx, nbuckets);
+		struct bpos end   = POS(ca->dev_idx, old_nbuckets);
+
+		CLASS(btree_trans, trans)(c);
+		ret = for_each_btree_key(trans, iter, BTREE_ID_alloc, start,
+				BTREE_ITER_prefetch, k, ({
+			if (bkey_ge(k.k->p, end))
+				break;
+
+			struct bch_alloc_v4 a_convert;
+			const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &a_convert);
+
+			if (data_type_movable(a->data_type) && a->dirty_sectors) {
+				prt_printf(err, "Bucket %llu:%llu still has %u dirty sectors (type %s) after evacuation\n",
+					   k.k->p.inode, k.k->p.offset,
+					   a->dirty_sectors,
+					   __bch2_data_types[a->data_type]);
+				ret = -EINVAL;
+				break;
+			}
+			0;
+		}));
+		if (ret)
+			return ret;
+	}
+
+	/* Clean up alloc info for removed buckets */
+	if (ca->mi.freespace_initialized) {
+		ret = bch2_dev_shrink_alloc(c, ca, nbuckets, old_nbuckets);
+		if (ret) {
+			prt_printf(err, "bch2_dev_shrink_alloc() error: %s\n", bch2_err_str(ret));
+			return ret;
+		}
+	}
+
+	/* Shrink bucket_gens and related structures */
+	ret = bch2_dev_buckets_resize(c, ca, nbuckets);
+	if (ret) {
+		prt_printf(err, "bch2_dev_buckets_resize() error: %s\n", bch2_err_str(ret));
+		return ret;
+	}
+
+	/* Update superblock with new nbuckets */
+	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+		guard(mutex)(&c->sb_lock);
+		struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
+		m->nbuckets = cpu_to_le64(nbuckets);
+
+		bch2_write_super(c);
+	}
+
+	bch2_recalc_capacity(c);
+	return 0;
+}
+
 int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets, struct printbuf *err)
 {
 	u64 old_nbuckets;
@@ -1032,10 +1176,8 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets, struct p
 	guard(rwsem_write)(&c->state_lock);
 	old_nbuckets = ca->mi.nbuckets;
 
-	if (nbuckets < ca->mi.nbuckets) {
-		prt_printf(err, "Cannot shrink yet\n");
-		return -EINVAL;
-	}
+	if (nbuckets < ca->mi.nbuckets)
+		return bch2_dev_shrink(c, ca, nbuckets, old_nbuckets, err);
 
 	bool wakeup_reconcile_pending = nbuckets > ca->mi.nbuckets;
 	struct reconcile_scan s = { .type = RECONCILE_SCAN_pending };
