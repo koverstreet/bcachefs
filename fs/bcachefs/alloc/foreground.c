@@ -467,6 +467,7 @@ static noinline void bucket_alloc_to_text(struct printbuf *out,
 	prt_printf(out, "data type\t%s\n",	bch2_data_type_str(req->data_type));
 	prt_printf(out, "will_retry_target_devices\t%u\n",	req->will_retry_target_devices);
 	prt_printf(out, "will_retry_all_devices\t%u\n",	req->will_retry_all_devices);
+	prt_printf(out, "will_retry_set_devices\t%u\n",	req->will_retry_set_devices);
 	prt_printf(out, "blocking\t%u\n", !(req->flags & BCH_WRITE_alloc_nowait));
 	prt_printf(out, "free\t%llu\n",	req->usage.buckets[BCH_DATA_free]);
 	prt_printf(out, "copygc_wait\t%llu/%lli\n",
@@ -527,7 +528,8 @@ again:
 		if (req->cl &&
 		    !(req->flags & BCH_WRITE_alloc_nowait) &&
 		    !req->will_retry_target_devices &&
-		    !req->will_retry_all_devices) {
+		    !req->will_retry_all_devices &&
+		    !req->will_retry_set_devices) {
 			if (!waiting) {
 				closure_wait(&c->allocator.freelist_wait, req->cl);
 				waiting = true;
@@ -579,7 +581,8 @@ err:
 			bch2_fs_open_buckets_to_text(&buf, c));
 	} else if (!bch2_err_matches(ret, BCH_ERR_transaction_restart) &&
 		   !req->will_retry_target_devices &&
-		   !req->will_retry_all_devices)
+		   !req->will_retry_all_devices &&
+		   !req->will_retry_set_devices)
 		event_inc_trace(c, bucket_alloc_fail, buf,
 			bucket_alloc_to_text(&buf, c, req, ob));
 
@@ -740,6 +743,9 @@ int bch2_bucket_alloc_set_trans(struct btree_trans *trans,
 			req->ca = NULL;
 			continue;
 		}
+
+		req->will_retry_set_devices =
+			i + 1 < req->devs_sorted.data + req->devs_sorted.nr;
 
 		struct open_bucket *ob = bch2_bucket_alloc_trans(trans, req);
 		if (!IS_ERR(ob))
@@ -1620,6 +1626,8 @@ static void alloc_trace_to_text(struct printbuf *out, struct bch_fs *c,
 				prt_str(out, " retry_all");
 			if (e->will_retry_target_devices)
 				prt_str(out, " retry_target");
+			if (e->will_retry_set_devices)
+				prt_str(out, " retry_set");
 			if (e->have_cl)
 				prt_str(out, " cl");
 			prt_printf(out, " -> %s\n",
@@ -1654,6 +1662,7 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_r
 		prt_printf(&buf, "ec:\t%u\n", req->ec);
 		prt_printf(&buf, "will_retry_all_devices:\t%u\n", req->will_retry_all_devices);
 		prt_printf(&buf, "will_retry_target_devices:\t%u\n", req->will_retry_target_devices);
+		prt_printf(&buf, "will_retry_set_devices:\t%u\n", req->will_retry_set_devices);
 		prt_printf(&buf, "have_cl:\t%u\n", req->cl != NULL);
 
 		if (req->devs_have && req->devs_have->nr) {

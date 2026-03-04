@@ -34,6 +34,7 @@ struct alloc_request {
 	bool			ec:1;
 	bool			will_retry_all_devices:1;
 	bool			will_retry_target_devices:1;
+	bool			will_retry_set_devices:1;
 	enum bch_watermark	watermark;
 	enum bch_write_flags	flags;
 	enum bch_data_type	data_type;
@@ -83,6 +84,7 @@ struct alloc_request {
 			u8	dev;
 			bool	will_retry_all_devices:1;
 			bool	will_retry_target_devices:1;
+			bool	will_retry_set_devices:1;
 			bool	have_cl:1;
 			s16	err;
 		}		entries[16];
@@ -99,6 +101,7 @@ static inline int alloc_trace_add(struct alloc_request *req,
 		e->dev				= dev;
 		e->will_retry_all_devices	= req->will_retry_all_devices;
 		e->will_retry_target_devices	= req->will_retry_target_devices;
+		e->will_retry_set_devices	= req->will_retry_set_devices;
 		e->have_cl			= req->cl != NULL;
 		e->err				= err;
 		req->trace.nr++;
