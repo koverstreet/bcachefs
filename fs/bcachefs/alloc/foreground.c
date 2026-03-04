@@ -1662,6 +1662,19 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_r
 			prt_newline(&buf);
 		}
 
+		prt_printf(&buf, "devs_may_alloc:\t");
+		{
+			unsigned i;
+			for_each_set_bit(i, req->devs_may_alloc.d, BCH_SB_MEMBERS_MAX)
+				prt_printf(&buf, "%u ", i);
+		}
+		prt_newline(&buf);
+
+		prt_printf(&buf, "devs_sorted:\t");
+		darray_for_each(req->devs_sorted, i)
+			prt_printf(&buf, "%u ", *i);
+		prt_newline(&buf);
+
 		alloc_trace_to_text(&buf, c, &req->trace);
 		prt_newline(&buf);
 	}
