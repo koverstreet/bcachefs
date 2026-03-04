@@ -54,12 +54,15 @@ static inline void __btree_path_get(struct btree_trans *trans, struct btree_path
 	}));
 }
 
+void __bch2_btree_path_verify_locks(struct btree_trans *, struct btree_path *);
+
 static inline bool __btree_path_put(struct btree_trans *trans, struct btree_path *path, bool intent)
 {
 	EBUG_ON(path - trans->paths >= trans->nr_paths);
 	EBUG_ON(!test_bit(path - trans->paths, trans->paths_allocated));
 	EBUG_ON(!path->ref);
 	EBUG_ON(!path->intent_ref && intent);
+	__bch2_btree_path_verify_locks(trans, path);
 
 	event_trace(trans->c, btree_path_put_ll, buf, ({
 		prt_printf(&buf, "%s: path %3zu ref %u btree ", trans->fn,

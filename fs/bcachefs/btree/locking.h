@@ -543,13 +543,13 @@ void __bch2_trans_verify_locks(struct btree_trans *);
 static inline void bch2_btree_path_verify_locks(struct btree_trans *trans,
 						struct btree_path *path)
 {
-	if (static_branch_unlikely(&bch2_debug_check_btree_locking))
+	if (true || static_branch_unlikely(&bch2_debug_check_btree_locking))
 		__bch2_btree_path_verify_locks(trans, path);
 }
 
 static inline void bch2_trans_verify_locks(struct btree_trans *trans)
 {
-	if (static_branch_unlikely(&bch2_debug_check_btree_locking))
+	if (true || static_branch_unlikely(&bch2_debug_check_btree_locking))
 		__bch2_trans_verify_locks(trans);
 }
 
