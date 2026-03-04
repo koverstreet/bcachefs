@@ -739,6 +739,11 @@ use_clean:
 		c->opts.read_only = true;
 	}
 
+	if (c->sb.features & BIT_ULL(BCH_FEATURE_no_default_sb)) {
+		bch_info(c, "filesystem does not have default superblock layout, mounting ro");
+		c->opts.read_only = true;
+	}
+
 	if (!c->opts.read_only &&
 	    (c->sb.features & BIT_ULL(BCH_FEATURE_no_alloc_info))) {
 		bch_info(c, "mounting a filesystem with no alloc info read-write; will recreate");

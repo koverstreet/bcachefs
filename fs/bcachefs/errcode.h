@@ -324,6 +324,7 @@
 	x(EROFS,			erofs_nochanges)			\
 	x(EROFS,			erofs_no_alloc_info)			\
 	x(EROFS,			erofs_filesystem_full)			\
+	x(EROFS,			erofs_sb_not_migrated)			\
 	x(EROFS,			insufficient_devices)			\
 	x(EROFS,			erofs_recovery_cancelled)		\
 	x(EROFS,			emergency_ro)				\

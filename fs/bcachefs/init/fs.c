@@ -514,6 +514,11 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 		return bch_err_throw(c, erofs_filesystem_full);
 	}
 
+	if (c->sb.features & BIT_ULL(BCH_FEATURE_no_default_sb)) {
+		bch_err(c, "cannot go rw, run bcachefs migrate-superblock first");
+		return bch_err_throw(c, erofs_sb_not_migrated);
+	}
+
 	if (test_bit(BCH_FS_rw, &c->flags))
 		return 0;
 
@@ -914,7 +919,8 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 	if (c->opts.journal_rewind)
 		c->opts.fsck = true;
 
-	if (!(c->sb.features & BIT_ULL(BCH_FEATURE_small_image)) ||
+	if (!(c->sb.features & (BIT_ULL(BCH_FEATURE_small_image)|
+			        BIT_ULL(BCH_FEATURE_no_default_sb))) ||
 	    bch2_fs_will_resize_on_mount(c))
 		set_bit(BCH_FS_may_upgrade_downgrade, &c->flags);
 
