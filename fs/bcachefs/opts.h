@@ -70,6 +70,7 @@ enum opt_flags {
 	OPT_SB_FIELD_ONE_BIAS	= BIT(10),	/* 0 means default value */
 	OPT_HIDDEN		= BIT(11),
 	OPT_MOUNT_OLD		= BIT(12),	/* May not be specified at mount time, but don't fail the mount */
+	OPT_NODOC		= BIT(13),	/* Omit from generated documentation */
 };
 
 enum opt_type {
@@ -135,7 +136,7 @@ enum fsck_err_opts {
 	  OPT_HUMAN_READABLE|OPT_MUST_BE_POW_2|OPT_SB_FIELD_SECTORS,	\
 	  OPT_UINT(512, 1U << 16),					\
 	  BCH_SB_BLOCK_SIZE,		4 << 10,			\
-	  "size",	NULL)						\
+	  "size",	"Filesystem block size")			\
 	x(btree_node_size,		u32,				\
 	  OPT_FS|OPT_FORMAT|						\
 	  OPT_HUMAN_READABLE|OPT_MUST_BE_POW_2|OPT_SB_FIELD_SECTORS,	\
@@ -156,7 +157,7 @@ enum fsck_err_opts {
 	  OPT_FS|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,			\
 	  OPT_UINT(1, BCH_REPLICAS_MAX + 1),				\
 	  BCH_SB_META_REPLICAS_WANT,	1,				\
-	  "#",		"Number of metadata replicas")			\
+	  "#",		"Number of metadata replicas (journal and btree)")\
 	x(data_replicas,		u8,				\
 	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,	\
 	  OPT_UINT(1, BCH_REPLICAS_MAX + 1),				\
@@ -172,27 +173,27 @@ enum fsck_err_opts {
 	  OPT_FS|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,			\
 	  OPT_STR(__bch2_csum_opts),					\
 	  BCH_SB_META_CSUM_TYPE,	BCH_CSUM_OPT_crc32c,		\
-	  NULL,		NULL)						\
+	  NULL,		"Checksum type for metadata writes")		\
 	x(data_checksum,		u8,				\
 	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,	\
 	  OPT_STR(__bch2_csum_opts),					\
 	  BCH_SB_DATA_CSUM_TYPE,	BCH_CSUM_OPT_crc32c,		\
-	  NULL,		NULL)						\
+	  NULL,		"Checksum type for data writes")		\
 	x(checksum_err_retry_nr,	u8,				\
 	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\
 	  OPT_UINT(0, 32),						\
 	  BCH_SB_CSUM_ERR_RETRY_NR,	3,				\
-	  NULL,		NULL)						\
+	  NULL,		"Number of read retries on checksum error")	\
 	x(compression,			u8,				\
 	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,	\
 	  OPT_FN(bch2_opt_compression),					\
 	  BCH_SB_COMPRESSION_TYPE,	BCH_COMPRESSION_OPT_none,	\
-	  NULL,		NULL)						\
+	  NULL,		"Compression type for data writes")		\
 	x(background_compression,	u8,				\
 	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,	\
 	  OPT_FN(bch2_opt_compression),					\
 	  BCH_SB_BACKGROUND_COMPRESSION_TYPE,BCH_COMPRESSION_OPT_none,	\
-	  NULL,		NULL)						\
+	  NULL,		"Compression type for background moves")	\
 	x(str_hash,			u8,				\
 	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\
 	  OPT_STR(bch2_str_hash_opts),					\
@@ -244,7 +245,7 @@ enum fsck_err_opts {
 	  BCH_SB_SHARD_INUMS_NBITS,	0,				\
 	  NULL,		"Shard new inode numbers by CPU id")		\
 	x(btree_node_mem_ptr_optimization, u8,				\
-	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
+	  OPT_FS|OPT_MOUNT|OPT_RUNTIME|OPT_NODOC,			\
 	  OPT_BOOL(),							\
 	  BCH2_NO_SB_OPT,		true,				\
 	  NULL,		"Stash pointer to in memory btree node in btree ptr")\
@@ -348,12 +349,12 @@ enum fsck_err_opts {
 	  BCH_SB_WRITEBACK_TIMEOUT,	0,				\
 	  NULL,		"Delay seconds before writing back dirty data, overriding vm sysctls")\
 	x(move_bytes_in_flight,		u32,				\
-	  OPT_HUMAN_READABLE|OPT_FS|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_HUMAN_READABLE|OPT_FS|OPT_MOUNT|OPT_RUNTIME|OPT_NODOC,	\
 	  OPT_UINT(1024, U32_MAX),					\
 	  BCH2_NO_SB_OPT,		64U << 20,			\
 	  NULL,		"Maximum Amount of IO to keep in flight by the move path")\
 	x(move_ios_in_flight,		u32,				\
-	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
+	  OPT_FS|OPT_MOUNT|OPT_RUNTIME|OPT_NODOC,			\
 	  OPT_UINT(1, 1024),						\
 	  BCH2_NO_SB_OPT,		64,				\
 	  NULL,		"Maximum number of IOs to keep in flight by the move path")\
@@ -424,12 +425,12 @@ enum fsck_err_opts {
 	  BCH2_NO_SB_OPT,		false,				\
 	  NULL,		"Only read the journal, skip the rest of recovery")\
 	x(journal_transaction_names,	u8,				\
-	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\
+	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME|OPT_NODOC,		\
 	  OPT_BOOL(),							\
 	  BCH_SB_JOURNAL_TRANSACTION_NAMES, true,			\
 	  NULL,		"Log transaction function names in journal")	\
 	x(allocator_stuck_timeout,	u16,				\
-	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\
+	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME|OPT_NODOC,		\
 	  OPT_UINT(0, U16_MAX),						\
 	  BCH_SB_ALLOCATOR_STUCK_TIMEOUT, 30,				\
 	  NULL,		"Default timeout in seconds for stuck allocator messages")\
@@ -439,7 +440,7 @@ enum fsck_err_opts {
 	  BCH2_NO_SB_OPT,		false,				\
 	  NULL,		"Don't open device in exclusive mode")		\
 	x(direct_io,			u8,				\
-	  OPT_FS|OPT_MOUNT,						\
+	  OPT_FS|OPT_MOUNT|OPT_NODOC,					\
 	  OPT_BOOL(),							\
 	  BCH2_NO_SB_OPT,			true,			\
 	  NULL,		"Use O_DIRECT (userspace only)")		\
@@ -475,7 +476,7 @@ enum fsck_err_opts {
 	  BCH2_NO_SB_OPT,		false,				\
 	  NULL,		"Pointer to a struct stdio_redirect")		\
 	x(project,			u8,				\
-	  OPT_INODE,							\
+	  OPT_INODE|OPT_NODOC,						\
 	  OPT_BOOL(),							\
 	  BCH2_NO_SB_OPT,		false,				\
 	  NULL,		NULL)						\
@@ -487,7 +488,7 @@ enum fsck_err_opts {
 			"Snapshots and reflink will still caused writes to be COW\n"\
 			"Implicitly disables data checksumming, compression and encryption")\
 	x(nocow_enabled,		u8,				\
-	  OPT_FS|OPT_MOUNT,						\
+	  OPT_FS|OPT_MOUNT|OPT_NODOC,					\
 	  OPT_BOOL(),							\
 	  BCH2_NO_SB_OPT,			true,			\
 	  NULL,		"Enable nocow mode: enables runtime locking in\n"\
@@ -516,7 +517,7 @@ enum fsck_err_opts {
 	  NULL,		"Enable automatic snapshot deletion: disable for debugging, or to\n"\
 			"quiet the system when doing performance testing\n")\
 	x(no_data_io,			u8,				\
-	  OPT_MOUNT,							\
+	  OPT_MOUNT|OPT_NODOC,						\
 	  OPT_BOOL(),							\
 	  BCH2_NO_SB_OPT,		false,				\
 	  NULL,		"Skip submit_bio() for data reads and writes, "	\
@@ -553,7 +554,7 @@ enum fsck_err_opts {
 	  BCH_MEMBER_ROTATIONAL,	false,				\
 	  NULL,		"Disk is rotational; different behaviour for reconcile")\
 	x(btree_node_prefetch,		u8,				\
-	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
+	  OPT_FS|OPT_MOUNT|OPT_RUNTIME|OPT_NODOC,			\
 	  OPT_BOOL(),							\
 	  BCH2_NO_SB_OPT,		true,				\
 	  NULL,		"BTREE_ITER_prefetch causes btree nodes to be\n"\

@@ -38,7 +38,7 @@ struct bch2_metadata_version {
 };
 
 static const struct bch2_metadata_version bch2_metadata_versions[] = {
-#define x(n, v) {		\
+#define x(n, v, ...) {		\
 	.version = v,				\
 	.name = #n,				\
 },
@@ -108,7 +108,7 @@ int bch2_set_version_incompat(struct bch_fs *c, enum bcachefs_metadata_version v
 }
 
 const char * const bch2_sb_fields[] = {
-#define x(name, nr)	#name,
+#define x(name, nr, ...)	#name,
 	BCH_SB_FIELDS()
 #undef x
 	NULL
@@ -1344,7 +1344,7 @@ static const struct bch_sb_field_ops bch_sb_field_ops_ext = {
 };
 
 static const struct bch_sb_field_ops *bch2_sb_field_ops[] = {
-#define x(f, nr)					\
+#define x(f, nr, ...)					\
 	[BCH_SB_FIELD_##f] = &bch_sb_field_ops_##f,
 	BCH_SB_FIELDS()
 #undef x

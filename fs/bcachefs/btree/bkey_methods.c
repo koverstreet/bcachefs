@@ -194,13 +194,13 @@ static u64 bch2_key_types_allowed[] = {
 		BIT_ULL(KEY_TYPE_deleted)|
 		BIT_ULL(KEY_TYPE_btree_ptr)|
 		BIT_ULL(KEY_TYPE_btree_ptr_v2),
-#define x(name, nr, flags, keys)	[BKEY_TYPE_##name] = BIT_ULL(KEY_TYPE_deleted)|keys,
+#define x(name, nr, flags, keys, ...)	[BKEY_TYPE_##name] = BIT_ULL(KEY_TYPE_deleted)|keys,
 	BCH_BTREE_IDS()
 #undef x
 };
 
 static const enum bch_bkey_type_flags bch2_bkey_type_flags[] = {
-#define x(name, nr, flags)	[KEY_TYPE_##name] = flags,
+#define x(name, nr, flags, ...)	[KEY_TYPE_##name] = flags,
 	BCH_BKEY_TYPES()
 #undef x
 };

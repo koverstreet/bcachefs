@@ -387,44 +387,93 @@ enum bch_bkey_type_flags {
  * - WHITEOUT: for hash table btrees
  */
 #define BCH_BKEY_TYPES()						\
-	x(deleted,		0,	0)				\
-	x(whiteout,		1,	0)				\
-	x(error,		2,	0)				\
-	x(cookie,		3,	0)				\
-	x(hash_whiteout,	4,	BKEY_TYPE_strict_btree_checks)	\
-	x(btree_ptr,		5,	BKEY_TYPE_strict_btree_checks)	\
-	x(extent,		6,	BKEY_TYPE_strict_btree_checks)	\
-	x(reservation,		7,	BKEY_TYPE_strict_btree_checks)	\
-	x(inode,		8,	BKEY_TYPE_strict_btree_checks)	\
-	x(inode_generation,	9,	BKEY_TYPE_strict_btree_checks)	\
-	x(dirent,		10,	BKEY_TYPE_strict_btree_checks)	\
-	x(xattr,		11,	BKEY_TYPE_strict_btree_checks)	\
-	x(alloc,		12,	BKEY_TYPE_strict_btree_checks)	\
-	x(quota,		13,	BKEY_TYPE_strict_btree_checks)	\
-	x(stripe,		14,	BKEY_TYPE_strict_btree_checks)	\
-	x(reflink_p,		15,	BKEY_TYPE_strict_btree_checks)	\
-	x(reflink_v,		16,	BKEY_TYPE_strict_btree_checks)	\
-	x(inline_data,		17,	BKEY_TYPE_strict_btree_checks)	\
-	x(btree_ptr_v2,		18,	BKEY_TYPE_strict_btree_checks)	\
-	x(indirect_inline_data,	19,	BKEY_TYPE_strict_btree_checks)	\
-	x(alloc_v2,		20,	BKEY_TYPE_strict_btree_checks)	\
-	x(subvolume,		21,	BKEY_TYPE_strict_btree_checks)	\
-	x(snapshot,		22,	BKEY_TYPE_strict_btree_checks)	\
-	x(inode_v2,		23,	BKEY_TYPE_strict_btree_checks)	\
-	x(alloc_v3,		24,	BKEY_TYPE_strict_btree_checks)	\
-	x(set,			25,	0)				\
-	x(lru,			26,	BKEY_TYPE_strict_btree_checks)	\
-	x(alloc_v4,		27,	BKEY_TYPE_strict_btree_checks)	\
-	x(backpointer,		28,	BKEY_TYPE_strict_btree_checks)	\
-	x(inode_v3,		29,	BKEY_TYPE_strict_btree_checks)	\
-	x(bucket_gens,		30,	BKEY_TYPE_strict_btree_checks)	\
-	x(snapshot_tree,	31,	BKEY_TYPE_strict_btree_checks)	\
-	x(logged_op_truncate,	32,	BKEY_TYPE_strict_btree_checks)	\
-	x(logged_op_finsert,	33,	BKEY_TYPE_strict_btree_checks)	\
-	x(accounting,		34,	BKEY_TYPE_strict_btree_checks)	\
-	x(inode_alloc_cursor,	35,	BKEY_TYPE_strict_btree_checks)	\
-	x(extent_whiteout,	36,	BKEY_TYPE_strict_btree_checks)	\
-	x(logged_op_stripe_update, 37,	BKEY_TYPE_strict_btree_checks)
+	x(deleted,		0,	0,				\
+	  "Transient during btree updates; inserting a deleted key "	\
+	  "removes any existing key at that position. "			\
+	  "Stripped during btree node writes.")				\
+	x(whiteout,		1,	0,				\
+	  "Blocks visibility of ancestor snapshot versions of a key")	\
+	x(error,		2,	0,				\
+	  "Marks an extent as containing unrecoverable errors")		\
+	x(cookie,		3,	0,				\
+	  "Used by reconcile to track option changes via "		\
+	  "incrementing version numbers in the reconcile_scan btree")	\
+	x(hash_whiteout,	4,	BKEY_TYPE_strict_btree_checks,	\
+	  "Whiteout for hash table btrees (dirents, xattrs) that "	\
+	  "preserves hash chain integrity")				\
+	x(btree_ptr,		5,	BKEY_TYPE_strict_btree_checks,	\
+	  "Btree node pointer (v1, legacy)")				\
+	x(extent,		6,	BKEY_TYPE_strict_btree_checks,	\
+	  "File data extent with device pointers, checksums, and "	\
+	  "optional compression metadata")				\
+	x(reservation,		7,	BKEY_TYPE_strict_btree_checks,	\
+	  "Disk space reservation for a file region")			\
+	x(inode,		8,	BKEY_TYPE_strict_btree_checks,	\
+	  "Inode metadata (v1, legacy)")				\
+	x(inode_generation,	9,	BKEY_TYPE_strict_btree_checks,	\
+	  "Tracks generation numbers for deleted inodes")		\
+	x(dirent,		10,	BKEY_TYPE_strict_btree_checks,	\
+	  "Directory entry with name hash, inode number, and type")	\
+	x(xattr,		11,	BKEY_TYPE_strict_btree_checks,	\
+	  "Extended attribute with name hash and value")		\
+	x(alloc,		12,	BKEY_TYPE_strict_btree_checks,	\
+	  "Bucket allocation metadata (v1, legacy)")			\
+	x(quota,		13,	BKEY_TYPE_strict_btree_checks,	\
+	  "Quota counters for a user, group, or project")		\
+	x(stripe,		14,	BKEY_TYPE_strict_btree_checks,	\
+	  "Erasure code stripe metadata with parity pointers")		\
+	x(reflink_p,		15,	BKEY_TYPE_strict_btree_checks,	\
+	  "Pointer from the extents btree to an indirect extent "	\
+	  "in the reflink btree")					\
+	x(reflink_v,		16,	BKEY_TYPE_strict_btree_checks,	\
+	  "Indirect extent with refcount in the reflink btree")		\
+	x(inline_data,		17,	BKEY_TYPE_strict_btree_checks,	\
+	  "Small file data stored inline in the btree")			\
+	x(btree_ptr_v2,		18,	BKEY_TYPE_strict_btree_checks,	\
+	  "Btree node pointer (v2) with sequence number and "		\
+	  "min_key for more efficient traversal")			\
+	x(indirect_inline_data,	19,	BKEY_TYPE_strict_btree_checks,	\
+	  "Reflinked inline data with refcount")			\
+	x(alloc_v2,		20,	BKEY_TYPE_strict_btree_checks,	\
+	  "Bucket allocation metadata (v2, legacy)")			\
+	x(subvolume,		21,	BKEY_TYPE_strict_btree_checks,	\
+	  "Subvolume metadata with root inode and snapshot ID")		\
+	x(snapshot,		22,	BKEY_TYPE_strict_btree_checks,	\
+	  "Snapshot tree node with parent, children, and "		\
+	  "subvolume references")					\
+	x(inode_v2,		23,	BKEY_TYPE_strict_btree_checks,	\
+	  "Inode metadata (v2) with journal sequence number")		\
+	x(alloc_v3,		24,	BKEY_TYPE_strict_btree_checks,	\
+	  "Bucket allocation metadata (v3, legacy)")			\
+	x(set,			25,	0,				\
+	  "Empty value; presence of the key is the information")	\
+	x(lru,			26,	BKEY_TYPE_strict_btree_checks,	\
+	  "LRU tracking entry for cache eviction")			\
+	x(alloc_v4,		27,	BKEY_TYPE_strict_btree_checks,	\
+	  "Bucket allocation metadata (v4, current)")			\
+	x(backpointer,		28,	BKEY_TYPE_strict_btree_checks,	\
+	  "Reverse pointer from a bucket back to the extent "		\
+	  "referencing it")						\
+	x(inode_v3,		29,	BKEY_TYPE_strict_btree_checks,	\
+	  "Inode metadata (v3, current) with compact encoding")		\
+	x(bucket_gens,		30,	BKEY_TYPE_strict_btree_checks,	\
+	  "Packed bucket generation numbers (256 per key)")		\
+	x(snapshot_tree,	31,	BKEY_TYPE_strict_btree_checks,	\
+	  "Root entry for a snapshot tree structure")			\
+	x(logged_op_truncate,	32,	BKEY_TYPE_strict_btree_checks,	\
+	  "Logged truncate operation for crash recovery")		\
+	x(logged_op_finsert,	33,	BKEY_TYPE_strict_btree_checks,	\
+	  "Logged file insert/collapse operation for crash recovery")	\
+	x(accounting,		34,	BKEY_TYPE_strict_btree_checks,	\
+	  "Disk accounting delta "					\
+	  "(replicas, compression, device usage)")			\
+	x(inode_alloc_cursor,	35,	BKEY_TYPE_strict_btree_checks,	\
+	  "Per-CPU inode number allocation cursor")			\
+	x(extent_whiteout,	36,	BKEY_TYPE_strict_btree_checks,	\
+	  "Whiteout specific to the extents btree, blocking "		\
+	  "visibility of ancestor snapshot extent versions")		\
+	x(logged_op_stripe_update, 37,	BKEY_TYPE_strict_btree_checks,	\
+	  "Logged stripe creation/update operation for crash recovery")
 
 enum bch_bkey_type {
 #define x(name, nr, ...) KEY_TYPE_##name	= nr,
@@ -505,24 +554,49 @@ struct bch_sb_field {
 	__le32			type;
 };
 
-#define BCH_SB_FIELDS()				\
-	x(journal,			0)	\
-	x(members_v1,			1)	\
-	x(crypt,			2)	\
-	x(replicas_v0,			3)	\
-	x(quota,			4)	\
-	x(disk_groups,			5)	\
-	x(clean,			6)	\
-	x(replicas,			7)	\
-	x(journal_seq_blacklist,	8)	\
-	x(journal_v2,			9)	\
-	x(counters,			10)	\
-	x(members_v2,			11)	\
-	x(errors,			12)	\
-	x(ext,				13)	\
-	x(downgrade,			14)	\
-	x(recovery_passes,		15)	\
-	x(extent_type_u64s,		16)
+#define BCH_SB_FIELDS()							\
+	x(journal,		0,						\
+	  "Journal bucket list for this device")				\
+	x(members_v1,		1,						\
+	  "Member device list (v1)")					\
+	x(crypt,		2,						\
+	  "Encryption key and KDF settings")				\
+	x(replicas_v0,		3,						\
+	  "Replica entries (v0)")					\
+	x(quota,		4,						\
+	  "Quota timelimit and warnlimit fields")			\
+	x(disk_groups,		5,						\
+	  "Device label strings and label path tree structure")		\
+	x(clean,		6,						\
+	  "Clean shutdown: btree roots and usage counters, "		\
+	  "allowing journal replay to be skipped")			\
+	x(replicas,		7,						\
+	  "Replica entries: lists of devices with "			\
+	  "extents replicated across them")				\
+	x(journal_seq_blacklist,	8,				\
+	  "Blacklisted journal sequence numbers")			\
+	x(journal_v2,		9,						\
+	  "Journal bucket list (v2)")					\
+	x(counters,		10,						\
+	  "Persistent counters: IO statistics, error counts, "		\
+	  "and cumulative metrics across mounts")			\
+	x(members_v2,		11,						\
+	  "Member device list (v2)")					\
+	x(errors,		12,						\
+	  "Persistent error log: records errors detected "		\
+	  "during operation or fsck so they survive "			\
+	  "across mounts")						\
+	x(ext,			13,						\
+	  "Extended superblock: required recovery passes, "		\
+	  "accumulated silenced errors, and other flags")		\
+	x(downgrade,		14,						\
+	  "Minimum on-disk format version for safe "			\
+	  "downgrade, with required recovery passes")			\
+	x(recovery_passes,	15,						\
+	  "Tracks which recovery passes have been run "			\
+	  "successfully")						\
+	x(extent_type_u64s,	16,						\
+	  "Per-extent-type size limits")
 
 enum btree_id_flags {
 	BTREE_IS_extents	= BIT(0),
@@ -544,101 +618,129 @@ enum btree_id_flags {
 	  BIT_ULL(KEY_TYPE_extent)|						\
 	  BIT_ULL(KEY_TYPE_reservation)|					\
 	  BIT_ULL(KEY_TYPE_reflink_p)|						\
-	  BIT_ULL(KEY_TYPE_inline_data))					\
+	  BIT_ULL(KEY_TYPE_inline_data),					\
+	  "File data extent pointers and reservations")				\
 	x(inodes,		1,						\
 	  BTREE_IS_snapshots,							\
 	  BIT_ULL(KEY_TYPE_whiteout)|						\
 	  BIT_ULL(KEY_TYPE_inode)|						\
 	  BIT_ULL(KEY_TYPE_inode_v2)|						\
 	  BIT_ULL(KEY_TYPE_inode_v3)|						\
-	  BIT_ULL(KEY_TYPE_inode_generation))					\
+	  BIT_ULL(KEY_TYPE_inode_generation),					\
+	  "Inode metadata")							\
 	x(dirents,		2,						\
 	  BTREE_IS_snapshots,							\
 	  BIT_ULL(KEY_TYPE_whiteout)|						\
 	  BIT_ULL(KEY_TYPE_hash_whiteout)|					\
-	  BIT_ULL(KEY_TYPE_dirent))						\
+	  BIT_ULL(KEY_TYPE_dirent),						\
+	  "Directory entries")							\
 	x(xattrs,		3,						\
 	  BTREE_IS_snapshots,							\
 	  BIT_ULL(KEY_TYPE_whiteout)|						\
 	  BIT_ULL(KEY_TYPE_cookie)|						\
 	  BIT_ULL(KEY_TYPE_hash_whiteout)|					\
-	  BIT_ULL(KEY_TYPE_xattr))						\
+	  BIT_ULL(KEY_TYPE_xattr),						\
+	  "Extended attributes")						\
 	x(alloc,		4,	0,					\
 	  BIT_ULL(KEY_TYPE_alloc)|						\
 	  BIT_ULL(KEY_TYPE_alloc_v2)|						\
 	  BIT_ULL(KEY_TYPE_alloc_v3)|						\
-	  BIT_ULL(KEY_TYPE_alloc_v4))						\
+	  BIT_ULL(KEY_TYPE_alloc_v4),						\
+	  "Bucket allocation state")						\
 	x(quotas,		5,	0,					\
-	  BIT_ULL(KEY_TYPE_quota))						\
+	  BIT_ULL(KEY_TYPE_quota),						\
+	  "User, group, and project quota counters")				\
 	x(stripes,		6,						\
 	  BTREE_IS_data,							\
-	  BIT_ULL(KEY_TYPE_stripe))						\
+	  BIT_ULL(KEY_TYPE_stripe),						\
+	  "Erasure coding stripe descriptors")					\
 	x(reflink,		7,						\
 	  BTREE_IS_extents|							\
 	  BTREE_IS_data,							\
 	  BIT_ULL(KEY_TYPE_reflink_v)|						\
 	  BIT_ULL(KEY_TYPE_indirect_inline_data)|				\
-	  BIT_ULL(KEY_TYPE_error))						\
+	  BIT_ULL(KEY_TYPE_error),						\
+	  "Reflink shared extent pointers")					\
 	x(subvolumes,		8,	0,					\
-	  BIT_ULL(KEY_TYPE_subvolume))						\
+	  BIT_ULL(KEY_TYPE_subvolume),						\
+	  "Subvolume metadata")							\
 	x(snapshots,		9,	0,					\
-	  BIT_ULL(KEY_TYPE_snapshot))						\
+	  BIT_ULL(KEY_TYPE_snapshot),						\
+	  "Snapshot tree structure")						\
 	x(lru,			10,						\
 	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_set))						\
+	  BIT_ULL(KEY_TYPE_set),						\
+	  "Least-recently-used tracking for cache eviction")			\
 	x(freespace,		11,						\
 	  BTREE_IS_extents,							\
-	  BIT_ULL(KEY_TYPE_set))						\
+	  BIT_ULL(KEY_TYPE_set),						\
+	  "Free space index")							\
 	x(need_discard,		12,	0,					\
-	  BIT_ULL(KEY_TYPE_set))						\
+	  BIT_ULL(KEY_TYPE_set),						\
+	  "Buckets waiting for discard/TRIM")					\
 	x(backpointers,		13,						\
 	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_backpointer))					\
+	  BIT_ULL(KEY_TYPE_backpointer),					\
+	  "Reverse pointers from data extents back to btree nodes")		\
 	x(bucket_gens,		14,	0,					\
-	  BIT_ULL(KEY_TYPE_bucket_gens))					\
+	  BIT_ULL(KEY_TYPE_bucket_gens),					\
+	  "Bucket generation numbers for stale pointer detection")		\
 	x(snapshot_trees,	15,	0,					\
-	  BIT_ULL(KEY_TYPE_snapshot_tree))					\
+	  BIT_ULL(KEY_TYPE_snapshot_tree),					\
+	  "Snapshot tree roots")						\
 	x(deleted_inodes,	16,						\
 	  BTREE_IS_snapshot_field|						\
 	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_set))						\
+	  BIT_ULL(KEY_TYPE_set),						\
+	  "Inodes pending deletion")						\
 	x(logged_ops,		17,	0,					\
 	  BIT_ULL(KEY_TYPE_logged_op_truncate)|					\
 	  BIT_ULL(KEY_TYPE_logged_op_finsert)|					\
 	  BIT_ULL(KEY_TYPE_logged_op_stripe_update)|				\
-	  BIT_ULL(KEY_TYPE_inode_alloc_cursor))					\
+	  BIT_ULL(KEY_TYPE_inode_alloc_cursor),					\
+	  "In-progress logged operations for crash recovery")			\
 	x(reconcile_work,	18,						\
 	  BTREE_IS_snapshot_field|						\
 	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_set)|BIT_ULL(KEY_TYPE_cookie))			\
+	  BIT_ULL(KEY_TYPE_set)|BIT_ULL(KEY_TYPE_cookie),			\
+	  "Reconcile work items")				\
 	x(subvolume_children,	19,	0,					\
-	  BIT_ULL(KEY_TYPE_set))						\
+	  BIT_ULL(KEY_TYPE_set),						\
+	  "Subvolume parent-child relationships")				\
 	x(accounting,		20,						\
 	  BTREE_IS_snapshot_field|						\
 	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_accounting))						\
+	  BIT_ULL(KEY_TYPE_accounting),						\
+	  "Space accounting by replicas and disk groups")			\
 	x(reconcile_hipri,	21,						\
 	  BTREE_IS_snapshot_field|						\
 	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_set))						\
+	  BIT_ULL(KEY_TYPE_set),						\
+	  "High-priority reconcile work items")					\
 	x(reconcile_pending,	22,						\
 	  BTREE_IS_snapshot_field|						\
 	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_set))						\
+	  BIT_ULL(KEY_TYPE_set),						\
+	  "Pending reconcile work items")					\
 	x(reconcile_scan,	23,	0,					\
 	  BIT_ULL(KEY_TYPE_cookie)|						\
-	  BIT_ULL(KEY_TYPE_backpointer))					\
+	  BIT_ULL(KEY_TYPE_backpointer),					\
+	  "Reconcile scan state")						\
 	x(reconcile_work_phys,	24,						\
 	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_set))						\
+	  BIT_ULL(KEY_TYPE_set),						\
+	  "Physical reconcile work items")					\
 	x(reconcile_hipri_phys,	25,						\
 	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_set))						\
+	  BIT_ULL(KEY_TYPE_set),						\
+	  "Physical high-priority reconcile work items")			\
 	x(bucket_to_stripe,	26,	0,					\
-	  BIT_ULL(KEY_TYPE_set))						\
+	  BIT_ULL(KEY_TYPE_set),						\
+	  "Bucket to stripe mapping for erasure coding")			\
 	x(stripe_backpointers,	27,						\
 	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_backpointer))					\
+	  BIT_ULL(KEY_TYPE_backpointer),					\
+	  "Stripe backpointers")					\
 
 enum btree_id {
 #define x(name, nr, ...) BTREE_ID_##name = nr,
@@ -670,7 +772,7 @@ enum btree_id {
 #include "snapshots/format.h"
 
 enum bch_sb_field_type {
-#define x(f, nr)	BCH_SB_FIELD_##f = nr,
+#define x(f, nr, ...)	BCH_SB_FIELD_##f = nr,
 	BCH_SB_FIELDS()
 #undef x
 	BCH_SB_FIELD_NR
@@ -798,67 +900,149 @@ struct bch_sb_field_ext {
  * field 2:		BCH_VERSION(major, minor)
  */
 #define BCH_METADATA_VERSIONS()						\
-	x(bkey_renumber,		BCH_VERSION(0, 10))		\
-	x(inode_btree_change,		BCH_VERSION(0, 11))		\
-	x(snapshot,			BCH_VERSION(0, 12))		\
-	x(inode_backpointers,		BCH_VERSION(0, 13))		\
-	x(btree_ptr_sectors_written,	BCH_VERSION(0, 14))		\
-	x(snapshot_2,			BCH_VERSION(0, 15))		\
-	x(reflink_p_fix,		BCH_VERSION(0, 16))		\
-	x(subvol_dirent,		BCH_VERSION(0, 17))		\
-	x(inode_v2,			BCH_VERSION(0, 18))		\
-	x(freespace,			BCH_VERSION(0, 19))		\
-	x(alloc_v4,			BCH_VERSION(0, 20))		\
-	x(new_data_types,		BCH_VERSION(0, 21))		\
-	x(backpointers,			BCH_VERSION(0, 22))		\
-	x(inode_v3,			BCH_VERSION(0, 23))		\
-	x(unwritten_extents,		BCH_VERSION(0, 24))		\
-	x(bucket_gens,			BCH_VERSION(0, 25))		\
-	x(lru_v2,			BCH_VERSION(0, 26))		\
-	x(fragmentation_lru,		BCH_VERSION(0, 27))		\
-	x(no_bps_in_alloc_keys,		BCH_VERSION(0, 28))		\
-	x(snapshot_trees,		BCH_VERSION(0, 29))		\
-	x(major_minor,			BCH_VERSION(1,  0))		\
-	x(snapshot_skiplists,		BCH_VERSION(1,  1))		\
-	x(deleted_inodes,		BCH_VERSION(1,  2))		\
-	x(rebalance_work,		BCH_VERSION(1,  3))		\
-	x(member_seq,			BCH_VERSION(1,  4))		\
-	x(subvolume_fs_parent,		BCH_VERSION(1,  5))		\
-	x(btree_subvolume_children,	BCH_VERSION(1,  6))		\
-	x(mi_btree_bitmap,		BCH_VERSION(1,  7))		\
-	x(bucket_stripe_sectors,	BCH_VERSION(1,  8))		\
-	x(disk_accounting_v2,		BCH_VERSION(1,  9))		\
-	x(disk_accounting_v3,		BCH_VERSION(1, 10))		\
-	x(disk_accounting_inum,		BCH_VERSION(1, 11))		\
-	x(rebalance_work_acct_fix,	BCH_VERSION(1, 12))		\
-	x(inode_has_child_snapshots,	BCH_VERSION(1, 13))		\
-	x(backpointer_bucket_gen,	BCH_VERSION(1, 14))		\
-	x(disk_accounting_big_endian,	BCH_VERSION(1, 15))		\
-	x(reflink_p_may_update_opts,	BCH_VERSION(1, 16))		\
-	x(inode_depth,			BCH_VERSION(1, 17))		\
-	x(persistent_inode_cursors,	BCH_VERSION(1, 18))		\
-	x(autofix_errors,		BCH_VERSION(1, 19))		\
-	x(directory_size,		BCH_VERSION(1, 20))		\
-	x(cached_backpointers,		BCH_VERSION(1, 21))		\
-	x(stripe_backpointers,		BCH_VERSION(1, 22))		\
-	x(stripe_lru,			BCH_VERSION(1, 23))		\
-	x(casefolding,			BCH_VERSION(1, 24))		\
-	x(extent_flags,			BCH_VERSION(1, 25))		\
-	x(snapshot_deletion_v2,		BCH_VERSION(1, 26))		\
-	x(fast_device_removal,		BCH_VERSION(1, 27))		\
-	x(inode_has_case_insensitive,	BCH_VERSION(1, 28))		\
-	x(extent_snapshot_whiteouts,	BCH_VERSION(1, 29))		\
-	x(31bit_dirent_offset,		BCH_VERSION(1, 30))		\
-	x(btree_node_accounting,	BCH_VERSION(1, 31))		\
-	x(sb_field_extent_type_u64s,	BCH_VERSION(1, 32))		\
-	x(reconcile,			BCH_VERSION(1, 33))		\
-	x(extented_key_type_error,	BCH_VERSION(1, 34))		\
-	x(bucket_stripe_index,		BCH_VERSION(1, 35))		\
-	x(no_sb_user_data_replicas,	BCH_VERSION(1, 36))
+	x(bkey_renumber,		BCH_VERSION(0, 10),		\
+	  "Renumbered bkey type values",			"2018-11")	\
+	x(inode_btree_change,		BCH_VERSION(0, 11),		\
+	  "Swapped inode/offset fields in bpos "			\
+	  "for better locality",				"2020-03")	\
+	x(snapshot,			BCH_VERSION(0, 12),		\
+	  "Snapshot support: snapshot field in bpos, "			\
+	  "KEY_TYPE_snapshot, KEY_TYPE_subvolume",		"2021-03")	\
+	x(inode_backpointers,		BCH_VERSION(0, 13),		\
+	  "Backpointers from extents to inodes",		"2021-04")	\
+	x(btree_ptr_sectors_written,	BCH_VERSION(0, 14),		\
+	  "sectors_written field in btree_ptr_v2 for "			\
+	  "partial write tracking",				"2021-07")	\
+	x(snapshot_2,			BCH_VERSION(0, 15),		\
+	  "Snapshot fixes: subvolume root inode tracking",	"2021-09")	\
+	x(reflink_p_fix,		BCH_VERSION(0, 16),		\
+	  "Fixed reflink pointer refcount handling",		"2021-10")	\
+	x(subvol_dirent,		BCH_VERSION(0, 17),		\
+	  "Linked subvolumes to directory entries",		"2021-10")	\
+	x(inode_v2,			BCH_VERSION(0, 18),		\
+	  "KEY_TYPE_inode_v2 with improved field layout",	"2021-11")	\
+	x(freespace,			BCH_VERSION(0, 19),		\
+	  "Freespace btree for faster allocation",		"2022-03")	\
+	x(alloc_v4,			BCH_VERSION(0, 20),		\
+	  "KEY_TYPE_alloc_v4 with comprehensive "			\
+	  "allocation metadata",				"2022-03")	\
+	x(new_data_types,		BCH_VERSION(0, 21),		\
+	  "Refined data type classifications "				\
+	  "in the allocator",					"2022-04")	\
+	x(backpointers,			BCH_VERSION(0, 22),		\
+	  "Backpointers btree mapping physical locations "		\
+	  "back to logical extents",				"2022-06")	\
+	x(inode_v3,			BCH_VERSION(0, 23),		\
+	  "KEY_TYPE_inode_v3 with compact encoding",		"2022-10")	\
+	x(unwritten_extents,		BCH_VERSION(0, 24),		\
+	  "Preallocated extents that read as zeros",		"2022-11")	\
+	x(bucket_gens,			BCH_VERSION(0, 25),		\
+	  "bucket_gens btree for stale pointer detection",	"2022-12")	\
+	x(lru_v2,			BCH_VERSION(0, 26),		\
+	  "Improved LRU tracking for cache eviction",		"2022-12")	\
+	x(fragmentation_lru,		BCH_VERSION(0, 27),		\
+	  "LRU tracking for fragmented extents",		"2023-02")	\
+	x(no_bps_in_alloc_keys,		BCH_VERSION(0, 28),		\
+	  "Backpointers moved fully to backpointers btree",	"2023-03")	\
+	x(snapshot_trees,		BCH_VERSION(0, 29),		\
+	  "snapshot_trees btree for hierarchical management",	"2023-05")	\
+	x(major_minor,			BCH_VERSION(1,  0),		\
+	  "Major version bump: format stabilization, "			\
+	  "major.minor versioning scheme",			"2023-07")	\
+	x(snapshot_skiplists,		BCH_VERSION(1,  1),		\
+	  "Skiplist structure for O(log n) ancestor queries",	"2023-07")	\
+	x(deleted_inodes,		BCH_VERSION(1,  2),		\
+	  "deleted_inodes btree for crash-safe unlink",		"2023-08")	\
+	x(rebalance_work,		BCH_VERSION(1,  3),		\
+	  "Background rebalance work tracking",			"2023-10")	\
+	x(member_seq,			BCH_VERSION(1,  4),		\
+	  "Sequence numbers on member devices for "			\
+	  "stale superblock detection",				"2023-12")	\
+	x(subvolume_fs_parent,		BCH_VERSION(1,  5),		\
+	  "fs_parent field on subvolumes "				\
+	  "for path resolution",				"2024-02")	\
+	x(btree_subvolume_children,	BCH_VERSION(1,  6),		\
+	  "subvolume_children btree for "				\
+	  "parent-child lookups",				"2024-02")	\
+	x(mi_btree_bitmap,		BCH_VERSION(1,  7),		\
+	  "Per-device bitmap tracking which "				\
+	  "btrees have data",					"2024-04")	\
+	x(bucket_stripe_sectors,	BCH_VERSION(1,  8),		\
+	  "Stripe sector tracking in alloc keys "			\
+	  "for erasure coding",					"2024-06")	\
+	x(disk_accounting_v2,		BCH_VERSION(1,  9),		\
+	  "On-disk accounting btree for persistent "			\
+	  "space accounting",					"2024-01")	\
+	x(disk_accounting_v3,		BCH_VERSION(1, 10),		\
+	  "Accounting key validation and "				\
+	  "endianness fixes",					"2024-08")	\
+	x(disk_accounting_inum,		BCH_VERSION(1, 11),		\
+	  "Per-inode space accounting",				"2024-08")	\
+	x(rebalance_work_acct_fix,	BCH_VERSION(1, 12),		\
+	  "Fixed rebalance work accounting bugs",		"2024-08")	\
+	x(inode_has_child_snapshots,	BCH_VERSION(1, 13),		\
+	  "Flag on inodes indicating child "				\
+	  "snapshot data exists",				"2024-10")	\
+	x(backpointer_bucket_gen,	BCH_VERSION(1, 14),		\
+	  "Bucket generation in backpointers for "			\
+	  "stale detection without alloc key reads",		"2024-11")	\
+	x(disk_accounting_big_endian,	BCH_VERSION(1, 15),		\
+	  "Big-endian disk accounting fix",			"2024-11")	\
+	x(reflink_p_may_update_opts,	BCH_VERSION(1, 16),		\
+	  "reflink_p keys carry independently "				\
+	  "updatable extent options",				"2024-12")	\
+	x(inode_depth,			BCH_VERSION(1, 17),		\
+	  "Directory depth tracking in inodes",			"2024-12")	\
+	x(persistent_inode_cursors,	BCH_VERSION(1, 18),		\
+	  "Persistent inode number allocation cursors",		"2024-12")	\
+	x(autofix_errors,		BCH_VERSION(1, 19),		\
+	  "Default error action changed to fix_safe",		"2024-12")	\
+	x(directory_size,		BCH_VERSION(1, 20),		\
+	  "Directory size tracking in inode metadata",		"2025-01")	\
+	x(cached_backpointers,		BCH_VERSION(1, 21),		\
+	  "In-memory backpointer caching "				\
+	  "for faster lookups",					"2025-02")	\
+	x(stripe_backpointers,		BCH_VERSION(1, 22),		\
+	  "Backpointers for erasure-coded stripes",		"2025-02")	\
+	x(stripe_lru,			BCH_VERSION(1, 23),		\
+	  "LRU tracking for stripe cache eviction",		"2025-02")	\
+	x(casefolding,			BCH_VERSION(1, 24),		\
+	  "Case-insensitive filename support "				\
+	  "with per-directory flags",				"2025-02")	\
+	x(extent_flags,			BCH_VERSION(1, 25),		\
+	  "Flags field on extent keys for "				\
+	  "extent-level metadata",				"2025-03")	\
+	x(snapshot_deletion_v2,		BCH_VERSION(1, 26),		\
+	  "Improved snapshot deletion with better "			\
+	  "interior node handling",				"2025-05")	\
+	x(fast_device_removal,		BCH_VERSION(1, 27),		\
+	  "Fast device removal when no stale pointers exist",	"2025-05")	\
+	x(inode_has_case_insensitive,	BCH_VERSION(1, 28),		\
+	  "Casefold flag on inodes for directory handling",	"2025-05")	\
+	x(extent_snapshot_whiteouts,	BCH_VERSION(1, 29),		\
+	  "KEY_TYPE_extent_whiteout for efficient "			\
+	  "snapshot extent deletion",				"2025-08")	\
+	x(31bit_dirent_offset,		BCH_VERSION(1, 30),		\
+	  "Extended directory entry offset to 31 bits",		"2025-08")	\
+	x(btree_node_accounting,	BCH_VERSION(1, 31),		\
+	  "Per-btree-node space accounting",			"2025-09")	\
+	x(sb_field_extent_type_u64s,	BCH_VERSION(1, 32),		\
+	  "Superblock field for extent type size limits",	"2025-11")	\
+	x(reconcile,			BCH_VERSION(1, 33),		\
+	  "Reconcile system for IO options inheritance "		\
+	  "and background data movement",			"2025-11")	\
+	x(extented_key_type_error,	BCH_VERSION(1, 34),		\
+	  "KEY_TYPE_error changed to zero-byte value",		"2025-12")	\
+	x(bucket_stripe_index,		BCH_VERSION(1, 35),		\
+	  "Stripe index in alloc keys for efficient "			\
+	  "stripe-bucket lookups",				"2026-01")	\
+	x(no_sb_user_data_replicas,	BCH_VERSION(1, 36),		\
+	  "Removed redundant user_data replicas "			\
+	  "from superblock",					"2026-01")
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,
-#define x(t, n)	bcachefs_metadata_version_##t = n,
+#define x(t, n, ...)	bcachefs_metadata_version_##t = n,
 	BCH_METADATA_VERSIONS()
 #undef x
 	bcachefs_metadata_version_max
@@ -1144,14 +1328,23 @@ enum bch_version_upgrade_opts {
 
 #define BCH_BKEY_PTRS_MAX		16U
 
-#define BCH_ERROR_ACTIONS()		\
-	x(continue,		0)	\
-	x(fix_safe,		1)	\
-	x(panic,		2)	\
-	x(ro,			3)
+#define BCH_ERROR_ACTIONS()						\
+	x(continue,		0,					\
+	  "Log the error but continue normal operation "		\
+	  "without attempting repair")					\
+	x(fix_safe,		1,					\
+	  "Automatically repair errors that are safe to fix "		\
+	  "without user confirmation. Unsafe errors cause "		\
+	  "emergency read-only with a message to run fsck.")		\
+	x(panic,		2,					\
+	  "Immediately halt the entire machine, printing a "	\
+	  "backtrace on the system console")				\
+	x(ro,			3,					\
+	  "Emergency read-only, immediately halting any "		\
+	  "changes to the filesystem on disk")
 
 enum bch_error_actions {
-#define x(t, n) BCH_ON_ERROR_##t = n,
+#define x(t, n, ...) BCH_ON_ERROR_##t = n,
 	BCH_ERROR_ACTIONS()
 #undef x
 	BCH_ON_ERROR_NR
@@ -1316,24 +1509,43 @@ static inline __u64 __bset_magic(struct bch_sb *sb)
 
 #define JSET_KEYS_U64s	(sizeof(struct jset_entry) / sizeof(__u64))
 
-#define BCH_JSET_ENTRY_TYPES()			\
-	x(btree_keys,		0)		\
-	x(btree_root,		1)		\
-	x(prio_ptrs,		2)		\
-	x(blacklist,		3)		\
-	x(blacklist_v2,		4)		\
-	x(usage,		5)		\
-	x(data_usage,		6)		\
-	x(clock,		7)		\
-	x(dev_usage,		8)		\
-	x(log,			9)		\
-	x(overwrite,		10)		\
-	x(write_buffer_keys,	11)		\
-	x(datetime,		12)		\
-	x(log_bkey,		13)
+#define BCH_JSET_ENTRY_TYPES()						\
+	x(btree_keys,		0,					\
+	  "Btree key updates")						\
+	x(btree_root,		1,					\
+	  "Btree root pointers, recorded every journal write")		\
+	x(prio_ptrs,		2,					\
+	  "Legacy, no longer used")					\
+	x(blacklist,		3,					\
+	  "Blacklist a single journal sequence number")			\
+	x(blacklist_v2,		4,					\
+	  "Blacklist a range of journal sequence numbers")		\
+	x(usage,		5,					\
+	  "Maximum key version for encryption nonce "			\
+	  "derivation")							\
+	x(data_usage,		6,					\
+	  "Legacy: usage accounting moved to accounting btree")		\
+	x(clock,		7,					\
+	  "IO clock: total reads and writes in sectors "		\
+	  "since filesystem creation")					\
+	x(dev_usage,		8,					\
+	  "Legacy: per-device usage moved to accounting btree")		\
+	x(log,			9,					\
+	  "Free-form log message for fsck actions "			\
+	  "and diagnostic events")					\
+	x(overwrite,		10,					\
+	  "Old value being overwritten, for debugging "			\
+	  "and journal_rewind")						\
+	x(write_buffer_keys,	11,					\
+	  "Write buffer keys, transformed to btree_keys "		\
+	  "before writing to disk")					\
+	x(datetime,		12,					\
+	  "Wall clock time at journal write")				\
+	x(log_bkey,		13,					\
+	  "Structured log entry containing a btree key")
 
 enum bch_jset_entry_type {
-#define x(f, nr)	BCH_JSET_ENTRY_##f	= nr,
+#define x(f, nr, ...)	BCH_JSET_ENTRY_##f	= nr,
 	BCH_JSET_ENTRY_TYPES()
 #undef x
 	BCH_JSET_ENTRY_NR

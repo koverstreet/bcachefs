@@ -20,7 +20,7 @@ const char * const bch2_counter_names[] = {
 };
 
 const enum bch_counters_flags bch2_counter_flags_map[] = {
-#define x(t, n, flags) [BCH_COUNTER_##t] = flags,
+#define x(t, n, flags, ...) [BCH_COUNTER_##t] = flags,
 	BCH_PERSISTENT_COUNTERS()
 #undef x
 };

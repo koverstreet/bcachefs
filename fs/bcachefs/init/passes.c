@@ -258,11 +258,11 @@ struct recovery_pass {
 };
 
 static const struct recovery_pass recovery_passes[] = {
-#define x(_fn, _id, _when, _depends)	{	\
-	.fn		= bch2_##_fn,		\
-	.name		= #_fn,			\
-	.when		= _when,		\
-	.depends	= _depends,		\
+#define x(_fn, _id, _when, _depends, ...)	{	\
+	.fn		= bch2_##_fn,			\
+	.name		= #_fn,				\
+	.when		= _when,			\
+	.depends	= _depends,			\
 },
 	BCH_RECOVERY_PASSES()
 #undef x

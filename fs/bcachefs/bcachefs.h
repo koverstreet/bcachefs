@@ -301,42 +301,91 @@ do {									\
 BCH_DEBUG_PARAMS_ALL()
 #undef BCH_DEBUG_PARAM
 
-#define BCH_TIME_STATS()			\
-	x(btree_node_mem_alloc)			\
-	x(btree_node_split)			\
-	x(btree_node_compact)			\
-	x(btree_node_merge)			\
-	x(btree_node_sort)			\
-	x(btree_node_read)			\
-	x(btree_node_read_done)			\
-	x(btree_node_write)			\
-	x(btree_interior_update_foreground)	\
-	x(btree_interior_update_total)		\
-	x(btree_write_buffer_flush)		\
-	x(btree_gc)				\
-	x(data_write)				\
-	x(data_read)				\
-	x(data_promote)				\
-	x(journal_flush_write)			\
-	x(journal_noflush_write)		\
-	x(journal_flush_seq)			\
-	x(journal_pin_flush_btree)		\
-	x(journal_pin_flush_key_cache)		\
-	x(journal_pin_flush_other)		\
-	x(blocked_journal_low_on_space)		\
-	x(blocked_journal_low_on_pin)		\
-	x(blocked_journal_max_in_flight)	\
-	x(blocked_journal_max_open)		\
-	x(blocked_journal_write_buffer_flush)	\
-	x(blocked_key_cache_flush)		\
-	x(blocked_allocate)			\
-	x(blocked_allocate_open_bucket)		\
-	x(blocked_write_buffer_full)		\
-	x(blocked_writeback_throttle)		\
-	x(nocow_lock_contended)
+#define BCH_TIME_STATS()						\
+	x(btree_node_mem_alloc,						\
+	  "Allocate memory in the btree node cache "			\
+	  "for a new btree node")					\
+	x(btree_node_split,						\
+	  "Split a full btree node into two new nodes")			\
+	x(btree_node_compact,						\
+	  "Compact a full btree node on disk")				\
+	x(btree_node_merge,						\
+	  "Merge two adjacent btree nodes")				\
+	x(btree_node_sort,						\
+	  "Sort and resort entire btree nodes in memory, "		\
+	  "after reading from disk or for compacting")			\
+	x(btree_node_read,						\
+	  "Read btree nodes from disk")					\
+	x(btree_node_read_done,						\
+	  "Post-read btree node processing")				\
+	x(btree_node_write,						\
+	  "Write btree node to disk")					\
+	x(btree_interior_update_foreground,				\
+	  "Foreground time for topology-changing btree updates "	\
+	  "(splits, compactions, merges); roughly corresponds "		\
+	  "to lock held time")						\
+	x(btree_interior_update_total,					\
+	  "Total time for topology-changing btree updates, "		\
+	  "including background transaction phase after "		\
+	  "new nodes are written")					\
+	x(btree_write_buffer_flush,					\
+	  "Flush btree write buffer to btree")				\
+	x(btree_gc,							\
+	  "GC pass recalculating oldest generation numbers")		\
+	x(data_write,							\
+	  "Core write path: allocate space, compress, "			\
+	  "encrypt, checksum, issue writes, "				\
+	  "update extents btree")					\
+	x(data_read,							\
+	  "Core read path: look up extents btree, "			\
+	  "issue reads, checksum, decompress, decrypt")			\
+	x(data_promote,							\
+	  "Promote: write a cached copy of an extent "			\
+	  "to promote_target on read")					\
+	x(journal_flush_write,						\
+	  "Flush journal writes: cache flush to devices "		\
+	  "then FUA journal writes")					\
+	x(journal_noflush_write,					\
+	  "Non-flush journal writes, without cache "			\
+	  "flushes or FUA")						\
+	x(journal_flush_seq,						\
+	  "Flush a journal sequence number to disk "			\
+	  "for sync, fsync, and bucket reuse")				\
+	x(journal_pin_flush_btree,					\
+	  "Flush btree journal pins")					\
+	x(journal_pin_flush_key_cache,					\
+	  "Flush key cache journal pins")				\
+	x(journal_pin_flush_other,					\
+	  "Flush other journal pins")					\
+	x(blocked_journal_low_on_space,					\
+	  "Blocked: journal reclaim not keeping up "			\
+	  "with reclaiming space")					\
+	x(blocked_journal_low_on_pin,					\
+	  "Blocked: journal pins (dirty btree nodes, "			\
+	  "key cache entries) not flushed fast enough")			\
+	x(blocked_journal_max_in_flight,				\
+	  "Blocked: too many journal writes in flight")			\
+	x(blocked_journal_max_open,					\
+	  "Blocked: too many journal entries open, "			\
+	  "not yet closed for writing")					\
+	x(blocked_journal_write_buffer_flush,				\
+	  "Blocked: waiting for write buffer flush")			\
+	x(blocked_key_cache_flush,					\
+	  "Blocked: waiting for key cache flush")			\
+	x(blocked_allocate,						\
+	  "Blocked: bucket allocation waiting, copygc or "		\
+	  "allocator thread not keeping up")				\
+	x(blocked_allocate_open_bucket,					\
+	  "Blocked: all open bucket handles in use")			\
+	x(blocked_write_buffer_full,					\
+	  "Blocked: write buffer full")					\
+	x(blocked_writeback_throttle,					\
+	  "Blocked: writeback throttle")				\
+	x(nocow_lock_contended,						\
+	  "Nocow lock contention")
 
 enum bch_time_stats {
-#define x(name) BCH_TIME_##name,
+#define x(name, ...) BCH_TIME_##name,
 	BCH_TIME_STATS()
 #undef x
 	BCH_TIME_STAT_NR
