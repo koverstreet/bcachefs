@@ -676,7 +676,8 @@ int bch2_opts_hooks_pre_set(struct bch_fs *);
 void bch2_opt_hook_post_set(struct bch_fs *, struct bch_dev *, u64, enum bch_opt_id, u64);
 
 int bch2_parse_one_mount_opt(struct bch_fs *, struct bch_opts *,
-			     struct printbuf *, const char *, const char *);
+			     struct printbuf *, const char *, const char *,
+			     struct printbuf *);
 int bch2_parse_mount_opts(struct bch_fs *, struct bch_opts *, struct printbuf *,
 			  char *, bool);
 

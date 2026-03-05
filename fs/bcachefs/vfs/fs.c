@@ -2391,11 +2391,13 @@ static int bch2_fs_parse_param(struct fs_context *fc,
 	if (fc->root)
 		c = fc->root->d_sb->s_fs_info;
 
+	CLASS(printbuf, err)();
 	int ret = bch2_parse_one_mount_opt(c, &opts->opts,
 					   &opts->parse_later, param->key,
-					   param->string);
+					   param->string,
+					   &err);
 	if (ret)
-		pr_err("Error parsing option %s: %s", param->key, bch2_err_str(ret));
+		pr_err("Error parsing option %s", err.buf);
 
 	return bch2_err_class(ret);
 }

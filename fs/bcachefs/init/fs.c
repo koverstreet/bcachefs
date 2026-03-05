@@ -1149,16 +1149,59 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 		guard(mutex)(&c->sb_lock);
 		try(bch2_sb_to_fs(c, sb));
+
+		sb = c->disk_sb.sb;
+
+		/* Ensure sb_field_ext and members_v2 exist at current size
+		 * before reading opts, so ext opts see a fully-sized field: */
+		struct bch_sb_field_ext *ext =
+		    bch2_sb_field_get_minsize(&c->disk_sb, ext,
+				sizeof(struct bch_sb_field_ext) / sizeof(u64));
+		if (!ext)
+			return bch_err_throw(c, ENOSPC_sb);
+
+		sb = c->disk_sb.sb;
+
+		try(bch2_sb_members_v2_init(c));
+
+		/* Compat: */
+		if (!BCH_SB_JOURNAL_FLUSH_DELAY(sb))
+			SET_BCH_SB_JOURNAL_FLUSH_DELAY(sb, 1000);
+		if (!BCH_SB_JOURNAL_RECLAIM_DELAY(sb))
+			SET_BCH_SB_JOURNAL_RECLAIM_DELAY(sb, 1000);
+
+		if (!BCH_SB_VERSION_UPGRADE_COMPLETE(sb))
+			SET_BCH_SB_VERSION_UPGRADE_COMPLETE(sb, le16_to_cpu(sb->version));
+
+		if (le16_to_cpu(sb->version) <= bcachefs_metadata_version_disk_accounting_v2 &&
+		    !BCH_SB_ALLOCATOR_STUCK_TIMEOUT(sb))
+			SET_BCH_SB_ALLOCATOR_STUCK_TIMEOUT(sb, 30);
+
+		if (le16_to_cpu(sb->version) <= bcachefs_metadata_version_disk_accounting_v2)
+			SET_BCH_SB_PROMOTE_WHOLE_EXTENTS(sb, true);
+
+		if (!BCH_SB_WRITE_ERROR_TIMEOUT(sb))
+			SET_BCH_SB_WRITE_ERROR_TIMEOUT(sb, 30);
+
+		if (le16_to_cpu(sb->version) <= bcachefs_metadata_version_extent_flags &&
+		    !BCH_SB_CSUM_ERR_RETRY_NR(sb))
+			SET_BCH_SB_CSUM_ERR_RETRY_NR(sb, 3);
+
+		for (unsigned opt_id = 0; opt_id < bch2_opts_nr; opt_id++) {
+			const struct bch_option *opt = bch2_opt_table + opt_id;
+
+			if (opt->get_sb || opt->get_ext) {
+				u64 v = bch2_opt_from_sb(sb, opt_id, -1);
+
+				CLASS(printbuf, err)();
+				int ret = bch2_opt_validate(opt, v, &err);
+				if (ret) {
+					prt_printf(out, "Invalid superblock option %s", err.buf);
+					return ret;
+				}
+			}
+		}
 	}
-
-	/* Compat: */
-	if (le16_to_cpu(sb->version) <= bcachefs_metadata_version_inode_v2 &&
-	    !BCH_SB_JOURNAL_FLUSH_DELAY(sb))
-		SET_BCH_SB_JOURNAL_FLUSH_DELAY(sb, 1000);
-
-	if (le16_to_cpu(sb->version) <= bcachefs_metadata_version_inode_v2 &&
-	    !BCH_SB_JOURNAL_RECLAIM_DELAY(sb))
-		SET_BCH_SB_JOURNAL_RECLAIM_DELAY(sb, 100);
 
 	c->opts = bch2_opts_default;
 	try(bch2_opts_from_sb(&c->opts, sb));
@@ -1241,15 +1284,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	bch2_journal_entry_res_resize(&c->journal,
 			&c->clock_journal_res,
 			(sizeof(struct jset_entry_clock) / sizeof(u64)) * 2);
-
-	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
-		guard(mutex)(&c->sb_lock);
-		if (!bch2_sb_field_get_minsize(&c->disk_sb, ext,
-				sizeof(struct bch_sb_field_ext) / sizeof(u64)))
-			return bch_err_throw(c, ENOSPC_sb);
-
-		try(bch2_sb_members_v2_init(c));
-	}
 
 	scoped_guard(rwsem_write, &c->state_lock)
 		darray_for_each(*sbs, sb)

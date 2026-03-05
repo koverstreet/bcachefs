@@ -390,8 +390,6 @@ static int bch2_sb_compatible(struct bch_sb *sb, struct printbuf *out)
 int bch2_sb_validate(struct bch_sb *sb, struct bch_opts *opts, u64 read_offset,
 		     enum bch_validate_flags flags, struct printbuf *out)
 {
-	enum bch_opt_id opt_id;
-
 	try(bch2_sb_compatible(sb, out));
 
 	if (!opts->no_version_check) {
@@ -475,52 +473,10 @@ int bch2_sb_validate(struct bch_sb *sb, struct bch_opts *opts, u64 read_offset,
 	if (sb->nr_devices > 1)
 		SET_BCH_SB_MULTI_DEVICE(sb, true);
 
-	if (!flags) {
-		/*
-		 * Been seeing a bug where these are getting inexplicably
-		 * zeroed, so we're now validating them, but we have to be
-		 * careful not to preven people's filesystems from mounting:
-		 */
-		if (!BCH_SB_JOURNAL_FLUSH_DELAY(sb))
-			SET_BCH_SB_JOURNAL_FLUSH_DELAY(sb, 1000);
-		if (!BCH_SB_JOURNAL_RECLAIM_DELAY(sb))
-			SET_BCH_SB_JOURNAL_RECLAIM_DELAY(sb, 1000);
-
-		if (!BCH_SB_VERSION_UPGRADE_COMPLETE(sb))
-			SET_BCH_SB_VERSION_UPGRADE_COMPLETE(sb, le16_to_cpu(sb->version));
-
-		if (le16_to_cpu(sb->version) <= bcachefs_metadata_version_disk_accounting_v2 &&
-		    !BCH_SB_ALLOCATOR_STUCK_TIMEOUT(sb))
-			SET_BCH_SB_ALLOCATOR_STUCK_TIMEOUT(sb, 30);
-
-		if (le16_to_cpu(sb->version) <= bcachefs_metadata_version_disk_accounting_v2)
-			SET_BCH_SB_PROMOTE_WHOLE_EXTENTS(sb, true);
-
-		if (!BCH_SB_WRITE_ERROR_TIMEOUT(sb))
-			SET_BCH_SB_WRITE_ERROR_TIMEOUT(sb, 30);
-
-		if (le16_to_cpu(sb->version) <= bcachefs_metadata_version_extent_flags &&
-		    !BCH_SB_CSUM_ERR_RETRY_NR(sb))
-			SET_BCH_SB_CSUM_ERR_RETRY_NR(sb, 3);
-	}
-
 #ifdef __KERNEL__
 	if (!BCH_SB_SHARD_INUMS_NBITS(sb))
 		SET_BCH_SB_SHARD_INUMS_NBITS(sb, ilog2(roundup_pow_of_two(num_online_cpus())));
 #endif
-
-	for (opt_id = 0; opt_id < bch2_opts_nr; opt_id++) {
-		const struct bch_option *opt = bch2_opt_table + opt_id;
-
-		if (opt->get_sb || opt->get_ext) {
-			u64 v = bch2_opt_from_sb(sb, opt_id, -1);
-
-			prt_printf(out, "Invalid option ");
-			try(bch2_opt_validate(opt, v, out));
-
-			printbuf_reset(out);
-		}
-	}
 
 	/* validate layout */
 	try(validate_sb_layout(&sb->layout, out));

@@ -687,7 +687,8 @@ void bch2_opt_hook_post_set(struct bch_fs *c, struct bch_dev *ca, u64 inum,
 
 int bch2_parse_one_mount_opt(struct bch_fs *c, struct bch_opts *opts,
 			     struct printbuf *parse_later,
-			     const char *name, const char *val)
+			     const char *name, const char *val,
+			     struct printbuf *err)
 {
 	u64 v;
 	int ret, id;
@@ -721,8 +722,7 @@ int bch2_parse_one_mount_opt(struct bch_fs *c, struct bch_opts *opts,
 	    !IS_ENABLED(CONFIG_BCACHEFS_QUOTA))
 		return -BCH_ERR_option_name;
 
-	CLASS(printbuf, err)();
-	ret = bch2_opt_parse(c, &bch2_opt_table[id], val, &v, &err);
+	ret = bch2_opt_parse(c, &bch2_opt_table[id], val, &v, err);
 	if (ret == -BCH_ERR_option_needs_open_fs) {
 		if (parse_later) {
 			prt_printf(parse_later, "%s=%s,", name, val);
@@ -734,7 +734,7 @@ int bch2_parse_one_mount_opt(struct bch_fs *c, struct bch_opts *opts,
 	}
 
 	if (ret < 0)
-		return -BCH_ERR_option_value;
+		return ret;
 
 	if (bch2_opt_table[id].flags & OPT_MOUNT_OLD) {
 		pr_err("option %s may no longer be specified at mount time; set via sysfs opts dir",
@@ -752,10 +752,6 @@ int bch2_parse_mount_opts(struct bch_fs *c, struct bch_opts *opts,
 			  struct printbuf *parse_later, char *options,
 			  bool ignore_unknown)
 {
-	char *copied_opts, *copied_opts_start;
-	char *opt, *name, *val;
-	int ret = 0;
-
 	if (!options)
 		return 0;
 
@@ -766,28 +762,31 @@ int bch2_parse_mount_opts(struct bch_fs *c, struct bch_opts *opts,
 	if (*options == ',')
 		options++;
 
-	copied_opts = kstrdup(options, GFP_KERNEL);
+	char *copied_opts __free(kfree) = kstrdup(options, GFP_KERNEL);
 	if (!copied_opts)
 		return -ENOMEM;
-	copied_opts_start = copied_opts;
 
-	while ((opt = strsep(&copied_opts, ",")) != NULL) {
+	char *optstr = copied_opts;
+	char *opt, *name, *val;
+	int ret = 0;
+
+	while ((opt = strsep(&optstr, ",")) != NULL) {
 		if (!*opt)
 			continue;
 
 		name	= strsep(&opt, "=");
 		val	= opt;
 
-		ret = bch2_parse_one_mount_opt(c, opts, parse_later, name, val);
+		CLASS(printbuf, err)();
+		ret = bch2_parse_one_mount_opt(c, opts, parse_later, name, val, &err);
 		if (ret == -BCH_ERR_option_name && ignore_unknown)
 			ret = 0;
 		if (ret) {
-			pr_err("Error parsing option %s: %s", name, bch2_err_str(ret));
+			pr_err("Error parsing option %s", err.buf);
 			break;
 		}
 	}
 
-	kfree(copied_opts_start);
 	return ret;
 }
 
