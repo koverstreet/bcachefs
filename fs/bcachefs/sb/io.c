@@ -512,7 +512,7 @@ int bch2_sb_validate(struct bch_sb *sb, struct bch_opts *opts, u64 read_offset,
 	for (opt_id = 0; opt_id < bch2_opts_nr; opt_id++) {
 		const struct bch_option *opt = bch2_opt_table + opt_id;
 
-		if (opt->get_sb) {
+		if (opt->get_sb || opt->get_ext) {
 			u64 v = bch2_opt_from_sb(sb, opt_id, -1);
 
 			prt_printf(out, "Invalid option ");
@@ -1528,7 +1528,7 @@ void bch2_sb_to_text(struct printbuf *out,
 		for (id = 0; id < bch2_opts_nr; id++) {
 			const struct bch_option *opt = bch2_opt_table + id;
 
-			if (opt->get_sb) {
+			if (opt->get_sb || opt->get_ext) {
 				u64 v = bch2_opt_from_sb(sb, id, -1);
 
 				prt_printf(out, "%s:\t", opt->attr.name);

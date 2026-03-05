@@ -33,6 +33,8 @@
 
 #include <linux/kthread.h>
 #include <linux/math64.h>
+#include <linux/pagemap.h>
+#include <linux/sizes.h>
 #include <linux/random.h>
 #include <linux/rculist.h>
 #include <linux/rcupdate.h>
@@ -1013,20 +1015,28 @@ int bch2_bucket_io_time_reset(struct btree_trans *trans, unsigned dev,
 
 /* Startup/shutdown (ro/rw): */
 
+unsigned long bch2_fs_ra_pages(struct bch_fs *c)
+{
+	unsigned long ra_pages = 0;
+	unsigned long ra_per_dev = (c->opts.dev_readahead ?: SZ_2M) >> PAGE_SHIFT;
+
+	scoped_guard(rcu)
+		for_each_member_device_rcu(c, ca, NULL)
+			if (READ_ONCE(ca->disk_sb.bdev))
+				ra_pages += ra_per_dev;
+
+	return ra_pages ?: VM_READAHEAD_PAGES;
+}
+
 void bch2_recalc_capacity(struct bch_fs *c)
 {
 	u64 capacity = 0, reserved_sectors = 0, gc_reserve;
 	unsigned bucket_size_max = 0;
-	unsigned long ra_pages = 0;
 
 	lockdep_assert_held(&c->state_lock);
 
 	guard(rcu)();
 	for_each_member_device_rcu(c, ca, NULL) {
-		struct block_device *bdev = READ_ONCE(ca->disk_sb.bdev);
-		if (bdev)
-			ra_pages += bdev->bd_disk->bdi->ra_pages;
-
 		if (ca->mi.state != BCH_MEMBER_STATE_rw)
 			continue;
 
@@ -1070,7 +1080,7 @@ void bch2_recalc_capacity(struct bch_fs *c)
 					ca->mi.bucket_size);
 	}
 
-	bch2_set_ra_pages(c, ra_pages);
+	bch2_set_ra_pages(c, bch2_fs_ra_pages(c));
 
 	gc_reserve = c->opts.gc_reserve_bytes
 		? c->opts.gc_reserve_bytes >> 9

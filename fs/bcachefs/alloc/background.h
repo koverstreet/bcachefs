@@ -331,6 +331,7 @@ int bch2_trigger_alloc(struct btree_trans *, enum btree_id, unsigned,
 int bch2_dev_remove_alloc(struct bch_fs *, struct bch_dev *);
 
 void bch2_recalc_capacity(struct bch_fs *);
+unsigned long bch2_fs_ra_pages(struct bch_fs *);
 u64 bch2_min_rw_member_capacity(struct bch_fs *);
 
 void bch2_dev_allocator_set_rw(struct bch_fs *, struct bch_dev *, bool);

@@ -4,6 +4,7 @@
 
 #include <linux/bug.h>
 #include <linux/log2.h>
+#include <linux/sizes.h>
 #include <linux/string.h>
 #include <linux/sysfs.h>
 #include "bcachefs_format.h"
@@ -558,7 +559,13 @@ enum fsck_err_opts {
 	  OPT_BOOL(),							\
 	  BCH2_NO_SB_OPT,		true,				\
 	  NULL,		"BTREE_ITER_prefetch causes btree nodes to be\n"\
-	  " prefetched sequentially")
+	  " prefetched sequentially")				\
+	x(dev_readahead,		u64,				\
+	  OPT_FS|OPT_MOUNT|OPT_RUNTIME|OPT_HUMAN_READABLE|OPT_SB_FIELD_SECTORS,\
+	  OPT_UINT(0, SZ_256M),						\
+	  BCH_SB_EXT_DEV_READAHEAD,	SZ_2M,				\
+	  "size",	"Per-device readahead window size; summed across\n"\
+	  " all devices to set the filesystem readahead")
 
 enum bch_opt_id {
 #define x(_name, ...)	Opt_##_name,
@@ -629,6 +636,9 @@ struct bch_option {
 
 	u64			(*get_member)(const struct bch_member *);
 	void			(*set_member)(struct bch_member *, u64);
+
+	u64			(*get_ext)(const struct bch_sb_field_ext *);
+	void			(*set_ext)(struct bch_sb_field_ext *, u64);
 
 };
 

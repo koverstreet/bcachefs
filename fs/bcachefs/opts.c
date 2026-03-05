@@ -244,11 +244,15 @@ typedef u64 (*sb_opt_get_fn)(const struct bch_sb *);
 typedef void (*sb_opt_set_fn)(struct bch_sb *, u64);
 typedef u64 (*member_opt_get_fn)(const struct bch_member *);
 typedef void (*member_opt_set_fn)(struct bch_member *, u64);
+typedef u64 (*ext_opt_get_fn)(const struct bch_sb_field_ext *);
+typedef void (*ext_opt_set_fn)(struct bch_sb_field_ext *, u64);
 
 __maybe_unused static const sb_opt_get_fn	BCH2_NO_SB_OPT = NULL;
 __maybe_unused static const sb_opt_set_fn	SET_BCH2_NO_SB_OPT = NULL;
 __maybe_unused static const member_opt_get_fn	BCH2_NO_MEMBER_OPT = NULL;
 __maybe_unused static const member_opt_set_fn	SET_BCH2_NO_MEMBER_OPT = NULL;
+__maybe_unused static const ext_opt_get_fn	BCH2_NO_EXT_OPT = NULL;
+__maybe_unused static const ext_opt_set_fn	SET_BCH2_NO_EXT_OPT = NULL;
 
 #define type_compatible_or_null(_p, _type)				\
 	__builtin_choose_expr(						\
@@ -279,6 +283,8 @@ const struct bch_option bch2_opt_table[] = {
 		.set_sb		= type_compatible_or_null(SET_##_sb_opt,*SET_BCH2_NO_SB_OPT),	\
 		.get_member	= type_compatible_or_null(_sb_opt,	*BCH2_NO_MEMBER_OPT),	\
 		.set_member	= type_compatible_or_null(SET_##_sb_opt,*SET_BCH2_NO_MEMBER_OPT),\
+		.get_ext	= type_compatible_or_null(_sb_opt,	*BCH2_NO_EXT_OPT),	\
+		.set_ext	= type_compatible_or_null(SET_##_sb_opt,*SET_BCH2_NO_EXT_OPT),	\
 		_type							\
 	},
 
@@ -791,7 +797,12 @@ u64 bch2_opt_from_sb(struct bch_sb *sb, enum bch_opt_id id, int dev_idx)
 	u64 v;
 
 	if (dev_idx < 0) {
-		v = opt->get_sb(sb);
+		if (opt->get_sb) {
+			v = opt->get_sb(sb);
+		} else {
+			const struct bch_sb_field_ext *ext = bch2_sb_field_get(sb, ext);
+			v = ext ? opt->get_ext(ext) : 0;
+		}
 	} else {
 		if (WARN(!bch2_member_exists(sb, dev_idx),
 			 "tried to set device option %s on nonexistent device %i",
@@ -823,7 +834,7 @@ int bch2_opts_from_sb(struct bch_opts *opts, struct bch_sb *sb)
 	for (unsigned id = 0; id < bch2_opts_nr; id++) {
 		const struct bch_option *opt = bch2_opt_table + id;
 
-		if (opt->get_sb)
+		if (opt->get_sb || opt->get_ext)
 			bch2_opt_set_by_id(opts, id, bch2_opt_from_sb(sb, id, -1));
 	}
 
@@ -844,10 +855,17 @@ bool __bch2_opt_set_sb(struct bch_sb *sb, int dev_idx,
 	if (opt->flags & OPT_SB_FIELD_ONE_BIAS)
 		v++;
 
-	if ((opt->flags & OPT_FS) && opt->set_sb && dev_idx < 0) {
-		changed = v != opt->get_sb(sb);
-
-		opt->set_sb(sb, v);
+	if ((opt->flags & OPT_FS) && dev_idx < 0) {
+		if (opt->set_sb) {
+			changed = v != opt->get_sb(sb);
+			opt->set_sb(sb, v);
+		} else if (opt->set_ext) {
+			struct bch_sb_field_ext *ext = bch2_sb_field_get(sb, ext);
+			if (ext) {
+				changed = v != opt->get_ext(ext);
+				opt->set_ext(ext, v);
+			}
+		}
 	}
 
 	if ((opt->flags & OPT_DEVICE) && opt->set_member && dev_idx >= 0) {

@@ -4,6 +4,7 @@
 #include "bcachefs.h"
 
 #include "alloc/accounting.h"
+#include "alloc/background.h"
 #include "alloc/buckets.h"
 
 #include "btree/update.h"
@@ -2287,7 +2288,7 @@ got_sb:
 	if (ret)
 		goto err_put_super;
 
-	sb->s_bdi->ra_pages		= VM_READAHEAD_PAGES;
+	sb->s_bdi->ra_pages = bch2_fs_ra_pages(c);
 
 	scoped_guard(rcu) {
 		for_each_online_member_rcu(c, ca) {

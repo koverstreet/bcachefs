@@ -882,7 +882,10 @@ struct bch_sb_field_ext {
 	__le64			recovery_passes_required[2];
 	__le64			errors_silent[8];
 	__le64			btrees_lost_data;
+	__le64			dev_readahead;		/* per-device readahead size, in sectors; 0 = default */
 };
+
+LE64_BITMASK(BCH_SB_EXT_DEV_READAHEAD, struct bch_sb_field_ext, dev_readahead, 0, 32);
 
 /* Superblock: */
 
