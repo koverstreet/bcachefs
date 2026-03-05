@@ -88,16 +88,30 @@ static void raid_rec(int nr, int *ir, int nd, int np, size_t size, void **v)
 
 #endif
 
-void bch2_ec_stripe_buf_exit(struct ec_stripe_buf *buf)
+static void __bch2_ec_stripe_buf_exit(struct ec_stripe_buf *buf)
 {
-	if (buf->key.k.type == KEY_TYPE_stripe)
+	if (buf->key.k.type == KEY_TYPE_stripe) {
 		for (unsigned i = 0; i < buf->key.v.nr_blocks; i++) {
 			kvfree(buf->data[i]);
 			buf->data[i] = NULL;
 		}
+	}
 
 	closure_sync(&buf->io);
 	closure_debug_destroy(&buf->io);
+}
+
+void bch2_ec_stripe_buf_exit(struct ec_stripe_buf *buf)
+{
+	if (buf->c) {
+		struct bch_fs *c = buf->c;
+		buf->c = NULL;
+		atomic_long_sub(((unsigned long)buf->size << 9) * buf->key.v.nr_blocks,
+				&c->ec.stripe_buf_bytes);
+		closure_wake_up(&c->ec.stripe_buf_wait);
+	}
+
+	__bch2_ec_stripe_buf_exit(buf);
 }
 
 /* XXX: this is a non-mempoolified memory allocation: */
@@ -114,16 +128,21 @@ int __bch2_ec_stripe_buf_init(struct bch_fs *c,
 	end	= min_t(unsigned, le16_to_cpu(buf->key.v.sectors),
 			round_up(end, csum_granularity));
 
+	buf->c		= c;
 	buf->offset	= offset;
 	buf->size	= end - offset;
 
 	for (unsigned i = 0; i < buf->key.v.nr_blocks; i++) {
 		buf->data[i] = kvmalloc(buf->size << 9, GFP_KERNEL);
 		if (!buf->data[i]) {
-			bch2_ec_stripe_buf_exit(buf);
+			__bch2_ec_stripe_buf_exit(buf);
+			buf->c = NULL;
 			return bch_err_throw(c, ENOMEM_stripe_buf);
 		}
 	}
+
+	atomic_long_add(((unsigned long)buf->size << 9) * buf->key.v.nr_blocks,
+			&c->ec.stripe_buf_bytes);
 
 	closure_init(&buf->io, NULL);
 

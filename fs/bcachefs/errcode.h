@@ -431,6 +431,8 @@
 	x(BCH_ERR_operation_blocked,	bucket_alloc_blocked)			\
 	x(BCH_ERR_operation_blocked,	open_bucket_alloc_blocked)		\
 	x(BCH_ERR_operation_blocked,	stripe_alloc_blocked)			\
+	x(BCH_ERR_operation_blocked,	stripe_buf_mem_blocked)			\
+	x(EAGAIN,			stripe_buf_mem_limit)			\
 	x(BCH_ERR_journal_res_blocked,	journal_blocked)			\
 	x(BCH_ERR_journal_res_blocked,	journal_max_in_flight)			\
 	x(BCH_ERR_journal_res_blocked,	journal_max_open)			\

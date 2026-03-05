@@ -885,7 +885,8 @@ struct bch_sb_field_ext {
 	__le64			dev_readahead;		/* per-device readahead size, in sectors; 0 = default */
 };
 
-LE64_BITMASK(BCH_SB_EXT_DEV_READAHEAD, struct bch_sb_field_ext, dev_readahead, 0, 32);
+LE64_BITMASK(BCH_SB_EXT_DEV_READAHEAD,		struct bch_sb_field_ext, dev_readahead, 0, 20);
+LE64_BITMASK(BCH_SB_EXT_EC_STRIPE_BUF_LIMIT,	struct bch_sb_field_ext, dev_readahead, 20, 26);
 
 /* Superblock: */
 

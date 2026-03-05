@@ -13,6 +13,7 @@ struct ec_bio {
 
 struct ec_stripe_buf {
 	struct closure		io;
+	struct bch_fs		*c;
 
 	/* might not be buffering the entire stripe: */
 	unsigned		offset;

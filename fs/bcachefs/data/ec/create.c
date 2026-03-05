@@ -1224,6 +1224,10 @@ void bch2_new_stripes_to_text(struct printbuf *out, struct bch_fs *c)
 	struct ec_stripe_head *h;
 	struct ec_stripe_new *s;
 
+	prt_printf(out, "stripe buf memory: ");
+	prt_human_readable_u64(out, atomic_long_read(&c->ec.stripe_buf_bytes));
+	prt_newline(out);
+
 	scoped_guard(mutex, &c->ec.stripe_head_lock)
 		list_for_each_entry(h, &c->ec.stripe_head_list, list) {
 			prt_printf(out, "disk label %u algo %u redundancy %u %s nr created %llu:\n",
@@ -1407,6 +1411,18 @@ struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *trans,
 		return h;
 
 	if (!h->s) {
+		unsigned long limit = (totalram_pages() << PAGE_SHIFT) / 100
+				    * c->opts.ec_stripe_buf_limit;
+		if (atomic_long_read(&c->ec.stripe_buf_bytes) > limit) {
+			if (req->cl) {
+				closure_wait(&c->ec.stripe_buf_wait, req->cl);
+				ret = bch_err_throw(c, stripe_buf_mem_blocked);
+			} else {
+				ret = bch_err_throw(c, stripe_buf_mem_limit);
+			}
+			goto err;
+		}
+
 		h->s = ec_new_stripe_alloc(c,
 					   h->devs,
 					   h->watermark,

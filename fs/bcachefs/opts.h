@@ -562,10 +562,16 @@ enum fsck_err_opts {
 	  " prefetched sequentially")				\
 	x(dev_readahead,		u64,				\
 	  OPT_FS|OPT_MOUNT|OPT_RUNTIME|OPT_HUMAN_READABLE|OPT_SB_FIELD_SECTORS,\
-	  OPT_UINT(0, SZ_256M),						\
+	  OPT_UINT(0, BCH_SB_EXT_DEV_READAHEAD_MAX << 9),		\
 	  BCH_SB_EXT_DEV_READAHEAD,	SZ_2M,				\
 	  "size",	"Per-device readahead window size; summed across\n"\
-	  " all devices to set the filesystem readahead")
+	  " all devices to set the filesystem readahead")		\
+	x(ec_stripe_buf_limit,		u8,				\
+	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,				\
+	  OPT_UINT(1, 25),						\
+	  BCH_SB_EXT_EC_STRIPE_BUF_LIMIT,	5,			\
+	  "%",		"Maximum percentage of total RAM for in-flight\n"\
+	  " EC stripe buffers")
 
 enum bch_opt_id {
 #define x(_name, ...)	Opt_##_name,
