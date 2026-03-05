@@ -94,10 +94,11 @@ void bch2_stripe_to_text(struct printbuf *out, struct bch_fs *c,
 	else
 		prt_printf(out, "(invalid shift %u)", s.csum_granularity_bits);
 
-	if (s.disk_label) {
-		prt_str(out, " label");
+	prt_str(out, " label=");
+	if (s.disk_label)
 		bch2_disk_path_to_text(out, c, s.disk_label - 1);
-	}
+	else
+		prt_str(out, "(none)");
 
 	if (s.needs_reconcile)
 		prt_str(out, " needs_reconcile");
