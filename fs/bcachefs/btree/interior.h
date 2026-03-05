@@ -358,7 +358,7 @@ static inline bool btree_bkey_and_val_eq(struct bkey_s_c l, struct bkey_s_c r)
 		  ? offsetof(struct bch_btree_ptr_v2, seq)
 		  : 0;
 
-	return !memcmp(l.v + offset, r.v + offset, bkey_val_bytes(l.k) - offset);
+	return !memcmp((void *) l.v + offset, (void *) r.v + offset, bkey_val_bytes(l.k) - offset);
 }
 
 void bch2_btree_updates_to_text(struct printbuf *, struct bch_fs *);
