@@ -798,9 +798,11 @@ u64 bch2_opt_from_sb(struct bch_sb *sb, enum bch_opt_id id, int dev_idx)
 	if (dev_idx < 0) {
 		if (opt->get_sb) {
 			v = opt->get_sb(sb);
-		} else {
+		} else if (opt->get_ext) {
 			const struct bch_sb_field_ext *ext = bch2_sb_field_get(sb, ext);
-			v = ext ? opt->get_ext(ext) : 0;
+			v = opt->get_ext(ext);
+		} else {
+			v = 0;
 		}
 	} else {
 		if (WARN(!bch2_member_exists(sb, dev_idx),
@@ -860,10 +862,8 @@ bool __bch2_opt_set_sb(struct bch_sb *sb, int dev_idx,
 			opt->set_sb(sb, v);
 		} else if (opt->set_ext) {
 			struct bch_sb_field_ext *ext = bch2_sb_field_get(sb, ext);
-			if (ext) {
-				changed = v != opt->get_ext(ext);
-				opt->set_ext(ext, v);
-			}
+			changed = v != opt->get_ext(ext);
+			opt->set_ext(ext, v);
 		}
 	}
 

@@ -804,7 +804,7 @@ static ssize_t sysfs_opt_store(struct bch_fs *c,
 		bch2_opt_hook_pre_set(c, ca, 0, id, v, true);
 
 	if (!ret) {
-		bool is_sb = opt->get_sb || opt->get_member;
+		bool is_sb = opt->get_sb || opt->get_member || opt->get_ext;
 		bool changed = false;
 
 		if (is_sb) {

@@ -1018,7 +1018,7 @@ int bch2_bucket_io_time_reset(struct btree_trans *trans, unsigned dev,
 unsigned long bch2_fs_ra_pages(struct bch_fs *c)
 {
 	unsigned long ra_pages = 0;
-	unsigned long ra_per_dev = (c->opts.dev_readahead ?: SZ_2M) >> PAGE_SHIFT;
+	unsigned long ra_per_dev = c->opts.dev_readahead >> PAGE_SHIFT;
 
 	scoped_guard(rcu)
 		for_each_member_device_rcu(c, ca, NULL)

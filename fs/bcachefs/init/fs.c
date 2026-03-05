@@ -1187,6 +1187,9 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 		    !BCH_SB_CSUM_ERR_RETRY_NR(sb))
 			SET_BCH_SB_CSUM_ERR_RETRY_NR(sb, 3);
 
+		if (!BCH_SB_EXT_DEV_READAHEAD(ext))
+			SET_BCH_SB_EXT_DEV_READAHEAD(ext, SZ_2M >> 9);
+
 		for (unsigned opt_id = 0; opt_id < bch2_opts_nr; opt_id++) {
 			const struct bch_option *opt = bch2_opt_table + opt_id;
 
