@@ -1222,8 +1222,11 @@ retry:
 			/*
 			 * Only try to allocate cache (durability = 0 devices) from the
 			 * specified target:
+			 *
+			 * Only allocate stripes on the specified target
 			 */
 			req->have_cache			= true;
+			req->ec				= false;
 			req->target			= 0;
 			req->will_retry_all_devices	= false;
 			continue;
