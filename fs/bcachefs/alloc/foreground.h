@@ -73,6 +73,7 @@ struct alloc_request {
 
 	unsigned		scratch_nr_replicas;
 	unsigned		scratch_nr_effective;
+	enum bch_write_flags	scratch_flags;
 	bool			scratch_have_cache;
 	enum bch_data_type	scratch_data_type;
 	struct open_buckets	scratch_ptrs;

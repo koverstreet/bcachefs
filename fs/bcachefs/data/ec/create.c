@@ -12,6 +12,7 @@
 #include "btree/update.h"
 #include "btree/write_buffer.h"
 
+#include "data/copygc.h"
 #include "data/ec/create.h"
 #include "data/ec/io.h"
 #include "data/ec/trigger.h"
@@ -929,16 +930,41 @@ static int __new_stripe_alloc_buckets(struct btree_trans *trans,
 	return 0;
 }
 
+static bool copygc_can_run_on_devs(struct bch_fs *c,
+				   struct bch_devs_mask *devs)
+{
+	guard(rcu)();
+	for_each_member_device_rcu(c, ca, devs)
+		if (!bch2_copygc_dev_wait_amount(ca))
+			return true;
+	return false;
+}
+
+static bool stripe_will_not_allocate(struct bch_fs *c,
+				     struct alloc_request *req,
+				     struct ec_stripe_new *s)
+{
+	/* Create mask of devices we were unable to allocate from */
+	bitmap_andnot(req->devs_may_alloc.d, s->devs.d, req->devs_may_alloc.d,
+		      BCH_SB_MEMBERS_MAX);
+
+	return req->watermark == BCH_WATERMARK_copygc ||
+		!copygc_can_run_on_devs(c, &req->devs_may_alloc);
+}
+
 static int new_stripe_alloc_buckets(struct btree_trans *trans,
 				    struct alloc_request *req,
 				    struct ec_dev_stripe_state *dev_stripe,
-				    struct ec_stripe_new *s)
+				    struct ec_stripe_new *s,
+				    bool may_shrink)
 {
+	struct bch_fs *c = trans->c;
 	struct bch_stripe *v = &s->new_stripe.key.v;
 
 	if (bitmap_weight(s->blocks_gotten, v->nr_blocks) == v->nr_blocks)
 		return 0;
 
+	req->scratch_flags		= req->flags;
 	req->scratch_data_type		= req->data_type;
 	req->scratch_ptrs		= req->ptrs;
 	req->scratch_nr_replicas	= req->nr_replicas;
@@ -949,8 +975,84 @@ static int new_stripe_alloc_buckets(struct btree_trans *trans,
 	req->devs_may_alloc	= s->devs;
 	req->have_cache		= true;
 
+	if (req->watermark == BCH_WATERMARK_copygc)
+		req->flags |= BCH_WRITE_alloc_nowait;
+
 	int ret = __new_stripe_alloc_buckets(trans, req, dev_stripe, s);
 
+	if (may_shrink &&
+	    ((ret == -BCH_ERR_bucket_alloc_blocked ||
+	      ret == -BCH_ERR_freelist_empty) &&
+	     stripe_will_not_allocate(c, req, s))) {
+		unsigned need = bitmap_weight(s->blocks_moving, BCH_BKEY_PTRS_MAX) +
+			s->nr_parity;
+
+		/*
+		 * At least one data block - unless we're updating a stripe
+		 * because a block has to be moved:
+		 */
+		need += !bitmap_weight(s->blocks_moving, BCH_BKEY_PTRS_MAX);
+
+		/* It's pointless to create create stripes with a single data
+		 * block - more efficient just to fall back to replication:
+		 */
+		need += !s->old_blocks_nr;
+
+		unsigned allocated = 0;
+		for (unsigned i = 0; i < BCH_BKEY_PTRS_MAX; i++)
+			allocated += s->blocks[i] != 0;
+
+		/* go with what we got if we allocated enough buckets, or bail
+		 * out and do a non ec allocation */
+		if (allocated >= need) {
+			unsigned old_nr_data = s->nr_data;
+			unsigned new_nr_data = bitmap_weight(s->blocks_gotten, BCH_BKEY_PTRS_MAX)
+				- s->nr_parity;
+			unsigned new_nr_blocks = new_nr_data + s->nr_parity;
+
+			for (unsigned i = new_nr_data; i < old_nr_data; i++)
+				BUG_ON(s->blocks[i]);
+
+			/* Shift parity blocks/ptrs/bitmaps down */
+			memmove(s->blocks + new_nr_data,
+				s->blocks + old_nr_data,
+				s->nr_parity * sizeof(s->blocks[0]));
+			memmove(v->ptrs + new_nr_data,
+				v->ptrs + old_nr_data,
+				s->nr_parity * sizeof(v->ptrs[0]));
+
+			for (unsigned i = 0; i < s->nr_parity; i++)
+				__clear_bit(old_nr_data + i, s->blocks_gotten);
+
+			for (unsigned i = 0; i < s->nr_parity; i++)
+				__set_bit(new_nr_data + i, s->blocks_gotten);
+
+			/* Zero tail */
+			memset(s->blocks + new_nr_blocks, 0,
+			       (BCH_BKEY_PTRS_MAX - new_nr_blocks) * sizeof(s->blocks[0]));
+			memset(v->ptrs + new_nr_blocks, 0,
+			       (BCH_BKEY_PTRS_MAX - new_nr_blocks) * sizeof(v->ptrs[0]));
+
+			s->nr_data = new_nr_data;
+			v->nr_blocks = new_nr_blocks;
+			ret = 0;
+
+			struct bch_devs_list d = {};
+			for (unsigned i = 0; i < new_nr_blocks; i++) {
+				BUG_ON(s->blocks[i] &&
+				       v->ptrs[i].dev != c->allocator.open_buckets[s->blocks[i]].dev);
+				BUG_ON(bch2_dev_list_has_dev(d, v->ptrs[i].dev));
+				bch2_dev_list_add_dev(&d, v->ptrs[i].dev);
+
+			}
+		} else {
+			if (ret == -BCH_ERR_bucket_alloc_blocked)
+				closure_wake_up(&c->allocator.freelist_wait);
+			ret = bch_err_throw(c, stripe_insufficient_devices);
+		}
+	}
+
+	req->flags		= req->scratch_flags;
 	req->data_type		= req->scratch_data_type;
 	req->ptrs		= req->scratch_ptrs;
 	req->nr_replicas	= req->scratch_nr_replicas;
@@ -1124,6 +1226,50 @@ static int stripe_idx_alloc(struct btree_trans *trans, struct ec_stripe_new *s)
 	return ret;
 }
 
+static int __stripe_alloc_or_reuse(struct btree_trans *trans,
+				   struct alloc_request *req,
+				   struct ec_dev_stripe_state *dev_stripe,
+				   struct ec_stripe_new *s,
+				   bool *waiting)
+{
+	/* First, try to allocate a full stripe: */
+	enum bch_watermark saved_watermark = BCH_WATERMARK_stripe;
+	unsigned saved_flags = req->flags | BCH_WRITE_alloc_nowait;
+	swap(req->watermark,	saved_watermark);
+	swap(req->flags,	saved_flags);
+
+	int ret = new_stripe_alloc_buckets(trans, req, dev_stripe, s, false);
+
+	swap(req->watermark,	saved_watermark);
+	swap(req->flags,	saved_flags);
+
+	if (!ret ||
+	    bch2_err_matches(ret, BCH_ERR_transaction_restart) ||
+	    bch2_err_matches(ret, ENOMEM))
+		return ret;
+
+	if (!s->have_old_stripe) {
+		/*
+		 * Not enough buckets available for a full stripe: try to reuse
+		 * an old stripe:
+		 */
+		ret = stripe_reuse(trans, s);
+		if (ret && !bch2_err_matches(ret, -BCH_ERR_stripe_alloc_blocked))
+			return ret;
+	}
+
+	/* Don't self-deadlock copygc */
+	saved_flags = req->watermark == BCH_WATERMARK_copygc
+		? (req->flags | BCH_WRITE_alloc_nowait)
+		: req->flags;
+
+	swap(req->flags, saved_flags);
+	ret = new_stripe_alloc_buckets(trans, req, dev_stripe, s, true);
+	swap(req->flags, saved_flags);
+
+	return ret;
+}
+
 static int stripe_alloc_or_reuse(struct btree_trans *trans,
 				 struct alloc_request *req,
 				 struct ec_dev_stripe_state *dev_stripe,
@@ -1135,58 +1281,8 @@ static int stripe_alloc_or_reuse(struct btree_trans *trans,
 	if (!s->new_stripe.key.k.p.offset)
 		try(stripe_idx_alloc(trans, s));
 
-	if (!s->have_old_stripe) {
-		/* First, try to allocate a full stripe: */
-		enum bch_watermark saved_watermark = BCH_WATERMARK_stripe;
-		unsigned saved_flags = req->flags | BCH_WRITE_alloc_nowait;
-		swap(req->watermark,	saved_watermark);
-		swap(req->flags,	saved_flags);
+	try(__stripe_alloc_or_reuse(trans, req, dev_stripe, s, waiting));
 
-		int ret = new_stripe_alloc_buckets(trans, req, dev_stripe, s);
-
-		swap(req->watermark,	saved_watermark);
-		swap(req->flags,	saved_flags);
-
-		if (ret) {
-			if (bch2_err_matches(ret, BCH_ERR_transaction_restart) ||
-			    bch2_err_matches(ret, ENOMEM))
-				return ret;
-
-			/*
-			 * Not enough buckets available for a full stripe: we must reuse an
-			 * oldstripe:
-			 */
-			while (1) {
-				ret = stripe_reuse(trans, s);
-				if (!ret)
-					break;
-				if (*waiting ||
-				    (req->flags & BCH_WRITE_alloc_nowait) ||
-				    ret != -BCH_ERR_stripe_alloc_blocked)
-					return ret;
-
-				if (req->watermark == BCH_WATERMARK_copygc) {
-					/* Don't self-deadlock copygc */
-					swap(req->flags, saved_flags);
-					ret = new_stripe_alloc_buckets(trans, req, dev_stripe, s);
-					swap(req->flags, saved_flags);
-
-					try(ret);
-					break;
-				}
-
-				/* XXX freelist_wait? */
-				closure_wait(&c->allocator.freelist_wait, req->cl);
-				*waiting = true;
-			}
-		}
-	}
-
-	/*
-	 * Retry allocating buckets, with the watermark for this
-	 * particular write:
-	 */
-	try(new_stripe_alloc_buckets(trans, req, dev_stripe, s));
 	try(__bch2_ec_stripe_buf_init(c, &s->new_stripe, 0, le16_to_cpu(s->new_stripe.key.v.sectors)));
 
 	if (!s->res.sectors)
@@ -1480,6 +1576,10 @@ struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *trans,
 	return h;
 err:
 	bch2_ec_stripe_head_put(c, h);
+
+	/* we want the allocator to fall back to replication */
+	if (bch2_err_matches(ret, BCH_ERR_stripe_insufficient_devices))
+		return NULL;
 	return ERR_PTR(ret);
 }
 
@@ -1594,7 +1694,7 @@ int bch2_stripe_repair(struct moving_context *ctxt,
 						0, 0, BCH_WATERMARK_normal, 0, &cl);
 
 			PTR_ERR_OR_ZERO(req) ?:
-			new_stripe_alloc_buckets(trans, req, dev_stripe, new_s);
+			new_stripe_alloc_buckets(trans, req, dev_stripe, new_s, true);
 		}));
 		mutex_unlock(&dev_stripe->lock);
 

@@ -202,6 +202,7 @@
 	x(EAGAIN,			open_buckets_empty)			\
 	x(EAGAIN,			freelist_empty)				\
 	x(EAGAIN,			stripe_needs_block_evacuate)		\
+	x(EAGAIN,			stripe_insufficient_devices)		\
 	x(ENOSPC,			ec_alloc_failed)			\
 	x(BCH_ERR_freelist_empty,	no_buckets_found)			\
 	x(0,				transaction_restart)			\
