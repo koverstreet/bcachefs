@@ -439,9 +439,6 @@ STORE(bch2_fs)
 	if (attr == &sysfs_trigger_btree_updates)
 		queue_work(c->btree.interior_updates.worker, &c->btree.interior_updates.work);
 
-	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_sysfs))
-		return -EROFS;
-
 	if (attr == &sysfs_trigger_btree_cache_shrink) {
 		struct bch_fs_btree_cache *bc = &c->btree.cache;
 		struct shrink_control sc;
@@ -459,30 +456,11 @@ STORE(bch2_fs)
 		c->btree.key_cache.shrink->scan_objects(c->btree.key_cache.shrink, &sc);
 	}
 
-	if (attr == &sysfs_trigger_btree_write_buffer_flush)
-		bch2_trans_do(c,
-			      (bch2_btree_write_buffer_flush_sync(trans),
-			       bch2_trans_begin(trans)));
-
-	if (attr == &sysfs_trigger_gc)
-		bch2_gc_gens(c);
-
 	if (attr == &sysfs_trigger_discards)
 		bch2_do_discards(c);
 
 	if (attr == &sysfs_trigger_invalidates)
 		bch2_do_invalidates(c);
-
-	if (attr == &sysfs_trigger_journal_commit)
-		bch2_journal_flush(&c->journal);
-
-	if (attr == &sysfs_trigger_journal_flush) {
-		bch2_journal_flush_all_pins(&c->journal);
-		bch2_journal_meta(&c->journal);
-	}
-
-	if (attr == &sysfs_trigger_journal_writes)
-		bch2_journal_do_writes(&c->journal);
 
 	if (attr == &sysfs_trigger_freelist_wakeup)
 		closure_wake_up(&c->allocator.freelist_wait);
@@ -497,6 +475,28 @@ STORE(bch2_fs)
 
 	if (attr == &sysfs_trigger_reconcile_pending_wakeup)
 		bch2_reconcile_pending_wakeup(c);
+
+	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_sysfs))
+		return -EROFS;
+
+	if (attr == &sysfs_trigger_journal_commit)
+		bch2_journal_flush(&c->journal);
+
+	if (attr == &sysfs_trigger_journal_flush) {
+		bch2_journal_flush_all_pins(&c->journal);
+		bch2_journal_meta(&c->journal);
+	}
+
+	if (attr == &sysfs_trigger_journal_writes)
+		bch2_journal_do_writes(&c->journal);
+
+	if (attr == &sysfs_trigger_btree_write_buffer_flush)
+		bch2_trans_do(c,
+			      (bch2_btree_write_buffer_flush_sync(trans),
+			       bch2_trans_begin(trans)));
+
+	if (attr == &sysfs_trigger_gc)
+		bch2_gc_gens(c);
 
 	if (attr == &sysfs_trigger_delete_dead_snapshots)
 		__bch2_delete_dead_snapshots(c);
