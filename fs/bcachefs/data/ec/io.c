@@ -355,7 +355,14 @@ static void ec_block_endio(struct bio *bio)
 void bch2_ec_block_io(struct bch_fs *c, struct ec_stripe_buf *buf,
 		      blk_opf_t opf, unsigned idx)
 {
-	unsigned offset = 0, bytes = buf->size << 9;
+	bch2_ec_block_io_range(c, buf, opf, idx, buf->offset, buf->size);
+}
+
+void bch2_ec_block_io_range(struct bch_fs *c, struct ec_stripe_buf *buf,
+			    blk_opf_t opf, unsigned idx,
+			    unsigned sector_offset, unsigned sectors)
+{
+	unsigned offset = 0, bytes = sectors << 9;
 	struct bch_extent_ptr *ptr = &buf->key.v.ptrs[idx];
 	unsigned nr_data = buf->key.v.nr_blocks - buf->key.v.nr_redundant;
 	enum bch_data_type data_type = idx < nr_data
@@ -379,7 +386,7 @@ void bch2_ec_block_io(struct bch_fs *c, struct ec_stripe_buf *buf,
 		return;
 	}
 
-	this_cpu_add(ca->io_done->sectors[rw][data_type], buf->size);
+	this_cpu_add(ca->io_done->sectors[rw][data_type], sectors);
 
 	while (offset < bytes) {
 		unsigned nr_iovecs = min_t(size_t, BIO_MAX_VECS,
@@ -401,10 +408,10 @@ void bch2_ec_block_io(struct bch_fs *c, struct ec_stripe_buf *buf,
 		ec_bio->rw			= rw;
 		ec_bio->submit_time		= local_clock();
 
-		ec_bio->bio.bi_iter.bi_sector	= ptr->offset + buf->offset + (offset >> 9);
+		ec_bio->bio.bi_iter.bi_sector	= ptr->offset + sector_offset + (offset >> 9);
 		ec_bio->bio.bi_end_io		= ec_block_endio;
 
-		bch2_bio_map(&ec_bio->bio, buf->data[idx] + offset, b);
+		bch2_bio_map(&ec_bio->bio, buf->data[idx] + ((sector_offset - buf->offset) << 9) + offset, b);
 
 		closure_get(&buf->io);
 		enumerated_ref_get(&ca->io_ref[rw], ref);

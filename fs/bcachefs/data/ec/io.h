@@ -60,6 +60,8 @@ void bch2_ec_generate_checksums(struct ec_stripe_buf *);
 int bch2_stripe_buf_validate(struct bch_fs *, struct ec_stripe_buf *, bool);
 
 void bch2_ec_block_io(struct bch_fs *, struct ec_stripe_buf *, blk_opf_t, unsigned);
+void bch2_ec_block_io_range(struct bch_fs *, struct ec_stripe_buf *, blk_opf_t, unsigned,
+			    unsigned, unsigned);
 void bch2_stripe_buf_read(struct bch_fs *, struct ec_stripe_buf *);
 
 struct bch_read_bio;

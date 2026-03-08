@@ -462,27 +462,15 @@ static void zero_out_rest_of_ec_bucket(struct bch_fs *c,
 				       unsigned block,
 				       struct open_bucket *ob)
 {
-	struct bch_dev *ca = bch2_dev_get_ioref(c, ob->dev, WRITE,
-				BCH_DEV_WRITE_REF_ec_bucket_zero);
-	if (!ca) {
-		s->err = bch_err_throw(c, erofs_no_writes);
-		return;
-	}
-
+	struct bch_dev *ca = ob_dev(c, ob);
 	unsigned offset = ca->mi.bucket_size - ob->sectors_free;
+
 	memset(s->new_stripe.data[block] + (offset << 9),
 	       0,
 	       ob->sectors_free << 9);
 
-	int ret = blkdev_issue_zeroout(ca->disk_sb.bdev,
-			ob->bucket * ca->mi.bucket_size + offset,
-			ob->sectors_free,
-			GFP_KERNEL, 0);
-
-	enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_ec_bucket_zero);
-
-	if (ret)
-		s->err = ret;
+	bch2_ec_block_io_range(c, &s->new_stripe, REQ_OP_WRITE, block,
+			       offset, ob->sectors_free);
 }
 
 void bch2_ec_stripe_new_free(struct bch_fs *c, struct ec_stripe_new *s)
@@ -508,10 +496,8 @@ static int __ec_stripe_create(struct ec_stripe_new *s)
 	for (unsigned i = s->old_blocks_nr; i < nr_data; i++) {
 		struct open_bucket *ob = c->allocator.open_buckets + s->blocks[i];
 
-		if (ob->sectors_free) {
-			/* XXX: do this IO asynchronously */
+		if (ob->sectors_free)
 			zero_out_rest_of_ec_bucket(c, s, i, ob);
-		}
 	}
 
 	if (s->have_old_stripe) {
