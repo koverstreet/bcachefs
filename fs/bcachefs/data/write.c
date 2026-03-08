@@ -1435,9 +1435,11 @@ retry:
 		k = bkey_i_to_s_c(op->insert_keys.top);
 		ptrs = bch2_bkey_ptrs_c(k);
 
-		bch2_trans_unlock_long(trans);
+		bch2_trans_unlock(trans);
+		unsigned long _start = jiffies;
 
 		bch2_bkey_nocow_lock(c, ptrs, ~0U, BUCKET_NOCOW_LOCK_UPDATE);
+		bch2_trans_srcu_unlock_if_elapsed(trans, _start);
 
 		/*
 		 * This could be handled better: If we're able to trylock the
@@ -1600,12 +1602,17 @@ again:
 			PTR_ERR_OR_ZERO(req) ?:
 			bch2_alloc_sectors_req(trans, req, op->write_point, &wp);
 		}));
-		bch2_trans_unlock_long(trans);
+		bch2_trans_unlock(trans);
+		unsigned long _start = jiffies;
+
 		if (bch2_err_matches(ret, BCH_ERR_operation_blocked)) {
-			if (!wait_on_allocator_sync)
+			if (!wait_on_allocator_sync) {
+				bch2_trans_srcu_unlock_if_elapsed(trans, _start);
 				break;
+			}
 
 			bch2_wait_on_allocator(c, req, ret, &op->cl);
+			bch2_trans_srcu_unlock_if_elapsed(trans, _start);
 			__bch2_write_index(op);
 			op->wbio.failed.nr = 0;
 			continue;

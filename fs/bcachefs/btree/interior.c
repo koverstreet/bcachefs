@@ -1254,7 +1254,7 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 	}
 
 	if (!down_read_trylock(&c->gc.lock)) {
-		ret = drop_locks_long_do(trans, (down_read(&c->gc.lock), 0));
+		ret = drop_locks_escalating_do(trans, (down_read(&c->gc.lock), 0));
 		if (ret) {
 			up_read(&c->gc.lock);
 			return ERR_PTR(ret);
@@ -1348,8 +1348,10 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 			ret = bch2_btree_reserve_get(trans, as, nr_nodes, req);
 			if (!bch2_err_matches(ret, BCH_ERR_operation_blocked))
 				break;
-			bch2_trans_unlock_long(trans);
+			bch2_trans_unlock(trans);
+			unsigned long _start = jiffies;
 			bch2_wait_on_allocator(c, req, ret, &cl);
+			bch2_trans_srcu_unlock_if_elapsed(trans, _start);
 		} while (1);
 
 		/*
@@ -1358,8 +1360,14 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 		 * It would be nice if we could remove closures from waitlists
 		 * without waking up the waitlist:
 		 */
-		if (closure_nr_remaining(&cl) > 1)
-			bch2_trans_unlock_long(trans);
+		if (closure_nr_remaining(&cl) > 1) {
+			bch2_trans_unlock(trans);
+			unsigned long _start = jiffies;
+			closure_sync(&cl);
+			bch2_trans_srcu_unlock_if_elapsed(trans, _start);
+		} else {
+			closure_sync(&cl);
+		}
 	}
 
 	if (ret) {

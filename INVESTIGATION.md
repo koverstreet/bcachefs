@@ -136,6 +136,9 @@ helps many other paths.
 | [#934](https://github.com/koverstreet/bcachefs/issues/934) | device evacuate: SRCU held 21s | Open | data_update_init + write buffer flush |
 | [#636](https://github.com/koverstreet/bcachefs/issues/636) | SRCU held 48s during rebalance | Closed | data_update_init via do_rebalance |
 
+**Foreground I/O Stalls (Tiered Storage / Writeback)**
+These patches were also found to completely resolve severe, multi-minute foreground I/O stalls (`ls`, `stat`, etc.) that occur when the system is performing heavy background writes to a slow tier (e.g. `dd` sequentially bypassing an SSD tier and writing directly to HDDs). Previously, the background writeback/promotion threads would hold the SRCU read lock while blocking on slow HDD I/O, freezing all foreground VFS operations that needed btree locks. With `bch2_trans_unlock_long()`, foreground I/O remains instantly responsive (e.g. 2ms) even under maximum background write pressure.
+
 ### Issues with different root causes (not addressed by our patches)
 
 The most common SRCU-held-too-long path across issues is

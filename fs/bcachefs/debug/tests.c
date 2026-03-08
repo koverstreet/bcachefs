@@ -82,8 +82,10 @@ static int test_delete_written(struct bch_fs *c, u64 nr)
 	if (ret)
 		return ret;
 
-	bch2_trans_unlock_long(trans);
+	bch2_trans_unlock(trans);
+	unsigned long _start = jiffies;
 	bch2_journal_flush_all_pins(&c->journal);
+	bch2_trans_srcu_unlock_if_elapsed(trans, _start);
 
 	ret = commit_do(trans, NULL, NULL, 0,
 		bch2_btree_iter_traverse(&iter) ?:

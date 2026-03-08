@@ -418,7 +418,8 @@ btree_key_can_insert_cached_slowpath(struct btree_trans *trans, unsigned flags,
 	int ret;
 
 	bch2_trans_unlock_updates_write(trans);
-	bch2_trans_unlock_long(trans);
+	bch2_trans_unlock(trans);
+	unsigned long _start = jiffies;
 
 	new_k = kmalloc(new_u64s * sizeof(u64), GFP_NOFS);
 	if (!new_k) {
@@ -934,7 +935,7 @@ static int __bch2_trans_commit_error(struct btree_trans *trans, unsigned flags,
 		    watermark < BCH_WATERMARK_reclaim)
 			return bch_err_throw(c, journal_reclaim_would_deadlock);
 
-		return drop_locks_long_do(trans,
+		return drop_locks_escalating_do(trans,
 			bch2_trans_journal_res_get(trans,
 					(flags & BCH_WATERMARK_MASK)|
 					JOURNAL_RES_GET_CHECK));

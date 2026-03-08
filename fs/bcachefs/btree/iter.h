@@ -346,6 +346,7 @@ int bch2_trans_relock(struct btree_trans *);
 int bch2_trans_relock_notrace(struct btree_trans *);
 void bch2_trans_unlock(struct btree_trans *);
 void bch2_trans_unlock_long(struct btree_trans *);
+void bch2_trans_srcu_unlock_if_elapsed(struct btree_trans *, unsigned long);
 
 static inline int trans_was_restarted(struct btree_trans *trans, u32 restart_count)
 {
@@ -1037,13 +1038,39 @@ struct bkey_s_c bch2_btree_iter_peek_root(struct btree_trans *, struct btree_ite
 
 /*
  * Like drop_locks_do, but also drops the SRCU read lock so that SRCU grace
- * periods can complete and the shrinker can free old btree nodes.  Use before
- * operations that may block for an extended/unbounded time.
+ * periods can complete and the shrinker can free old btree nodes.  Use only
+ * before operations known to block for an unbounded time (user input, disk
+ * I/O waits).
  */
 #define drop_locks_long_do(_trans, _do)					\
 ({									\
 	bch2_trans_unlock_long(_trans);					\
 	(_do) ?: bch2_trans_relock(_trans);				\
+})
+
+/*
+ * Two-phase unlock: first drop btree locks only (fast, keeps SRCU), run the
+ * blocking operation, then if it took longer than
+ * srcu_escalation_timeout_ms, also drop SRCU so grace periods can complete.
+ *
+ * This avoids paying the full transaction restart cost for operations that
+ * complete quickly, while still preventing SRCU-vs-reclaim deadlocks when
+ * an operation blocks for a long time.
+ *
+ * Tunable at runtime via /sys/module/bcachefs/parameters/srcu_escalation_timeout_ms
+ */
+extern unsigned bch2_srcu_escalation_timeout_ms;
+
+#define drop_locks_escalating_do(_trans, _do)				\
+({									\
+	bch2_trans_unlock(_trans);					\
+	unsigned long _start = jiffies;					\
+	int _ret = (_do);						\
+	if (time_after(jiffies,						\
+		       _start + msecs_to_jiffies(			\
+				bch2_srcu_escalation_timeout_ms)))	\
+		bch2_trans_srcu_unlock(_trans);				\
+	_ret ?: bch2_trans_relock(_trans);				\
 })
 
 #define allocate_dropping_locks_errcode(_trans, _do)			\
