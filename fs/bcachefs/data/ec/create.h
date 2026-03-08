@@ -35,6 +35,7 @@ struct ec_stripe_new {
 	struct moving_context	*ctxt;
 	struct mutex		lock;
 	struct list_head	list;
+	struct work_struct	work;
 
 	atomic_t		ref[STRIPE_REF_NR];
 
@@ -104,7 +105,7 @@ struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *,
 			struct alloc_request *, unsigned);
 
 void bch2_do_stripe_deletes(struct bch_fs *);
-void bch2_ec_do_stripe_creates(struct bch_fs *);
+void bch2_ec_stripe_create_start(struct bch_fs *, struct ec_stripe_new *);
 void bch2_ec_stripe_new_free(struct bch_fs *, struct ec_stripe_new *);
 
 static inline void ec_stripe_new_get(struct ec_stripe_new *s,
@@ -124,7 +125,7 @@ static inline void ec_stripe_new_put(struct bch_fs *c, struct ec_stripe_new *s,
 			bch2_ec_stripe_new_free(c, s);
 			break;
 		case STRIPE_REF_io:
-			bch2_ec_do_stripe_creates(c);
+			bch2_ec_stripe_create_start(c, s);
 			break;
 		default:
 			BUG();
@@ -132,7 +133,6 @@ static inline void ec_stripe_new_put(struct bch_fs *c, struct ec_stripe_new *s,
 }
 
 void bch2_ec_stripe_delete_work(struct work_struct *);
-void bch2_ec_stripe_create_work(struct work_struct *);
 
 void bch2_new_stripes_to_text(struct printbuf *, struct bch_fs *);
 

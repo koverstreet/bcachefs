@@ -203,6 +203,8 @@ void bch2_fs_ec_exit(struct bch_fs *c)
 
 	BUG_ON(!list_empty(&c->ec.stripe_new_list));
 
+	if (c->ec.stripe_create_wq)
+		destroy_workqueue(c->ec.stripe_create_wq);
 	bioset_exit(&c->ec.block_bioset);
 }
 
@@ -220,12 +222,16 @@ void bch2_fs_ec_init_early(struct bch_fs *c)
 	mutex_init(&c->ec.stripe_new_lock);
 	init_waitqueue_head(&c->ec.stripe_new_wait);
 
-	INIT_WORK(&c->ec.stripe_create_work, bch2_ec_stripe_create_work);
 	INIT_WORK(&c->ec.stripe_delete_work, bch2_ec_stripe_delete_work);
 }
 
 int bch2_fs_ec_init(struct bch_fs *c)
 {
+	c->ec.stripe_create_wq = alloc_workqueue("bcachefs_ec_create",
+						 WQ_UNBOUND, 0);
+	if (!c->ec.stripe_create_wq)
+		return -BCH_ERR_ENOMEM_fs_other_alloc;
+
 	return bioset_init(&c->ec.block_bioset, 1, offsetof(struct ec_bio, bio),
 			   BIOSET_NEED_BVECS);
 }
