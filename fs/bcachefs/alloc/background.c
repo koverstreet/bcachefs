@@ -41,6 +41,445 @@
 #include <linux/sort.h>
 #include <linux/jiffies.h>
 
+/* DOC_LATEX(allocator)
+ * \subsubsection{Buckets}
+ *
+ * The allocator manages space in units called \emph{buckets} --- contiguous
+ * regions on each device, typically 512 KB to 16 MB (set at format time with
+ * \texttt{--bucket\_size}, default auto-selected based on device size). Each
+ * bucket tracks how many dirty and cached sectors it contains, plus metadata
+ * such as the oldest journal sequence number referencing it, stripe membership,
+ * and generation number.
+ *
+ * Buckets cycle through a series of states:
+ *
+ * \begin{description}
+ * \item[\texttt{dirty}] Contains live data or metadata. Cannot be reused until
+ *   all data is moved or deleted.
+ * \item[\texttt{cached}] Contains only cached copies (data with durable replicas
+ *   elsewhere). Can be discarded when free space is needed.
+ * \item[\texttt{need\_gc\_gens}] Legacy state, retained for compatibility.
+ *   Previously used to prevent generation number wraparound; now effectively
+ *   unused since the invalidate worker uses backpointers instead of generation
+ *   bumping.
+ * \item[\texttt{need\_discard}] All data invalidated; waiting for a discard
+ *   (TRIM) command to be sent to the device.
+ * \item[\texttt{free}] Discarded and ready for allocation.
+ * \end{description}
+ *
+ * Bucket size affects fragmentation and overhead. Larger buckets reduce metadata
+ * overhead and improve sequential write performance, but increase internal
+ * fragmentation: if a bucket is only partially filled with live data, the
+ * remaining space is wasted until copygc moves the live data elsewhere and frees
+ * the entire bucket. The \texttt{bcachefs fs usage} command shows per-device
+ * bucket counts and fragmentation.
+ *
+ * \subsubsection{Foreground allocator}
+ *
+ * The foreground allocator handles allocation requests from active writes. When
+ * a write needs space, the allocator selects devices based on the applicable
+ * target option (\texttt{foreground\_target}, \texttt{metadata\_target}, etc.).
+ * Within the target group, devices are selected by striping across all
+ * available devices, weighted by free space --- devices with more free space
+ * receive proportionally more allocations, so all devices in the filesystem
+ * fill up at roughly the same rate.
+ *
+ * If the target devices are full, the allocator falls back to any device in
+ * the filesystem rather than failing the write. This fallback is deliberate:
+ * target options express a preference, not a hard constraint. The only way to
+ * get a hard constraint is to use separate filesystems.
+ *
+ * Each allocation request also specifies a watermark level (see Watermarks
+ * below) and a required number of replicas. The allocator picks devices that
+ * satisfy the replica count and durability requirements, avoiding placing
+ * multiple replicas on the same device.
+ *
+ * \paragraph{Write points}
+ * \label{sec:write-points}
+ *
+ * \bchdoc{foreground-allocator}
+ *
+ * \subsubsection{Background allocator}
+ *
+ * The background allocator runs continuously, producing free buckets for the
+ * foreground allocator to consume. It manages three pipelines:
+ *
+ * \begin{description}
+ * \item[Invalidation] Scans for buckets containing only cached data (or no data)
+ *   and invalidates them. The invalidate worker walks backpointers to verify no
+ *   live references remain before marking buckets for discard. Invalidated
+ *   buckets move to the \texttt{need\_discard} state.
+ * \item[Discard] Sends TRIM/discard commands to the device for invalidated
+ *   buckets, then moves them to the \texttt{free} state. On devices that do not
+ *   support discard, this step is a no-op.
+ * \item[Freelist management] Maintains a pool of free buckets ready for
+ *   immediate allocation. The target free bucket count is tunable and determines
+ *   how far ahead the background allocator works.
+ * \end{description}
+ *
+ * When free space is low, copygc kicks in to move live data out of
+ * mostly-empty buckets, freeing them for reuse. The copygc reserve ensures that
+ * copygc itself always has enough free space to make forward progress, even when
+ * the filesystem appears full to user writes.
+ *
+ * \subsubsection{Watermarks}
+ *
+ * The allocator uses a tiered watermark system to manage space pressure. Each
+ * watermark level reserves progressively more free buckets:
+ *
+ * \begin{description}
+ * \item[\texttt{stripe}] Highest watermark; used for
+ *   \hyperref[sec:erasure-coding]{erasure coding} stripe allocation. Most free
+ *   space is available.
+ * \item[\texttt{normal}] Standard user data writes.
+ * \item[\texttt{copygc}] Copygc is allowed to dip into space reserved from
+ *   normal writes.
+ * \item[\texttt{btree}] Btree node allocation, which must succeed even under
+ *   heavy space pressure.
+ * \item[\texttt{btree\_copygc}] Btree allocation during copygc.
+ * \item[\texttt{reclaim}] \hyperref[sec:journal]{Journal} reclaim---must always
+ *   be able to flush dirty btree nodes to free journal space.
+ * \item[\texttt{interior\_updates}] The lowest watermark, for btree interior
+ *   node updates during splits and merges that must never fail.
+ * \end{description}
+ *
+ * This layered approach ensures that critical internal operations (journal
+ * reclaim, btree splits) can always make progress, even when the filesystem is
+ * full from the user's perspective.
+ *
+ * \subsubsection{Accounting}
+ *
+ * The accounting subsystem maintains exact, transactional counters for all
+ * space usage in the filesystem. Every write, delete, or metadata change that
+ * affects space usage atomically updates the corresponding accounting entries
+ * as part of the same transaction.
+ *
+ * The system is designed to be extensible: accounting keys are type-tagged
+ * unions, so adding a new class of counters requires only defining a new
+ * tag and its associated fields. No schema changes, no migration --- new
+ * counter types appear in the btree alongside existing ones, and old code
+ * simply ignores tags it does not recognize.
+ *
+ * Accounting entries are stored in a dedicated btree as actual counter values,
+ * but updates are applied as deltas and aggregated by the btree write buffer
+ * before being flushed. This is how accounting can live in a btree without
+ * killing performance: many small increments are batched into a single btree
+ * update. Version numbers derived from journal position ensure that journal
+ * replay can safely deduplicate updates.
+ *
+ * \paragraph{What is tracked}
+ *
+ * \begin{description}
+ * \item[\texttt{replicas}] On-disk usage by replication strategy --- which
+ *   devices hold copies and how many. This is what \texttt{bcachefs fs usage}
+ *   reports as the main usage breakdown.
+ * \item[\texttt{dev\_data\_type}] Per-device usage broken down by data type
+ *   (user data, btree, cached, parity, etc.), tracking bucket count, live
+ *   sectors, and fragmentation.
+ * \item[\texttt{compression}] Per-compression-type statistics: number of
+ *   extents, uncompressed size, and compressed size on disk.
+ * \item[\texttt{nr\_inodes}] Total inode count.
+ * \item[\texttt{snapshot}] Per-snapshot on-disk usage.
+ * \item[\texttt{btree}] Per-btree metadata usage (total sectors, node count).
+ * \item[\texttt{reconcile\_work}] Pending work for the reconcile subsystem,
+ *   broken down by type.
+ * \item[\texttt{persistent\_reserved}] Sectors reserved by
+ *   \texttt{KEY\_TYPE\_reservation} keys (e.g.\ fallocate).
+ * \end{description}
+ *
+ * In memory, frequently-accessed counters (replicas, per-device, compression)
+ * are maintained in percpu arrays for lock-free reads. Less frequently accessed
+ * counters (per-snapshot, reconcile work) are read from the btree on demand.
+ * The \texttt{bcachefs fs usage} command and the
+ * \texttt{BCH\_IOCTL\_QUERY\_ACCOUNTING} ioctl both read from this system.
+ *
+ * \subsubsection{Replicas tracking}
+ *
+ * The replicas superblock field records every unique data replication
+ * configuration in use by the filesystem --- each entry describes a data type
+ * (journal, btree, user data, parity) and the set of devices that hold copies.
+ * This is the authoritative source for determining whether the filesystem can
+ * operate with a given set of devices.
+ *
+ * \paragraph{Mount decisions}
+ *
+ * At mount time, bcachefs checks every replicas entry against the set of
+ * online devices. For each entry, it counts how many of the listed devices
+ * are present and compares against the entry's \texttt{nr\_required} field
+ * (normally 1; higher for erasure coding where multiple blocks are needed for
+ * reconstruction). If any entry cannot be satisfied, the filesystem cannot
+ * mount --- the data described by that entry would be inaccessible.
+ *
+ * Write-side checks are stricter: the filesystem must have enough read-write
+ * devices to satisfy the configured replication levels for journal, metadata,
+ * and user data. A filesystem can mount read-only with fewer devices than it
+ * needs for read-write operation.
+ *
+ * \paragraph{Lifecycle}
+ *
+ * Replicas entries are added lazily: when new data is written with a
+ * previously-unseen device combination, the entry is added to the superblock
+ * as part of the transaction commit (via integration with the accounting
+ * subsystem). Entries are removed when their corresponding accounting counters reach
+ * zero --- meaning no data with that replication
+ * pattern exists on disk anymore.
+ *
+ * The tight coupling with accounting means the replicas field stays accurate
+ * without expensive scans: as data is written, moved, or deleted, accounting
+ * deltas flow through the write buffer, and the replicas field is updated to
+ * match.
+ *
+ * As of version 1.36, user data replicas entries are no longer stored in the
+ * superblock --- only journal and metadata entries are. With large numbers of
+ * devices, the combinatorial explosion of possible device sets for user data
+ * made superblock replicas entries a scalability bottleneck. User data
+ * replication is now tracked entirely through the accounting subsystem.
+ *
+ * \subsubsection{Backpointers}
+ * \label{sec:backpointers}
+ *
+ * Every sector range on disk that contains data or metadata has a corresponding
+ * backpointer: a reverse reference from the physical location back to the
+ * logical btree entry that owns it. Backpointers answer the question ``what
+ * data lives in this bucket?'' without scanning the entire extents btree.
+ *
+ * Backpointers are stored in a write-buffered btree, keyed by (device, sector
+ * offset, discriminator). The value records the btree ID, level, and position
+ * of the owning key, plus the data type and bucket generation number.
+ *
+ * \paragraph{Maintenance}
+ *
+ * Backpointers are created and deleted automatically by extent triggers: when
+ * an extent is written, a backpointer is inserted for each data pointer; when
+ * an extent is overwritten or deleted, the corresponding backpointers are
+ * removed. Updates go through the write buffer for batching.
+ *
+ * The discriminator field handles cases where multiple extents share ownership
+ * of the same physical block (e.g.\ compressed extents that have been partially
+ * overwritten). Erasure code stripes get their own backpointers in a separate
+ * \texttt{stripe\_backpointers} btree, since stripe backpointers have different
+ * position semantics and lifecycle from extent backpointers.
+ *
+ * \paragraph{Operations that use backpointers}
+ *
+ * \begin{itemize}
+ * \item \textbf{Copygc}: Finds live extents in fragmented buckets to relocate
+ *   them, freeing the bucket for reuse.
+ * \item \textbf{Device evacuation}: Finds all extents on a device being removed
+ *   and migrates them to other devices.
+ * \item \textbf{Scrub}: Walks backpointers in physical order to verify data
+ *   integrity without random seeks across the extents btree.
+ * \item \textbf{Reconcile}: Tracks extents that need to be moved on rotational
+ *   devices for optimal LBA ordering.
+ * \end{itemize}
+ *
+ * \paragraph{Consistency and self-healing}
+ *
+ * Missing or inconsistent backpointers are detected at runtime --- for example,
+ * when the move path looks up backpointers for a bucket and finds they do not
+ * match the bucket's sector counts. When a mismatch is detected, the relevant
+ * recovery pass is automatically scheduled and run (with rate limiting to avoid
+ * overwhelming the system).
+ *
+ * Three recovery passes verify backpointer integrity bidirectionally:
+ * \texttt{check\_extents\_to\_backpointers} ensures every extent has matching
+ * backpointers, \texttt{check\_backpointers\_to\_extents} ensures every
+ * backpointer points to a valid extent, and
+ * \texttt{check\_btree\_backpointers} validates backpointers against bucket
+ * allocation state.
+ *
+ * The key optimization is comparing backpointer sector counts against bucket
+ * sector counts: if they agree, the backpointers for that bucket are known to
+ * be consistent without walking the extents btree. Only buckets with mismatches
+ * need the more expensive bidirectional verification --- essential for larger
+ * filesystems where a complete scan would be prohibitively expensive. Each
+ * backpointer also records the bucket generation number at creation time, so
+ * stale backpointers from reused buckets are detected and cleaned up
+ * automatically.
+ *
+ * \subsubsection{Data structures}
+ *
+ * The allocator's persistent state is spread across several btrees, each
+ * optimized for a different access pattern. The alloc btree is the
+ * authoritative record of per-bucket state; the others are derived indexes
+ * that accelerate specific operations.
+ *
+ * \paragraph{Alloc key (\texttt{bch\_alloc\_v4})}
+ *
+ * Every bucket on every device has a corresponding key in the alloc btree,
+ * keyed by (device, bucket number). The value is a \texttt{bch\_alloc\_v4}
+ * struct containing:
+ *
+ * \begin{itemize}
+ * \item \texttt{gen} / \texttt{oldest\_gen} --- the current generation number
+ *   and the oldest generation still referenced by extents. The difference
+ *   between these determines whether the bucket needs a GC-gens pass.
+ * \item \texttt{data\_type} --- what kind of data the bucket holds (user, btree,
+ *   cached, parity, stripe, etc.), computed by \texttt{alloc\_data\_type()} from
+ *   the other fields (see below).
+ * \item \texttt{dirty\_sectors} / \texttt{cached\_sectors} /
+ *   \texttt{stripe\_sectors} --- sector counts by category.
+ * \item \texttt{stripe\_refcount} --- number of erasure-coded stripes
+ *   referencing this bucket.
+ * \item \texttt{io\_time[READ/WRITE]} --- timestamps for LRU eviction of
+ *   cached data.
+ * \item \texttt{journal\_seq\_nonempty} / \texttt{journal\_seq\_empty} ---
+ *   journal sequence numbers tracking bucket state transitions, used by the
+ *   noflush write optimization and the discard path.
+ * \item \texttt{nr\_external\_backpointers} --- count of backpointers stored in
+ *   the backpointers btree (as opposed to inline backpointers).
+ * \end{itemize}
+ *
+ * The format has evolved through four versions (v1 through v4). Earlier
+ * versions used variable-length varint encoding for fields; v4 switched to a
+ * fixed-layout struct for simpler access. v4 also added support for inline
+ * backpointers stored directly in the alloc key value, avoiding a separate
+ * btree lookup for buckets with few backpointers. All versions are converted
+ * to \texttt{bch\_alloc\_v4} in memory; the on-disk format is upgraded lazily
+ * as keys are rewritten.
+ *
+ * \paragraph{Bucket state derivation}
+ *
+ * A bucket's logical state is not stored as a field --- it is \emph{derived}
+ * from the alloc key contents by \texttt{alloc\_data\_type()}. The derivation
+ * follows a priority chain:
+ *
+ * \begin{enumerate}
+ * \item If \texttt{stripe\_refcount > 0}: the bucket belongs to an erasure-coded
+ *   stripe (\texttt{BCH\_DATA\_stripe} or \texttt{BCH\_DATA\_parity}).
+ * \item Else if \texttt{dirty\_sectors > 0} or \texttt{stripe\_sectors > 0}:
+ *   the bucket contains live data; the type comes from the data that was
+ *   written (user, btree, etc.).
+ * \item Else if \texttt{cached\_sectors > 0}: the bucket contains only cached
+ *   data (\texttt{BCH\_DATA\_cached}).
+ * \item Else if the \texttt{NEED\_DISCARD} flag is set: the bucket is
+ *   invalidated but awaiting TRIM (\texttt{BCH\_DATA\_need\_discard}).
+ * \item Else if \texttt{gen - oldest\_gen >= BUCKET\_GC\_GEN\_MAX}: the
+ *   generation gap is too large (\texttt{BCH\_DATA\_need\_gc\_gens}).
+ * \item Otherwise: the bucket is free (\texttt{BCH\_DATA\_free}).
+ * \end{enumerate}
+ *
+ * This derivation means bucket state is always consistent with the underlying
+ * counters --- there is no separate state field that could get out of sync.
+ *
+ * \paragraph{Freespace btree}
+ *
+ * The freespace btree indexes free buckets for fast allocation. Keys are
+ * (device, bucket number) with generation bits encoded in the high bits of the
+ * offset, so the allocator can scan for free buckets on a given device with a
+ * simple btree range scan. This is a derived index: entries are
+ * inserted/removed by the alloc key trigger when a bucket transitions to or
+ * from the free state. The foreground allocator cross-checks freespace entries
+ * against the alloc btree before using a bucket, catching any inconsistencies.
+ *
+ * \paragraph{Need-discard btree}
+ *
+ * A simple presence/absence index of buckets in the
+ * \texttt{BCH\_DATA\_need\_discard} state. The discard worker iterates this
+ * btree to find buckets needing TRIM commands, sends the discards, then
+ * updates the alloc key to clear the need-discard flag (which removes the
+ * entry from this btree via the trigger). Maintaining a separate index avoids
+ * scanning the entire alloc btree to find the small fraction of buckets
+ * awaiting discard.
+ *
+ * \paragraph{Bucket-gens btree}
+ *
+ * Packs 256 bucket generation numbers into a single btree key
+ * (\texttt{bch\_bucket\_gens}). This provides cheap stale-pointer detection:
+ * when checking whether an extent pointer is stale, the code only needs to
+ * read a small bucket-gens key rather than the full alloc key. This is
+ * particularly important for the RCU read path, where looking up a full alloc
+ * key would be too expensive.
+ *
+ * \paragraph{LRU btree}
+ *
+ * Indexes cached buckets by their last-read timestamp, enabling the
+ * invalidation worker to evict the least-recently-used cached data first.
+ * Also used with a separate LRU ID for fragmentation-based eviction ordering,
+ * so copygc can prioritize the most fragmented buckets. Like the other
+ * auxiliary btrees, entries are maintained by the alloc key trigger.
+ *
+ * \subsubsection{Device labels and targets}
+ * \label{sec:disk-groups}
+ *
+ * Device labels are hierarchical paths delimited by periods --- for example,
+ * \texttt{ssd.fast}, \texttt{ssd.slow}, \texttt{hdd.archive}. A target option
+ * can reference any prefix of the path: specifying \texttt{ssd} as a target
+ * matches all devices whose label starts with \texttt{ssd} (e.g.\
+ * \texttt{ssd.fast}, \texttt{ssd.slow}), while \texttt{ssd.fast} matches only
+ * that specific label. Labels need not be unique --- multiple devices can share
+ * the same label, forming a group.
+ *
+ * Targets can also reference a device directly by path (e.g.\
+ * \texttt{foreground\_target=/dev/sda1}). Internally, both device references
+ * and label references resolve to entries in the disk groups superblock field,
+ * which maps label strings to device sets.
+ *
+ * Four target options control where data is placed:
+ *
+ * \begin{description}
+ * \item[\texttt{foreground\_target}] Normal foreground data writes, and
+ *   metadata if \texttt{metadata\_target} is not set.
+ * \item[\texttt{metadata\_target}] Btree node writes.
+ * \item[\texttt{background\_target}] If set, user data is moved to this target
+ *   in the background by the reconcile subsystem. The original copy is left in
+ *   place but marked as cached.
+ * \item[\texttt{promote\_target}] If set, a cached copy is created on this
+ *   target when data is read, if no copy exists there already.
+ * \end{description}
+ *
+ * All four options can be set at the filesystem level (format time, mount time,
+ * or runtime via sysfs) or on individual files and directories. Target options
+ * express a preference, not a hard constraint: if the target devices are full,
+ * the allocator falls back to any device in the filesystem.
+ *
+ * \subsubsection{Consistency and self-healing}
+ *
+ * The allocator performs runtime consistency checks during normal operation,
+ * detecting and repairing problems without requiring an offline fsck.
+ *
+ * \paragraph{Runtime checks}
+ *
+ * The foreground allocator validates every bucket before use: the freespace
+ * btree entry is cross-checked against the alloc btree to confirm the bucket
+ * is actually free, the generation number matches, and no other subsystem has
+ * a claim on it (open bucket, nocow lock, superblock region). If a mismatch
+ * is detected, the bucket is skipped and an asynchronous repair job is queued
+ * to fix the inconsistent entry without blocking allocation.
+ *
+ * Bucket state transitions are also validated: if a bucket is being marked
+ * with a data type that conflicts with its current state (e.g.\ writing user
+ * data to a bucket the alloc btree says contains metadata), the inconsistency
+ * is flagged and a recovery pass is scheduled. Accounting counters are checked
+ * for sanity (e.g.\ negative sector counts indicate lost writes or corruption)
+ * and trigger recovery when anomalies are found.
+ *
+ * \paragraph{Recovery passes}
+ *
+ * When runtime checks detect problems, they automatically schedule the
+ * appropriate recovery pass with rate limiting to avoid overwhelming the system.
+ * The key allocator recovery passes are:
+ *
+ * \begin{description}
+ * \item[\texttt{check\_allocations}] Full garbage collection: marks all
+ *   referenced buckets by walking extents, btree nodes, and stripes, then
+ *   compares against the alloc btree and repairs data types, sector counts,
+ *   and stripe references.
+ * \item[\texttt{check\_alloc\_info}] Cross-checks the alloc btree against the
+ *   freespace, need\_discard, and bucket\_gens btrees, repairing any
+ *   mismatches. Can run online.
+ * \item[\texttt{check\_lrus}] Verifies LRU entries (used for cached bucket
+ *   eviction order) match alloc btree timestamps; removes stale entries.
+ * \item[\texttt{check\_alloc\_to\_lru\_refs}] Ensures every cached bucket has
+ *   a correct LRU entry.
+ * \end{description}
+ *
+ * Recovery passes are ordered by dependency: \texttt{check\_allocations} must
+ * run before the others, since it establishes the ground truth for bucket
+ * state. Passes marked \texttt{PASS\_ONLINE} can run on a mounted filesystem
+ * without interrupting normal operation.
+ */
+
 /* Persistent alloc info: */
 
 static const unsigned BCH_ALLOC_V1_FIELD_BYTES[] = {

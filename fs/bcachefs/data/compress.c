@@ -1,4 +1,25 @@
 // SPDX-License-Identifier: GPL-2.0
+
+/* DOC(compression)
+ *
+ * Compression is set per-file or per-directory and operates at extent
+ * granularity (up to 128K). Supported algorithms: lz4 (fast, moderate ratio),
+ * zstd (good ratio, moderate CPU), gzip (best ratio, highest CPU). Levels are
+ * configurable: e.g. `compression=zstd:3` (range 1-15). Higher levels improve
+ * ratio at the cost of write CPU; read CPU is determined by the data, not the
+ * original compression level.
+ *
+ * The main tradeoff to be aware of: small random reads within a compressed
+ * extent must read and decompress the entire extent (up to 128K) because the
+ * checksum covers the whole extent. For workloads dominated by small random
+ * reads (e.g. databases), compression may hurt read performance. Sequential
+ * reads and large-block random reads are largely unaffected.
+ *
+ * Data can be recompressed in the background with a different algorithm or
+ * level via the `background_compression` option — for example, writing with
+ * fast lz4 and recompressing to zstd offline. The reconcile subsystem handles
+ * this automatically.
+ */
 #include "bcachefs.h"
 
 #include "btree/iter.h"

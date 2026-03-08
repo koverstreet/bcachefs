@@ -1,5 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0
 
+/* DOC(btree-write-buffer)
+ *
+ * Batching layer for btrees that receive many small updates which are more
+ * efficient to apply in bulk. Backpointers, LRU entries, and accounting
+ * updates are written to the write buffer rather than directly to the btree;
+ * the buffer is sorted and flushed periodically, coalescing updates to the
+ * same key and amortizing the cost of btree traversal across many updates.
+ */
+
 #include "bcachefs.h"
 
 #include "alloc/accounting.h"

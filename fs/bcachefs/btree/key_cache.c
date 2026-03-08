@@ -1,5 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0
 
+/* DOC(btree-key-cache)
+ *
+ * Fast single-key lookups for btrees where the same keys are read and updated
+ * frequently. The primary user is the alloc btree: extent updates need to
+ * update allocation information for the affected buckets, and doing a full
+ * btree lookup for each would be expensive. The key cache keeps recently
+ * accessed alloc keys in a hash table, allowing updates to be applied directly
+ * without a btree traversal. Cached entries are flushed to the btree by
+ * journal reclaim.
+ */
+
 #include "bcachefs.h"
 
 #include "btree/cache.h"

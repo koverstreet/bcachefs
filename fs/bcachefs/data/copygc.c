@@ -1,8 +1,30 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Moving/copying garbage collector
- *
  * Copyright 2012 Google, Inc.
+ */
+
+/* DOC(copygc)
+ *
+ * As a copy-on-write filesystem, bcachefs never overwrites data in place.
+ * Random overwrites leave buckets partially empty — the old data is obsolete
+ * but still occupies disk space until the bucket is reclaimed. The copying
+ * garbage collector (copygc) handles this: it finds the most fragmented
+ * buckets, relocates their remaining live data, and frees the buckets for
+ * reuse. This is automatic and continuous.
+ *
+ * Performance near full: copygc needs free space to relocate data into, so a
+ * portion of free space is reserved exclusively for it (`copygc_reserve`, 8%
+ * by default, configurable 5-21%). Normal writes cannot dip into this reserve.
+ * As the filesystem fills beyond the reserve threshold, write latency
+ * increases because new writes must wait for copygc to free space first. This
+ * is the primary reason to avoid running a bcachefs filesystem above ~90%
+ * capacity under write-heavy workloads.
+ *
+ * A fragmentation LRU btree tracks bucket fill levels so copygc can
+ * efficiently find the worst buckets without scanning the entire allocation
+ * state. Copygc reads live data from selected buckets (located via
+ * backpointers), writes it to new buckets, and updates extent pointers
+ * atomically.
  */
 
 #include "bcachefs.h"

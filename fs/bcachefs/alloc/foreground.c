@@ -1,14 +1,21 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright 2012 Google, Inc.
+ */
+
+/* DOC(foreground-allocator)
  *
- * Foreground allocator code: allocate buckets from freelist, and allocate in
- * sector granularity from writepoints.
+ * bcachefs automatically reduces fragmentation by segregating different types
+ * of IO into separate buckets. Data from different files, metadata, and
+ * internal bookkeeping each get their own write points (active allocation
+ * contexts). The key insight: data written at the same time by the same file
+ * tends to be deleted at the same time, so grouping it together means entire
+ * buckets become free at once rather than becoming fragmented.
  *
- * bch2_bucket_alloc() allocates a single bucket from a specific device.
- *
- * bch2_bucket_alloc_set() allocates one or more buckets from different devices
- * in a given filesystem.
+ * User data write points are hashed by inode number, so different files
+ * naturally land in different buckets without any user configuration. Separate
+ * write points also exist for btree nodes, copygc, and the reconcile
+ * subsystem, keeping internal IO from mixing with user data.
  */
 
 #include "bcachefs.h"

@@ -1,4 +1,32 @@
 // SPDX-License-Identifier: GPL-2.0
+
+/* DOC(btree-iterators)
+ *
+ * A btree iterator (`struct btree_iter`) maintains a full path from the root
+ * of a btree down to a specific key in a leaf node. At each level, the
+ * iterator holds a pointer to the btree node, a node-level iterator (which
+ * merges across the multiple sorted bsets within that node), and a lock
+ * sequence number for efficient relock-after-restart.
+ *
+ * The fundamental invariant is that `iter.pos` must always be consistent with
+ * the node iterators: at every level, the node iterator points to the first
+ * key >= `iter.pos`, and the previous key compares strictly less. This is the
+ * correct position for inserting a new key at `iter.pos`.
+ *
+ * Iterators support several modes: `peek()` returns the next key and advances
+ * `iter.pos` to match; `peek_slot()` returns the key at exactly `iter.pos`
+ * (synthesizing a deleted key for empty slots); `peek_prev()` iterates
+ * backwards. Extent iterators have special semantics: extents are indexed by
+ * their end position, so the first extent covering a range starting at
+ * `iter.pos` is found by searching for the first key strictly greater than
+ * `iter.pos`. When iterating over extents by slots, holes between extents are
+ * synthesized, guaranteeing that the returned keys exactly cover the keyspace
+ * with monotonically increasing positions.
+ *
+ * Multiple iterators within a transaction coexist without invalidating each
+ * other. On transaction restart, each iterator's saved position allows it to
+ * resume from where it left off.
+ */
 #include "bcachefs.h"
 
 #include "alloc/replicas.h"

@@ -1,4 +1,207 @@
 // SPDX-License-Identifier: GPL-2.0
+
+/* DOC_LATEX(device-management)
+ * bcachefs is a multi-device filesystem: a single filesystem can span any number
+ * of block devices, each contributing storage capacity and IO bandwidth. Devices
+ * need not be the same size or have the same performance characteristics---the
+ * \hyperref[sec:write-points]{allocator} stripes across all available devices,
+ * biasing toward devices with more free space so that all devices fill at the
+ * same rate, and the read path
+ * tracks per-device IO latency to direct reads to the fastest available replica.
+ *
+ * Devices can be added and removed at any time without unmounting.
+ *
+ * \subsubsection{Per-device metadata}
+ *
+ * Each device has a \texttt{bch\_member} entry in the
+ * \hyperref[sec:superblock]{superblock} containing:
+ *
+ * \begin{itemize}
+ * \item \textbf{Identity}: per-device UUID, device name, model string
+ * \item \textbf{Geometry}: bucket count, bucket size, first usable bucket
+ * \item \textbf{State}: rw, ro, evacuating, or spare (see below)
+ * \item \textbf{Configuration}: durability, data-type restrictions
+ *   (\texttt{data\_allowed}), discard (TRIM) support, rotational hint
+ * \item \textbf{Diagnostics}: cumulative error counters (read, write,
+ *   checksum), performance measurements (sequential and random IO rates),
+ *   last mount timestamp
+ * \end{itemize}
+ *
+ * \subsubsection{Device states}
+ *
+ * Each device has a persistent state stored in the superblock:
+ *
+ * \begin{description}
+ * \item[\texttt{rw}] Read-write: fully operational, participates in allocation
+ * \item[\texttt{ro}] Read-only: can be read from but receives no new writes
+ * \item[\texttt{evacuating}] Being emptied of data prior to removal
+ * \item[\texttt{spare}] Reserved, not currently participating in IO
+ * \end{description}
+ *
+ * Device state is changed with \texttt{bcachefs device set-state}. Transitions
+ * that would reduce write redundancy below the configured replication level
+ * require the \texttt{-{}-force} flag.
+ *
+ * Separately from the persistent state, a device can be \emph{online} (kernel
+ * has the device open) or \emph{offline} (device is listed in the superblock but
+ * not currently accessible).
+ *
+ * \subsubsection{Durability}
+ *
+ * The \texttt{durability} setting controls how many replicas a copy on a given
+ * device counts for. The default is 1. Setting \texttt{durability=2} on a
+ * hardware RAID device tells bcachefs that data on that device already has
+ * internal redundancy---it counts as two replicas, so the filesystem does not
+ * need to keep an additional copy elsewhere. Setting \texttt{durability=0} means
+ * copies on the device do not count toward replication requirements at all---the
+ * device can only be used as a cache.
+ *
+ * \subsubsection{Caching}
+ *
+ * When an extent has multiple copies on different devices, some of those copies
+ * may be marked as \emph{cached}. Cached copies are evicted in LRU order by the
+ * allocator when the device needs space. Caching behavior is controlled through
+ * the target options:
+ *
+ * \begin{description}
+ * \item[Writeback caching] Set \texttt{foreground\_target} and
+ *   \texttt{promote\_target} to the cache device, and
+ *   \texttt{background\_target} to the backing device. Writes land on the fast
+ *   device first and migrate to the backing device in the background.
+ * \item[Writearound caching] Set \texttt{foreground\_target} to the backing
+ *   device and \texttt{promote\_target} to the cache device. Writes go directly
+ *   to the backing device; frequently-read data is promoted to the cache.
+ * \end{description}
+ *
+ * The \texttt{durability=0} setting is essential for cache devices: it ensures
+ * bcachefs does not count cached copies toward the replica count, so losing the
+ * cache device never causes data loss.
+ *
+ * \subsubsection{Adding and removing devices}
+ *
+ * \begin{description}
+ * \item[\texttt{bcachefs device add}] Adds a new device to a mounted
+ *   filesystem. The device is formatted with bcachefs metadata and integrated
+ *   immediately---new allocations can land on it right away. A label can be
+ *   assigned at add time with \texttt{-l}. Other per-device options
+ *   (\texttt{-{}-discard}, \texttt{-{}-durability}) can be set at add time.
+ *
+ *   The new device must have a block size and bucket size compatible with the
+ *   existing filesystem. After the device is added, its UUID is published via
+ *   uevent so that \texttt{/dev/disk/by-uuid} symlinks are updated, and the
+ *   reconcile subsystem is notified to scan for any work on the new device.
+ *
+ * \item[\texttt{bcachefs device evacuate}] Migrates all data off a device,
+ *   displaying progress as sectors are moved. Uses the reconcile subsystem
+ *   internally; the device's state transitions to evacuating during the process.
+ *   Requires metadata version $\geq$ \texttt{reconcile} (1.33).
+ * \item[\texttt{bcachefs device remove}] Removes a fully evacuated device from
+ *   the filesystem and erases its metadata. Force flags allow removal even if
+ *   some data (\texttt{-f}) or metadata (\texttt{-F}) would be lost.
+ *
+ *   Two removal code paths exist: the legacy path walks the btree to find and
+ *   relocate all references to the device, while the \texttt{fast\_device\_removal}
+ *   path (default on newer metadata versions) uses
+ *   \hyperref[sec:backpointers]{backpointers} to efficiently locate all data
+ *   on the device without a full btree scan.
+ *
+ * \item[\texttt{bcachefs device online/offline}] Bring a device back online or
+ *   take it offline without removing it. Offline devices retain their superblock
+ *   membership and can be brought back later. Bringing a device online includes
+ *   a splitbrain check against the running filesystem's sequence numbers;
+ *   onlining also triggers a reconcile scan to detect any data that may need
+ *   re-replication.
+ *
+ *   Offlining a device requires that the remaining online devices can still
+ *   satisfy both read and write requirements---the kernel checks that at least
+ *   one device can serve reads and at least one can accept writes for every
+ *   replica group. If offlining would leave the filesystem unable to operate,
+ *   the request is rejected unless forced.
+ * \end{description}
+ *
+ * The typical device removal workflow: \texttt{bcachefs device evacuate /dev/sda}
+ * (wait for completion, watching progress), then \texttt{bcachefs device remove
+ * /dev/sda}.
+ *
+ * \subsubsection{Block layer hot-remove}
+ *
+ * When the block layer reports a device as dead (e.g., a USB drive is
+ * unplugged, or a disk is removed from a hot-swap bay), bcachefs receives
+ * a notification and attempts a graceful response. If the device can be
+ * offlined without leaving the filesystem unable to operate, it is taken
+ * offline automatically. Otherwise, the filesystem transitions to
+ * emergency read-only mode to prevent data corruption from writes that
+ * can no longer reach all required replicas.
+ *
+ * \subsubsection{Data-type restrictions}
+ *
+ * The \texttt{data\_allowed} member field restricts which data types a device
+ * can hold: journal, btree, or user data. This allows dedicating fast devices to
+ * metadata while slower devices hold only user data, or restricting a device to
+ * journal-only for write-ahead log isolation. Restrictions are set at format
+ * time or via \texttt{set-fs-option} and are enforced by the
+ * \hyperref[sec:write-points]{allocator}.
+ *
+ * \subsubsection{Degraded mode}
+ *
+ * When a device is unavailable (failed, offline, or physically disconnected),
+ * the filesystem can continue operating in degraded mode if sufficient
+ * redundancy remains. The number of tolerable failures per replica group is
+ * \texttt{nr\_devs - nr\_required}: with 3-way replication, one device can fail
+ * without data loss.
+ *
+ * The \texttt{degraded} mount option controls behavior when devices are missing:
+ *
+ * \begin{description}
+ * \item[\texttt{degraded=true}] Allow mounting with missing devices (read-only
+ *   access to degraded data)
+ * \item[\texttt{degraded=run}] Allow mounting and normal operation with missing
+ *   devices
+ * \item[\texttt{degraded=very}] Allow mounting even if writes cannot maintain
+ *   the requested replica count (\textbf{dangerous}---creates splitbrain risk)
+ * \end{description}
+ *
+ * While degraded, the filesystem has reduced safety margin---further device loss
+ * may cause data unavailability. The reconcile subsystem will automatically
+ * repair degraded data by re-replicating to available devices.
+ *
+ * \subsubsection{Resize}
+ *
+ * \texttt{bcachefs device resize} grows a device to use additional space
+ * (shrinking is not yet supported). If no size is specified, the device grows to
+ * fill its underlying block device. Resize works online---no unmount required.
+ * The new size is subject to a maximum bucket count
+ * (\texttt{BCH\_MEMBER\_NBUCKETS\_MAX}); resize will fail if the requested size
+ * would exceed this limit. After resize, the reconcile subsystem is notified to
+ * account for the newly available space.
+ *
+ * \texttt{bcachefs device resize-journal} adjusts the per-device journal size
+ * independently of the data area.
+ *
+ * \subsubsection{Device failure and error tracking}
+ *
+ * Each device tracks cumulative error counters (read, write, checksum) in the
+ * superblock members section. These counters persist across mounts and help
+ * identify failing hardware before catastrophic failure. The
+ * \texttt{write\_error\_timeout} option (default 30 seconds) controls how long
+ * sustained write errors must persist before the device is automatically set to
+ * read-only.
+ *
+ * When a device is set to read-only due to errors, reads can still be served
+ * from it. If reads also fail, the device should be taken offline entirely to
+ * prevent \hyperref[sec:journal]{journal} stalls---the journal cannot reclaim
+ * space if it cannot read back btree nodes from a failed device.
+ *
+ * \subsubsection{Consistency and self-healing}
+ *
+ * Device membership is tracked in the superblock and cross-validated against
+ * on-disk data during recovery. The allocator checks freespace and alloc btrees
+ * against each other before using a bucket. Backpointer walks verify that all
+ * data on a device is accounted for. If a device is removed or fails, the
+ * reconcile subsystem detects under-replicated data and re-replicates it to
+ * remaining devices automatically.
+ */
+
 #include "bcachefs.h"
 
 #include "alloc/accounting.h"

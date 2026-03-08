@@ -1,4 +1,136 @@
 // SPDX-License-Identifier: GPL-2.0
+
+/* DOC_LATEX(snapshots)
+ * \subsubsection{Overview}
+ *
+ * A subvolume is an independent directory tree within the filesystem, similar to
+ * btrfs subvolumes. Subvolumes appear as directories and can be created empty or
+ * as snapshots of existing subvolumes. Snapshots are writeable by default and can
+ * be snapshotted again, forming a tree of snapshots. They can also be created
+ * read-only.
+ *
+ * Snapshots are O(1) to create regardless of filesystem size --- no data or
+ * metadata is copied. Writes to either the source or the snapshot only diverge
+ * where modifications occur. Many thousands or millions of snapshots can exist,
+ * limited only by disk space.
+ *
+ * Each snapshot tree has a \emph{master subvolume}: the original non-snapshot
+ * subvolume from which all snapshots in the tree descend. The master subvolume is
+ * significant for quota accounting: quotas are charged based on the uid/gid/project
+ * recorded in the master subvolume's inodes. Snapshot subvolumes bypass quota
+ * enforcement entirely, because ownership changes within a snapshot would make
+ * it ambiguous which quota should be charged. If the master subvolume is deleted,
+ * quota accounting for that snapshot tree is skipped.
+ *
+ * Subvolumes and snapshots can be managed with:
+ * \begin{itemize}
+ * \item \texttt{bcachefs subvolume create/delete/snapshot} --- create, delete,
+ *   and snapshot subvolumes
+ * \item \texttt{bcachefs subvolume list} --- list subvolumes in tree view
+ * \item \texttt{bcachefs subvolume list-snapshots} --- show snapshot tree with
+ *   per-snapshot disk usage
+ * \end{itemize}
+ *
+ * \subsubsection{Architecture}
+ *
+ * A subvolume holds a root inode number and a snapshot ID. The snapshot ID links
+ * the subvolume to a leaf node in the snapshots btree, which records the snapshot
+ * tree structure: parent, children (up to two), depth, and a skiplist for fast
+ * ancestor queries. Only leaf snapshot nodes are associated with subvolumes;
+ * interior nodes exist purely for tree structure. Snapshot trees are grouped
+ * under \texttt{snapshot\_tree} entries, each recording the root snapshot and
+ * the master subvolume.
+ *
+ * \subsubsection{Key visibility}
+ *
+ * Four \hyperref[sec:btrees]{btrees} are snapshot-aware: extents, inodes,
+ * dirents, and xattrs. Every key in these btrees includes a snapshot ID in its
+ * position
+ * (\texttt{bpos.snapshot}), so keys from different snapshots coexist in the same
+ * btree ordered by (inode, offset, snapshot). When reading from a snapshot, the
+ * iterator walks up the snapshot tree: a key is visible if its snapshot ID is an
+ * ancestor of (or equal to) the requested snapshot, and no closer ancestor has
+ * overwritten it. Deletion within a snapshot inserts a whiteout key that blocks
+ * visibility of the ancestor's version without affecting other snapshots.
+ *
+ * To avoid a linear parent-pointer walk on every lookup, each snapshot node stores
+ * a 128-bit ancestor bitmap for O(1) checks when ancestor and descendant are
+ * within 128 snapshot IDs of each other, plus a randomized skiplist of three
+ * ancestor IDs for O(log $n$) convergence on deeper trees. During early recovery,
+ * before this data is validated, queries fall back to a simple parent walk.
+ *
+ * \subsubsection{Snapshot creation}
+ *
+ * When a snapshot is created, two new snapshot nodes are allocated as children of
+ * the source subvolume's current snapshot node. One child becomes the new
+ * snapshot's ID; the other replaces the source subvolume's snapshot ID. No keys
+ * are copied: both children inherit visibility of all ancestor keys through the
+ * snapshot tree. Subsequent writes to either subvolume create new keys tagged with
+ * that subvolume's snapshot ID, diverging only where modifications occur.
+ *
+ * This is fundamentally different from btrfs, which clones entire COW btrees on
+ * snapshot. Because bcachefs snapshots share the actual btree keys (not copies),
+ * creation is O(1) regardless of filesystem size. Many thousands or millions of
+ * snapshots can be created, limited only by disk space.
+ *
+ * \subsubsection{Snapshot deletion}
+ *
+ * Deleting a snapshot (or subvolume) marks it for asynchronous cleanup by a
+ * background thread. The cost of deletion is proportional to the volume of data
+ * in the deleted snapshot, since the thread must walk every snapshot-aware btree
+ * to remove or relocate affected keys.
+ *
+ * Deletion is two-phase:
+ *
+ * \begin{enumerate}
+ * \item \textbf{Runtime}: The background thread walks snapshot-aware btrees and
+ *   removes keys belonging to dead snapshots. For leaf snapshots, keys are
+ *   deleted or converted to whiteouts where ancestor visibility must be
+ *   preserved. For interior nodes that have lost all but one child, keys are
+ *   moved to the surviving child.
+ *
+ * \item \textbf{Next mount}: Interior node removal is deferred to recovery
+ *   because it requires updating depth and skiplist fields atomically across
+ *   the subtree, which is only safe in the single-threaded recovery context.
+ * \end{enumerate}
+ *
+ * A snapshot with two children cannot be deleted directly --- you must first
+ * delete one of its child snapshots. Multiple snapshot deletions are batched
+ * and processed together in a single pass.
+ *
+ * Progress can be monitored via
+ * \texttt{/sys/fs/bcachefs/<uuid>/snapshot\_delete\_status}. The
+ * \texttt{auto\_snapshot\_deletion} mount option controls whether the background
+ * deletion thread runs automatically.
+ *
+ * \subsubsection{Space accounting}
+ *
+ * Space usage is tracked per snapshot via the accounting subsystem. The
+ * \texttt{bcachefs subvolume list-snapshots} command shows per-snapshot disk
+ * usage attribution (own data vs.\ cumulative including children). Because
+ * snapshots share data through COW, the sum of individual snapshot usage will
+ * exceed the actual disk usage --- the difference is shared data.
+ *
+ * \subsubsection{Consistency and self-healing}
+ *
+ * Several recovery passes validate snapshot consistency:
+ *
+ * \begin{description}
+ * \item[\texttt{check\_snapshots}] Validates the snapshot tree structure:
+ *   parent/child links, depth fields, skiplist entries, and ancestor bitmaps.
+ *   Detects and repairs orphaned or malformed snapshot nodes.
+ * \item[\texttt{check\_subvols}] Validates subvolume entries: ensures each
+ *   points to a valid snapshot leaf, root inode exists, and master subvolume
+ *   designation is consistent.
+ * \item[\texttt{delete\_dead\_snapshots}] Runs the snapshot deletion cleanup
+ *   for any snapshots marked for deletion but not yet fully cleaned up.
+ * \end{description}
+ *
+ * These passes can run online. The snapshot deletion thread itself is
+ * self-healing: if it is interrupted (crash, reboot), it resumes cleanup on next
+ * mount by re-scanning for snapshots still marked for deletion.
+ */
+
 #include "bcachefs.h"
 
 #include "alloc/accounting.h"

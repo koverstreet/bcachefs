@@ -23,6 +23,116 @@
 
 #include "util/enumerated_ref.h"
 
+/* DOC_LATEX(journal)
+ * The journal is a write-ahead log for metadata. Instead of writing every
+ * \hyperref[sec:btrees]{btree} update directly to its btree node on disk,
+ * bcachefs records updates in the journal first. This allows metadata writes to be batched and sequential,
+ * dramatically improving performance.
+ *
+ * \subsubsection{How the journal works}
+ *
+ * Each journal entry (\texttt{struct jset}) contains a list of typed sub-entries:
+ * btree key updates, btree root pointers, timestamps, IO clock values, and
+ * diagnostic messages. Entries are assigned monotonically increasing sequence
+ * numbers that survive crashes and are never reused.
+ *
+ * The journal is stored as a ring buffer of buckets on each device. As new
+ * entries are written, they advance through the ring. Old entries are reclaimed
+ * once all the btree nodes they refer to have been flushed to disk.
+ *
+ * \subsubsection{Journal pins and reclaim}
+ *
+ * A \emph{journal pin} holds a reference from a dirty btree node (or key cache
+ * entry) to the journal sequence that contains its latest update. Journal space
+ * for a sequence cannot be reclaimed until all pins referencing that sequence
+ * are released---which happens when the corresponding btree node is written to
+ * disk.
+ *
+ * The journal reclaim thread runs in the background, identifying which btree
+ * nodes are pinning the oldest journal sequences and flushing them. Under normal
+ * operation this is invisible; under heavy write load, reclaim may need to work
+ * harder to keep up.
+ *
+ * \subsubsection{Space pressure}
+ *
+ * When free journal space drops below 25\%, or the pin list fills to 75\%
+ * capacity, the journal enters a reclaim watermark state. In this state:
+ *
+ * \begin{itemize}
+ * \item New metadata writes may be throttled
+ * \item The reclaim thread is woken to aggressively flush btree nodes
+ * \item Space is typically freed within milliseconds as nodes flush
+ * \end{itemize}
+ *
+ * If the journal fills completely, metadata operations block until space is
+ * freed. This is rare under normal workloads and resolves automatically. A
+ * sustained ``journal full'' condition typically indicates that btree node
+ * writes are bottlenecked---often by a slow device or high IO contention.
+ *
+ * \subsubsection{Flush and ordering}
+ *
+ * Journal writes come in two flavors:
+ *
+ * \begin{description}
+ * \item[Flush writes] Ordered to stable storage with disk cache flushes. These
+ *   provide durability guarantees---data acknowledged to applications via
+ *   \texttt{fsync()} is protected by flush writes. A configurable delay
+ *   (\texttt{journal\_flush\_delay}, default 1000\,ms) batches updates before
+ *   flushing.
+ * \item[No-flush writes] Written without ordering guarantees. These can be lost
+ *   on power failure but are much cheaper. Used between flush points to reduce
+ *   IO overhead.
+ * \end{description}
+ *
+ * On multi-device filesystems, flush writes issue a preflush to all devices
+ * first, ensuring all pending data writes are ordered before the journal entry.
+ *
+ * \subsubsection{Mount and recovery}
+ *
+ * On mount, the journal is read from all devices. The recovery window is
+ * determined by two sequence numbers: \texttt{last\_seq} (the oldest entry still
+ * needed) and the sequence of the last valid flush entry. All entries in this
+ * window are replayed in order, re-inserting their btree keys into the btree.
+ * Journal replay is idempotent---replaying the same entry twice is safe.
+ *
+ * On clean shutdown, a special \texttt{clean} field is written to the
+ * \hyperref[sec:superblock]{superblock} containing the btree roots and usage
+ * counters, allowing the next mount to skip journal replay entirely.
+ *
+ * \textbf{Sequence blacklisting}: After an unclean shutdown, some btree nodes on
+ * disk may reference journal sequences that were never durably committed. These
+ * sequences are added to a blacklist stored in the superblock; any btree node
+ * data referencing a blacklisted sequence is ignored during recovery. Once the
+ * affected nodes are rewritten with new sequences, the blacklist entries are
+ * garbage collected.
+ *
+ * \subsubsection{User-facing options}
+ *
+ * \begin{description}
+ * \item[\texttt{journal\_flush\_delay}] Milliseconds before auto-committing the
+ *   journal (default 1000). Lower values reduce the window of data loss on
+ *   crash; higher values improve throughput.
+ * \item[\texttt{journal\_flush\_disabled}] Disable journal flushes entirely.
+ *   \textbf{Dangerous}---data loss is expected on any unclean shutdown.
+ * \item[\texttt{journal\_reclaim\_delay}] Milliseconds before triggering
+ *   background reclaim (default 100).
+ * \item[\texttt{journal\_transaction\_names}] Log function names in journal
+ *   entries for debugging (default enabled).
+ * \end{description}
+ *
+ * Journal size is configured per device and can be resized online with
+ * \texttt{bcachefs device resize-journal}.
+ *
+ * \subsubsection{Consistency and self-healing}
+ *
+ * Every journal entry is checksummed. Entries that fail checksum validation are
+ * skipped during replay, with the filesystem falling back to the last known good
+ * entry. The sequence blacklist mechanism ensures that partially-written state
+ * from crashes cannot corrupt the btree. Journal entries are replicated across
+ * devices according to the \texttt{metadata\_replicas} setting; if one device's
+ * journal is unreadable, recovery proceeds from the other copies.
+ */
+
 static bool __journal_entry_is_open(union journal_res_state state)
 {
 	return state.cur_entry_offset < JOURNAL_ENTRY_CLOSED_VAL;

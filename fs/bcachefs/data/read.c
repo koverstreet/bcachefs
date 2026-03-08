@@ -1,9 +1,25 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Some low level IO code, and hacks for various block layer limitations
- *
  * Copyright 2010, 2011 Kent Overstreet <kent.overstreet@gmail.com>
  * Copyright 2012 Google, Inc.
+ */
+
+/* DOC(data-read-path)
+ *
+ * Reads are transparent and self-healing: if a checksum failure or IO error
+ * occurs on one replica, bcachefs automatically retries from another replica.
+ * The failed device's error counter is incremented and the bad copy is
+ * rewritten from the good one. If all replicas fail, the error is propagated
+ * to the application.
+ *
+ * With multiple devices, reads go to the lowest-latency replica. This is
+ * tracked per-device and adapts over time, so mixed SSD/HDD configurations
+ * automatically prefer the SSD for reads without explicit configuration.
+ *
+ * End-to-end flow: extent lookup, device selection, disk read, checksum
+ * verification, decompression, decryption. For compressed or checksummed
+ * extents the full extent must be read even for partial requests, because
+ * checksums and compression operate on the whole extent.
  */
 
 #include "bcachefs.h"
