@@ -449,6 +449,7 @@ void bch2_journal_flush_async(struct journal *, unsigned, struct closure *);
 
 int bch2_journal_flush_seq(struct journal *, u64, unsigned);
 int bch2_journal_flush(struct journal *);
+void bch2_journal_advance_rewind_seq(struct journal *, u64);
 bool bch2_journal_noflush_seq(struct journal *, u64, u64);
 
 int __bch2_journal_meta(struct journal *);

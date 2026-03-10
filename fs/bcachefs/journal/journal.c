@@ -970,6 +970,16 @@ int bch2_journal_flush(struct journal *j)
 }
 
 /*
+ * Advance the rewind limit so that discards up to @seq become safe.
+ * Must be called before bch2_journal_flush() to persist the new limit.
+ */
+void bch2_journal_advance_rewind_seq(struct journal *j, u64 seq)
+{
+	scoped_guard(spinlock, &j->lock)
+		j->rewind_seq = max(j->rewind_seq, seq);
+}
+
+/*
  * bch2_journal_noflush_seq - ask the journal not to issue any flushes in the
  * range [start, end)
  * @seq

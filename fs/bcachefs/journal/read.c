@@ -857,6 +857,34 @@ static void journal_entry_datetime_to_text(struct printbuf *out, struct bch_fs *
 	bch2_prt_datetime(out, le64_to_cpu(datetime->seconds));
 }
 
+static int journal_entry_rewind_limit_validate(struct bch_fs *c,
+				struct jset *jset,
+				struct jset_entry *entry,
+				unsigned version, int big_endian,
+				struct bkey_validate_context from)
+{
+	unsigned bytes = jset_u64s(le16_to_cpu(entry->u64s)) * sizeof(u64);
+	int ret = 0;
+
+	if (journal_entry_err_on(bytes != sizeof(struct jset_entry_rewind_limit),
+				 c, version, jset, entry,
+				 journal_entry_rewind_limit_bad_size,
+				 "bad size")) {
+		journal_entry_null_range(entry, vstruct_next(entry));
+	}
+fsck_err:
+	return ret;
+}
+
+static void journal_entry_rewind_limit_to_text(struct printbuf *out, struct bch_fs *c,
+					       struct jset_entry *entry)
+{
+	struct jset_entry_rewind_limit *r =
+		container_of(entry, struct jset_entry_rewind_limit, entry);
+
+	prt_printf(out, "seq %llu", le64_to_cpu(r->seq));
+}
+
 struct jset_entry_ops {
 	int (*validate)(struct bch_fs *, struct jset *,
 			struct jset_entry *, unsigned, int,
@@ -1457,6 +1485,14 @@ int bch2_journal_read(struct bch_fs *c, struct journal_start_info *info)
 		 * journal rewind:
 		 */
 		if (c->opts.journal_rewind) {
+			if (c->journal.rewind_seq &&
+			    c->opts.journal_rewind < c->journal.rewind_seq) {
+				bch_err(c, "cannot rewind to %llu: discards have invalidated "
+					"journal entries before %llu",
+					c->opts.journal_rewind,
+					c->journal.rewind_seq);
+				return bch_err_throw(c, EINVAL_journal_rewind_before_discard);
+			}
 			drop_before = min(drop_before, c->opts.journal_rewind);
 			prt_printf(&buf, " (rewinding from %llu)", c->opts.journal_rewind);
 		}
@@ -1522,6 +1558,14 @@ int bch2_journal_read(struct bch_fs *c, struct journal_start_info *info)
 			replicas_entry_add_dev(&replicas.e, ptr->dev);
 
 		bch2_replicas_entry_sort(&replicas.e);
+
+		vstruct_for_each(&i->j, entry)
+			if (entry->type == BCH_JSET_ENTRY_rewind_limit) {
+				struct jset_entry_rewind_limit *r =
+					container_of(entry, struct jset_entry_rewind_limit, entry);
+				c->journal.rewind_seq		= le64_to_cpu(r->seq);
+				c->journal.rewind_seq_ondisk	= le64_to_cpu(r->seq);
+			}
 	}
 fsck_err:
 	return ret;

@@ -737,6 +737,7 @@ struct bch_fs {
 
 	struct io_clock			io_clock[2];
 	struct journal_entry_res	clock_journal_res;
+	struct journal_entry_res	rewind_limit_res;
 
 	/* IO PATH */
 	struct workqueue_struct	*btree_update_wq;

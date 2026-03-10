@@ -252,6 +252,11 @@ struct journal {
 	u64			last_empty_seq;
 	u64			oldest_seq_found_ondisk;
 
+	/* Oldest journal seq that is safe to rewind to — discards of buckets
+	 * freed at >= this seq have not yet been issued */
+	u64			rewind_seq;
+	u64			rewind_seq_ondisk;
+
 	/*
 	 * FIFO of journal entries whose btree updates have not yet been
 	 * written out.

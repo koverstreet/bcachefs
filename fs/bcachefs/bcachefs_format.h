@@ -1546,7 +1546,10 @@ static inline __u64 __bset_magic(struct bch_sb *sb)
 	x(datetime,		12,					\
 	  "Wall clock time at journal write")				\
 	x(log_bkey,		13,					\
-	  "Structured log entry containing a btree key")
+	  "Structured log entry containing a btree key")	\
+	x(rewind_limit,		14,				\
+	  "Oldest journal seq safe for rewind "			\
+	  "(discards may have invalidated earlier seqs)")
 
 enum bch_jset_entry_type {
 #define x(f, nr, ...)	BCH_JSET_ENTRY_##f	= nr,
@@ -1658,6 +1661,11 @@ static inline unsigned jset_entry_log_msg_bytes(struct jset_entry_log *l)
 struct jset_entry_datetime {
 	struct jset_entry	entry;
 	__le64			seconds;
+} __packed __aligned(8);
+
+struct jset_entry_rewind_limit {
+	struct jset_entry	entry;
+	__le64			seq;
 } __packed __aligned(8);
 
 /*
