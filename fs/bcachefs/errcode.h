@@ -377,6 +377,7 @@
 	x(EINVAL,			EINVAL_journal_seq_overflow)			\
 	x(EINVAL,			EINVAL_journal_entry_version_incompatible)	\
 	x(EINVAL,			EINVAL_journal_validate_version_incompatible)	\
+	x(EINVAL,			EINVAL_journal_rewind_before_discard)		\
 	x(EINVAL,			EINVAL_opt_target_parse_not_found)		\
 	x(EINVAL,			EINVAL_disable_encryption_no_crypt)		\
 	x(EINVAL,			EINVAL_reflink_gc_table_mismatch)		\

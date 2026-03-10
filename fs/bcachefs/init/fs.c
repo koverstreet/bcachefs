@@ -1287,6 +1287,9 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	bch2_journal_entry_res_resize(&c->journal,
 			&c->clock_journal_res,
 			(sizeof(struct jset_entry_clock) / sizeof(u64)) * 2);
+	bch2_journal_entry_res_resize(&c->journal,
+			&c->rewind_limit_res,
+			sizeof(struct jset_entry_rewind_limit) / sizeof(u64));
 
 	scoped_guard(rwsem_write, &c->state_lock)
 		darray_for_each(*sbs, sb)

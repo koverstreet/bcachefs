@@ -314,6 +314,7 @@ static CLOSURE_CALLBACK(journal_write_done)
 
 			/* replicas refs need to be put first */
 			j->flushed_seq_ondisk = seq;
+			j->rewind_seq_ondisk = j->rewind_seq;
 		}
 
 		if (w->empty)
@@ -694,6 +695,17 @@ static int bch2_journal_write_pick_flush(struct journal *j, struct journal_buf *
 		j->last_flush_write = jiffies;
 		j->nr_flush_writes++;
 		clear_bit(JOURNAL_need_flush_write, &j->flags);
+
+		struct jset *jset = w->data;
+		struct jset_entry *end = vstruct_last(jset);
+		struct jset_entry_rewind_limit *r =
+			container_of(jset_entry_init(&end, sizeof(*r)),
+				     struct jset_entry_rewind_limit, entry);
+		r->entry.type	= BCH_JSET_ENTRY_rewind_limit;
+		r->seq		= cpu_to_le64(min(j->rewind_seq,
+						  le64_to_cpu(jset->seq) + 1));
+		le32_add_cpu(&jset->u64s,
+			     sizeof(*r) / sizeof(u64));
 	}
 
 	return 0;

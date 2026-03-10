@@ -29,6 +29,7 @@
 #include "init/recovery.h"
 
 #include "journal/init.h"
+#include "journal/journal.h"
 #include "journal/read.h"
 #include "journal/reclaim.h"
 #include "journal/sb.h"
@@ -1036,6 +1037,10 @@ int bch2_fs_initialize(struct bch_fs *c)
 	bch_err_msg(c, ret, "writing first journal entry");
 	if (ret)
 		return ret;
+
+	/* Don't allow rewind into initialization entries */
+	bch2_journal_advance_rewind_seq(&c->journal,
+			atomic64_read(&c->journal.seq) + 1);
 
 	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 		guard(mutex)(&c->sb_lock);

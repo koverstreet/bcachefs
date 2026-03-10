@@ -403,6 +403,10 @@ int bch2_fs_journal_start(struct journal *j, struct journal_start_info info)
 	j->seq_ondisk		= cur_seq - 1;
 	j->pin.front		= last_seq;
 	j->last_seq		= last_seq;
+	if (!j->rewind_seq) {
+		j->rewind_seq		= last_seq;
+		j->rewind_seq_ondisk	= last_seq;
+	}
 	j->pin.back		= cur_seq;
 	atomic64_set(&j->seq, cur_seq - 1);
 

@@ -41,6 +41,7 @@ enum bch_fsck_flags {
 	x(journal_entry_dev_usage_bad_size,			 27,	0)		\
 	x(journal_entry_dev_usage_bad_dev,			 28,	0)		\
 	x(journal_entry_dev_usage_bad_pad,			 29,	0)		\
+	x(journal_entry_rewind_limit_bad_size,			355,	0)		\
 	x(btree_node_unreadable,				 30,	0)		\
 	x(btree_node_fault_injected,				 31,	0)		\
 	x(btree_node_bad_magic,					 32,	0)		\
@@ -366,7 +367,7 @@ enum bch_fsck_flags {
 	x(vfs_i_size_bad,					343,	0)		\
 	x(vfs_i_sectors_bad,					344,	0)		\
 	x(vfs_unlink_got_wrong_inum,				349,	0)		\
-	x(MAX,							355,	0)
+	x(MAX,							356,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,
