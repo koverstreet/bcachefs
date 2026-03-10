@@ -14,6 +14,8 @@
 
 #include "init/fs.h"
 
+#include "journal/journal.h"
+
 /* Discard FIFO - per-device, tracks buckets waiting for journal flush before discard */
 
 static inline struct discard_fifo_entry *
@@ -158,8 +160,6 @@ int bch2_discard_buckets_populate(struct bch_fs *c)
 
 static u64 discard_fifo_get(struct bch_dev *ca, struct discard_fifo_cursor *cursor)
 {
-	u64 threshold = ca->fs->journal.flushed_seq_ondisk;
-
 	guard(mutex)(&ca->discard_lock);
 
 	if (cursor->fifo_idx < ca->discard_fifo.front)
@@ -171,7 +171,7 @@ static u64 discard_fifo_get(struct bch_dev *ca, struct discard_fifo_cursor *curs
 		struct discard_fifo_entry *e =
 			&ca->discard_fifo.data[cursor->fifo_idx & ca->discard_fifo.mask];
 
-		if (e->seq > threshold)
+		if (e->seq >= ca->fs->journal.rewind_seq_ondisk)
 			break;
 
 		if (cursor->bucket_idx < e->buckets.nr)
@@ -337,6 +337,49 @@ again:
 						&discard_pos_done, &s, false));
 		if (ret)
 			break;
+	}
+
+	/*
+	 * Rewind buffer policy: keep up to 10% of device buckets undiscarded
+	 * so journal rewind has data to work with. Only advance rewind_seq
+	 * (releasing buckets for discard) when free space is tight.
+	 *
+	 * Calculate how far to advance in one shot to avoid repeated flushes.
+	 */
+	if (!ret && !bucket && discard_fifo_nr_pending(ca)) {
+		struct journal *j = &c->journal;
+		u64 nr_pending = discard_fifo_nr_pending(ca);
+		u64 free = dev_buckets_free(ca, BCH_WATERMARK_normal);
+		u64 rewind_buffer = min(ca->mi.nbuckets / 10, free);
+
+		if (nr_pending > rewind_buffer) {
+			u64 to_release = nr_pending - rewind_buffer;
+			u64 new_rewind_seq = 0;
+
+			scoped_guard(mutex, &ca->discard_lock) {
+				size_t iter;
+				struct discard_fifo_entry *e;
+				fifo_for_each_entry_ptr(e, &ca->discard_fifo, iter) {
+					if (e->seq < j->rewind_seq_ondisk)
+						continue;
+					new_rewind_seq = e->seq + 1;
+					if (to_release <= e->buckets.nr)
+						break;
+					to_release -= e->buckets.nr;
+				}
+			}
+
+			if (new_rewind_seq) {
+				bch2_journal_advance_rewind_seq(j, new_rewind_seq);
+
+				bch2_trans_unlock_long(trans);
+				ret = bch2_journal_flush(&c->journal);
+				if (!ret) {
+					cursor = (struct discard_fifo_cursor){};
+					goto again;
+				}
+			}
+		}
 	}
 
 	/* FIFO lost entries due to OOM: repopulate from btree and drain again.
