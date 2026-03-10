@@ -680,7 +680,7 @@ static inline void bch2_dev_stripe_increment_inlined(struct bch_dev *ca,
 	 */
 
 	u64 *v = stripe->next_alloc + ca->dev_idx;
-	u64 free_space = __dev_buckets_available(ca, *usage, BCH_WATERMARK_normal);
+	u64 free_space = __dev_buckets_free(ca, *usage, BCH_WATERMARK_normal);
 	u64 free_space_inv = free_space
 		? div64_u64(stripe_clock_hand_inv, free_space)
 		: stripe_clock_hand_inv;
