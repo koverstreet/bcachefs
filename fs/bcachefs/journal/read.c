@@ -119,6 +119,30 @@ static void journal_replay_free(struct bch_fs *c, struct journal_replay *i, bool
 		__journal_replay_free(c, i);
 }
 
+static void journal_replay_maybe_drop_overwrites(struct bch_fs *c, struct jset *j)
+{
+	/* Drop overwrites, log entries if we don't need them: */
+	if (c->opts.retain_recovery_info ||
+	    c->opts.journal_rewind)
+		return;
+
+	vstruct_for_each_safe(j, src)
+		if (vstruct_end(src) > vstruct_end(j))
+			return;
+
+	struct jset_entry *dst = j->start;
+	vstruct_for_each_safe(j, src) {
+		if (src->type == BCH_JSET_ENTRY_log ||
+		    src->type == BCH_JSET_ENTRY_overwrite)
+			continue;
+
+		memmove_u64s_down(dst, src, vstruct_u64s(src));
+		dst = vstruct_next(dst);
+	}
+
+	j->u64s = cpu_to_le32((u64 *) dst - j->_data);
+}
+
 struct journal_list {
 	struct closure		cl;
 	u64			last_seq;
@@ -139,7 +163,6 @@ static int journal_entry_add(struct bch_fs *c, struct bch_dev *ca,
 {
 	struct genradix_iter iter;
 	struct journal_replay **_i, *i, *dup;
-	size_t bytes = vstruct_bytes(j);
 	u64 last_seq = !JSET_NO_FLUSH(j) ? le64_to_cpu(j->last_seq) : 0;
 	u64 seq = le64_to_cpu(j->seq);
 	CLASS(printbuf, buf)();
@@ -180,27 +203,10 @@ static int journal_entry_add(struct bch_fs *c, struct bch_dev *ca,
 		}
 	}
 
-	/* Drop overwrites, log entries if we don't need them: */
-	if (!c->opts.retain_recovery_info &&
-	    !c->opts.journal_rewind) {
-		vstruct_for_each_safe(j, src)
-			if (vstruct_end(src) > vstruct_end(j))
-				goto nocompact;
+	journal_replay_maybe_drop_overwrites(c, j);
 
-		struct jset_entry *dst = j->start;
-		vstruct_for_each_safe(j, src) {
-			if (src->type == BCH_JSET_ENTRY_log ||
-			    src->type == BCH_JSET_ENTRY_overwrite)
-				continue;
+	size_t bytes = vstruct_bytes(j);
 
-			memmove_u64s_down(dst, src, vstruct_u64s(src));
-			dst = vstruct_next(dst);
-		}
-
-		j->u64s = cpu_to_le32((u64 *) dst - j->_data);
-		bytes = vstruct_bytes(j);
-	}
-nocompact:
 	jlist->last_seq = max(jlist->last_seq, last_seq);
 
 	if (seq <  c->journal_entries_base_seq ||
