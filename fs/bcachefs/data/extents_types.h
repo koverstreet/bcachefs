@@ -47,7 +47,8 @@ struct bch_io_failures {
 	x(last_fragment)		\
 	x(must_bounce)			\
 	x(must_clone)			\
-	x(in_retry)
+	x(in_retry)			\
+	x(no_retry)
 
 enum __bch_read_flags {
 #define x(n)	__BCH_READ_##n,

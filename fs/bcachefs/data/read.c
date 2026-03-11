@@ -667,39 +667,45 @@ static void bch2_rbio_retry(struct work_struct *work)
 
 		struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
 		bch2_bkey_buf_init(&sk);
-		get_rbio_extent(trans, rbio, &sk);
+		int ret = rbio->ret;
 
-		if (!bkey_deleted(&sk.k->k) &&
-		    (bch2_err_matches(rbio->ret, BCH_ERR_data_read_retry_avoid) ||
-		     bch2_err_matches(rbio->ret, BCH_ERR_blockdev_io_error))) {
+		if (!(flags & BCH_READ_no_retry)) {
+			get_rbio_extent(trans, rbio, &sk);
+
+			if (!bkey_deleted(&sk.k->k) &&
+			    (bch2_err_matches(rbio->ret, BCH_ERR_data_read_retry_avoid) ||
+			     bch2_err_matches(rbio->ret, BCH_ERR_blockdev_io_error))) {
+				bch2_mark_io_failure(&failed, &rbio->pick, rbio->ret);
+				propagate_io_error_to_data_update(c, rbio, &rbio->pick);
+			}
+
+			if (!rbio->split) {
+				rbio->bio.bi_status	= 0;
+				rbio->ret		= 0;
+			}
+
+			rbio = bch2_rbio_free(rbio);
+
+			flags |= BCH_READ_in_retry;
+			flags &= ~BCH_READ_may_promote;
+			flags &= ~BCH_READ_last_fragment;
+			flags |= BCH_READ_must_clone;
+
+			ret = rbio->data_update
+				? bch2_read_retry_nodecode(trans, rbio, iter, &failed, flags)
+				: __bch2_read(trans, rbio, iter, inum, &failed, &sk, flags);
+
+			if (ret)
+				rbio->ret = ret;
+
+			if (rbio->data_update &&
+			    (bch2_err_matches(ret, BCH_ERR_data_read_key_overwritten) ||
+			     bch2_err_matches(ret, BCH_ERR_data_read_ptr_stale_race)))
+				ret = 0;
+		} else {
 			bch2_mark_io_failure(&failed, &rbio->pick, rbio->ret);
-			propagate_io_error_to_data_update(c, rbio, &rbio->pick);
-
+			rbio = bch2_rbio_free(rbio);
 		}
-
-		if (!rbio->split) {
-			rbio->bio.bi_status	= 0;
-			rbio->ret		= 0;
-		}
-
-		rbio = bch2_rbio_free(rbio);
-
-		flags |= BCH_READ_in_retry;
-		flags &= ~BCH_READ_may_promote;
-		flags &= ~BCH_READ_last_fragment;
-		flags |= BCH_READ_must_clone;
-
-		int ret = rbio->data_update
-			? bch2_read_retry_nodecode(trans, rbio, iter, &failed, flags)
-			: __bch2_read(trans, rbio, iter, inum, &failed, &sk, flags);
-
-		if (ret)
-			rbio->ret = ret;
-
-		if (rbio->data_update &&
-		    (bch2_err_matches(ret, BCH_ERR_data_read_key_overwritten) ||
-		     bch2_err_matches(ret, BCH_ERR_data_read_ptr_stale_race)))
-			ret = 0;
 
 		if (failed.nr || ret) {
 			CLASS(bch_log_msg, msg)(c);
@@ -743,7 +749,8 @@ static void bch2_rbio_error(struct bch_read_bio *rbio, int ret)
 	if (rbio->flags & BCH_READ_in_retry)
 		return;
 
-	if (data_read_err_should_retry(ret)) {
+	if (data_read_err_should_retry(ret) ||
+	    (rbio->flags & BCH_READ_no_retry)) {
 		bch2_rbio_punt(rbio, bch2_rbio_retry, RBIO_CONTEXT_UNBOUND, system_unbound_wq);
 	} else {
 		rbio = bch2_rbio_free(rbio);
