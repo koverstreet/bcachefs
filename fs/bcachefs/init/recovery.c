@@ -141,7 +141,7 @@ static void kill_btree(struct bch_fs *c, enum btree_id btree)
 }
 
 /* for -o reconstruct_alloc: */
-void bch2_reconstruct_alloc(struct bch_fs *c)
+static void bch2_reconstruct_alloc(struct bch_fs *c)
 {
 	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(mutex)(&c->sb_lock);
