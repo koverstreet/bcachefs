@@ -234,9 +234,13 @@ static int journal_entry_add(struct bch_fs *c, struct bch_dev *ca,
 			dup->csum_good;
 
 		bool same_device = false;
-		darray_for_each(dup->ptrs, ptr)
-			if (ptr->dev == ca->dev_idx)
+		darray_for_each(dup->ptrs, ptr) {
+			if (ptr->dev == ca->dev_idx) {
+				if (ptr->sector == entry_ptr.sector)
+					return ret; /* same physical location, re-read */
 				same_device = true;
+			}
+		}
 
 		try(darray_push(&dup->ptrs, entry_ptr));
 
@@ -1374,6 +1378,102 @@ static int bch2_journal_check_for_missing(struct bch_fs *c, u64 start_seq, u64 e
 	}
 fsck_err:
 	return ret;
+}
+
+/*
+ * Re-read journal buckets needed for rewind.
+ *
+ * When journal scrub triggers an automatic rewind, the first journal read
+ * already dropped entries older than the original last_seq.  We need those
+ * entries back: find the rewind target's last_seq, then re-read only the
+ * journal buckets that contain entries in that range.
+ */
+int bch2_journal_reread_for_rewind(struct bch_fs *c, u64 rewind_seq)
+{
+	struct journal_replay *rewind_entry, **p;
+
+	/*
+	 * rewind_seq is flush + 1 (entries >= rewind_seq get rewound).
+	 * Look up the flush entry to get its last_seq:
+	 */
+	p = genradix_ptr(&c->journal_entries,
+			 journal_entry_radix_idx(c, rewind_seq - 1));
+	if (!p || !*p) {
+		bch_err(c, "journal rewind: flush entry at seq %llu not found",
+			rewind_seq - 1);
+		return bch_err_throw(c, EINVAL_journal_rewind_before_discard);
+	}
+	rewind_entry = *p;
+
+	u64 need_from = le64_to_cpu(rewind_entry->j.last_seq);
+
+	bch_info(c, "journal rewind: re-reading entries %llu-%llu",
+		 need_from, c->journal_replay_seq_start);
+
+	if (need_from >= c->journal_replay_seq_start)
+		return 0; /* nothing extra needed */
+
+	struct journal_list jlist;
+	closure_init_stack(&jlist.cl);
+	mutex_init(&jlist.lock);
+	jlist.last_seq = need_from;
+	jlist.ret = 0;
+
+	for_each_member_device(c, ca) {
+		struct journal_device *ja = &ca->journal;
+
+		if (!ja->nr)
+			continue;
+
+		if ((ca->mi.state != BCH_MEMBER_STATE_rw &&
+		     ca->mi.state != BCH_MEMBER_STATE_ro) ||
+		    !enumerated_ref_tryget(&ca->io_ref[READ],
+					   BCH_DEV_READ_REF_journal_read))
+			continue;
+
+		struct journal_read_buf buf = { NULL, 0 };
+		int ret = journal_read_buf_realloc(c, &buf, PAGE_SIZE);
+		if (ret) {
+			enumerated_ref_put(&ca->io_ref[READ],
+					   BCH_DEV_READ_REF_journal_read);
+			return ret;
+		}
+
+		for (unsigned i = 0; i < ja->nr; i++) {
+			/* Only re-read buckets that might have entries we need */
+			if (ja->bucket_seq[i] < need_from)
+				continue;
+
+			ret = journal_read_bucket(ca, &buf, &jlist, i);
+			if (ret)
+				break;
+		}
+
+		kvfree(buf.data);
+		enumerated_ref_put(&ca->io_ref[READ],
+				   BCH_DEV_READ_REF_journal_read);
+		if (ret)
+			return ret;
+	}
+
+	if (jlist.ret)
+		return jlist.ret;
+
+	/*
+	 * Un-ignore entries that were marked ignore_not_dirty by the first
+	 * read's drop_before pass — they're needed for replay now:
+	 */
+	struct genradix_iter radix_iter;
+	struct journal_replay **_i;
+	genradix_for_each(&c->journal_entries, radix_iter, _i) {
+		struct journal_replay *i = *_i;
+		if (i && le64_to_cpu(i->j.seq) >= need_from)
+			i->ignore_not_dirty = false;
+	}
+
+	c->journal_replay_seq_start = need_from;
+
+	return 0;
 }
 
 int bch2_journal_read(struct bch_fs *c, struct journal_start_info *info)
