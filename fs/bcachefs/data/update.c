@@ -595,7 +595,8 @@ void bch2_data_update_read_done(struct data_update *u)
 		return;
 	}
 
-	if (u->opts.type == BCH_DATA_UPDATE_scrub && !u->opts.ptrs_io_error) {
+	if ((u->opts.type == BCH_DATA_UPDATE_scrub && !u->opts.ptrs_io_error) ||
+	    u->opts.type == BCH_DATA_UPDATE_scrub_no_repair) {
 		u->op.end_io(&u->op);
 		return;
 	}
@@ -1188,7 +1189,8 @@ int bch2_data_update_init(struct btree_trans *trans,
 	m->op.watermark		= max(m->opts.commit_flags & BCH_WATERMARK_MASK,
 				      BCH_WATERMARK_normal);
 
-	if (k.k->p.snapshot &&
+	if (m->opts.type != BCH_DATA_UPDATE_scrub_no_repair &&
+	    k.k->p.snapshot &&
 	    unlikely(ret = bch2_check_key_has_snapshot(trans, iter, k))) {
 		if (ret > 0) /* key was deleted */
 			ret = bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
@@ -1251,7 +1253,8 @@ int bch2_data_update_init(struct btree_trans *trans,
 		ptr_bit <<= 1;
 	}
 
-	if (m->opts.type != BCH_DATA_UPDATE_scrub) {
+	if (m->opts.type != BCH_DATA_UPDATE_scrub &&
+	    m->opts.type != BCH_DATA_UPDATE_scrub_no_repair) {
 		/*
 		 * If current extent durability is less than io_opts.data_replicas,
 		 * we're not trying to rereplicate the extent up to data_alloc/replicas.here -

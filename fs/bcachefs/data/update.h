@@ -16,7 +16,8 @@ struct moving_context;
 	x(reconcile)		\
 	x(promote)		\
 	x(self_heal)		\
-	x(scrub)
+	x(scrub)		\
+	x(scrub_no_repair)
 
 enum bch_data_update_types {
 #define x(n)	BCH_DATA_UPDATE_##n,
