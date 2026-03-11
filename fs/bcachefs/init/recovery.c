@@ -195,6 +195,36 @@ static void bch2_reconstruct_alloc(struct bch_fs *c)
 			kill_btree(c, i);
 }
 
+void bch2_ignore_journal_rewind_errors(struct bch_fs *c)
+{
+	/*
+	 * Silence expected allocation errors: after journal rewind, alloc info
+	 * will be stale for buckets whose state changed between the rewind
+	 * point and the original journal head.
+	 */
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+	guard(mutex)(&c->sb_lock);
+	struct bch_sb_field_ext *ext =
+		bch2_sb_field_get(c->disk_sb.sb, ext);
+
+	__set_bit_le64(BCH_FSCK_ERR_alloc_key_data_type_wrong, ext->errors_silent);
+	__set_bit_le64(BCH_FSCK_ERR_alloc_key_gen_wrong, ext->errors_silent);
+	__set_bit_le64(BCH_FSCK_ERR_alloc_key_dirty_sectors_wrong, ext->errors_silent);
+	__set_bit_le64(BCH_FSCK_ERR_alloc_key_cached_sectors_wrong, ext->errors_silent);
+	__set_bit_le64(BCH_FSCK_ERR_alloc_key_stripe_wrong, ext->errors_silent);
+	__set_bit_le64(BCH_FSCK_ERR_alloc_key_stripe_redundancy_wrong, ext->errors_silent);
+	__set_bit_le64(BCH_FSCK_ERR_need_discard_key_wrong, ext->errors_silent);
+	__set_bit_le64(BCH_FSCK_ERR_freespace_key_wrong, ext->errors_silent);
+	__set_bit_le64(BCH_FSCK_ERR_freespace_hole_missing, ext->errors_silent);
+	__set_bit_le64(BCH_FSCK_ERR_bucket_gens_key_wrong, ext->errors_silent);
+	__set_bit_le64(BCH_FSCK_ERR_alloc_key_to_missing_lru_entry, ext->errors_silent);
+	__set_bit_le64(BCH_FSCK_ERR_lru_entry_bad, ext->errors_silent);
+	__set_bit_le64(BCH_FSCK_ERR_accounting_mismatch, ext->errors_silent);
+	__set_bit_le64(BCH_FSCK_ERR_backpointer_to_missing_ptr, ext->errors_silent);
+
+	bch2_write_super(c);
+}
+
 /*
  * Btree node pointers have a field to stack a pointer to the in memory btree
  * node; we need to zero out this field when reading in btree nodes, or when
@@ -756,6 +786,9 @@ use_clean:
 
 		bch2_reconstruct_alloc(c);
 	}
+
+	if (c->opts.journal_rewind)
+		bch2_ignore_journal_rewind_errors(c);
 
 	if (c->sb.features & BIT_ULL(BCH_FEATURE_no_alloc_info)) {
 		/* We can't go RW to fix errors without alloc info */

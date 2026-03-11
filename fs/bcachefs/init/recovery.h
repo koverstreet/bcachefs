@@ -3,6 +3,7 @@
 #define _BCACHEFS_RECOVERY_H
 
 int bch2_btree_lost_data(struct bch_fs *, struct printbuf *, enum btree_id);
+void bch2_ignore_journal_rewind_errors(struct bch_fs *);
 
 int bch2_set_may_go_rw(struct bch_fs *);
 int bch2_journal_replay(struct bch_fs *);
