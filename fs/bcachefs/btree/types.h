@@ -582,6 +582,7 @@ struct btree_trans {
 #endif
 
 	u64			last_begin_time;
+	u64			last_yield_time;
 	unsigned long		last_begin_ip;
 	unsigned long		last_restarted_ip;
 #ifdef CONFIG_BCACHEFS_DEBUG

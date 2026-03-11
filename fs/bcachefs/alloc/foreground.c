@@ -54,7 +54,7 @@ static void bch2_trans_mutex_lock_norelock(struct btree_trans *trans,
 					   struct mutex *lock)
 {
 	if (!mutex_trylock(lock)) {
-		bch2_trans_unlock(trans);
+		bch2_trans_unlock_long(trans);
 		mutex_lock(lock);
 	}
 }

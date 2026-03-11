@@ -43,6 +43,13 @@ struct bch_inode_info {
 	struct bch_inode_unpacked ei_inode;
 
 	struct delayed_work	ei_writeback_timer;
+
+	/*
+	 * Disk reservation held while this inode is an active swap file.
+	 * Sized to cover the full swap file so ENOSPC can't occur during
+	 * swap COW writes.  Zero when not a swap file.
+	 */
+	u64			ei_swap_reserved_sectors;
 };
 
 #define bch2_pagecache_add_put(i)	bch2_two_state_unlock(&(i)->ei_pagecache_lock, 0)

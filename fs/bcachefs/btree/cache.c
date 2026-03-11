@@ -76,6 +76,68 @@ void bch2_recalc_btree_reserve(struct bch_fs *c)
 	c->btree.cache.nr_reserve = reserve;
 }
 
+/*
+ * bch2_btree_cache_add_reserve - pre-allocate btree node buffers for swap I/O
+ *
+ * At swapon time, allocate @count empty btree node buffers and put them on
+ * bc->freeable.  bch2_btree_node_mem_alloc() always checks freeable first and
+ * steals the data buffer from a freeable node rather than going to the page
+ * allocator — so under PF_MEMALLOC these buffers are used without hitting the
+ * emergency reserve at all.
+ *
+ * A single swap COW write touches at least three btrees (extents, inodes, and
+ * alloc/freespace), each up to BTREE_MAX_DEPTH levels deep.  With mempool=8
+ * the worst case is ~24 MB of concurrent node buffers; callers should reserve
+ * enough to cover their expected concurrency.
+ *
+ * We also increment nr_reserve by the same count.  nr_reserve is the shrinker
+ * eviction watermark for bc->live[0]; raising it reduces the shrinker's
+ * can_free budget, which indirectly shields the freeable pool from being
+ * drained under memory pressure before swap I/O can use it.
+ *
+ * Returns the number of nodes actually allocated (may be less than @count on
+ * ENOMEM).
+ */
+static void __bch2_btree_node_to_freelist(struct bch_fs_btree_cache *, struct btree *);
+static struct btree *__bch2_btree_node_mem_alloc_gfp(struct bch_fs *, gfp_t);
+
+int bch2_btree_cache_add_reserve(struct bch_fs *c, unsigned count)
+{
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
+	unsigned allocated = 0;
+
+	for (unsigned i = 0; i < count; i++) {
+		struct btree *b = __bch2_btree_node_mem_alloc_gfp(c,
+					GFP_KERNEL | __GFP_NORETRY);
+
+		if (!b)
+			break;
+
+		scoped_guard(mutex, &bc->lock) {
+			__bch2_btree_node_to_freelist(bc, b);
+			bc->nr_reserve++;
+		}
+		allocated++;
+	}
+
+	return allocated;
+}
+
+/*
+ * bch2_btree_cache_remove_reserve - release swap-time btree node reserve
+ *
+ * Called at swapoff.  Decrements nr_reserve so the shrinker can reclaim the
+ * extra freeable buffers under normal memory pressure.  The actual kvfree of
+ * the node data buffers happens lazily via the shrinker scan.
+ */
+void bch2_btree_cache_remove_reserve(struct bch_fs *c, unsigned count)
+{
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
+
+	scoped_guard(mutex, &bc->lock)
+		bc->nr_reserve -= min(bc->nr_reserve, (size_t)count);
+}
+
 static inline size_t btree_cache_can_free(struct btree_cache_list *list)
 {
 	struct bch_fs_btree_cache *bc =
@@ -246,20 +308,25 @@ static struct btree *__btree_node_mem_alloc(struct bch_fs *c, gfp_t gfp)
 	return b;
 }
 
-struct btree *__bch2_btree_node_mem_alloc(struct bch_fs *c)
+static struct btree *__bch2_btree_node_mem_alloc_gfp(struct bch_fs *c, gfp_t gfp)
 {
-	struct btree *b = __btree_node_mem_alloc(c, GFP_KERNEL);
+	struct btree *b = __btree_node_mem_alloc(c, gfp);
 	if (!b)
 		return NULL;
 
-	if (btree_node_data_alloc(c, b, GFP_KERNEL, false)) {
+	if (btree_node_data_alloc(c, b, gfp, false)) {
 		__btree_node_data_free(b);
 		kfree(b);
 		return NULL;
 	}
 
-	bch2_btree_lock_init(&b->c, 0, GFP_KERNEL);
+	bch2_btree_lock_init(&b->c, 0, gfp);
 	return b;
+}
+
+struct btree *__bch2_btree_node_mem_alloc(struct bch_fs *c)
+{
+	return __bch2_btree_node_mem_alloc_gfp(c, GFP_KERNEL);
 }
 
 static inline bool __btree_node_pinned(struct bch_fs_btree_cache *bc, struct btree *b)
@@ -861,7 +928,7 @@ struct btree *bch2_btree_node_mem_alloc(struct btree_trans *trans, bool pcpu_rea
 		bch2_btree_lock_init(&b->c, pcpu_read_locks ? SIX_LOCK_INIT_PCPU : 0, GFP_NOWAIT);
 	} else {
 		mutex_unlock(&bc->lock);
-		bch2_trans_unlock(trans);
+		bch2_trans_unlock_long(trans);
 		b = __btree_node_mem_alloc(c, GFP_KERNEL);
 		if (!b)
 			goto err;
@@ -895,7 +962,7 @@ got_node:
 	mutex_unlock(&bc->lock);
 
 	if (btree_node_data_alloc(c, b, GFP_NOWAIT, true)) {
-		bch2_trans_unlock(trans);
+		bch2_trans_unlock_long(trans);
 		if (btree_node_data_alloc(c, b, GFP_KERNEL|__GFP_NOWARN, true)) {
 			__btree_node_data_free(b);
 			goto err;
@@ -1030,7 +1097,7 @@ static noinline struct btree *bch2_btree_node_fill(struct btree_trans *trans,
 
 			/* Unlock before doing IO: */
 			six_unlock_intent(&b->c.lock);
-			bch2_trans_unlock(trans);
+			bch2_trans_unlock_long(trans);
 
 			bch2_btree_node_read(trans, b, sync);
 
@@ -1168,7 +1235,7 @@ retry:
 		u32 seq = six_lock_seq(&b->c.lock);
 
 		six_unlock_type(&b->c.lock, lock_type);
-		bch2_trans_unlock(trans);
+		bch2_trans_unlock_long(trans);
 
 		bch2_btree_node_wait_on_read(b);
 

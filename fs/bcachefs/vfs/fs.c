@@ -32,6 +32,7 @@
 #include "vfs/buffered.h"
 #include "vfs/direct.h"
 #include "vfs/pagecache.h"
+#include "vfs/swap.h"
 
 #include <linux/aio.h>
 #include <linux/backing-dev.h>
@@ -355,7 +356,7 @@ repeat:
 			if (!trans) {
 				__wait_on_freeing_inode(c, inode, inum);
 			} else {
-				int ret = drop_locks_do(trans,
+				int ret = drop_locks_long_do(trans,
 						(__wait_on_freeing_inode(c, inode, inum), 0));
 				if (ret)
 					return ERR_PTR(ret);
@@ -1541,6 +1542,9 @@ static const struct address_space_operations bch_address_space_operations = {
 	.migrate_folio	= filemap_migrate_folio,
 #endif
 	.error_remove_folio = generic_error_remove_folio,
+	.swap_activate	= bch2_swap_activate,
+	.swap_deactivate = bch2_swap_deactivate,
+	.swap_rw	= bch2_swap_rw,
 };
 
 struct bcachefs_fid {

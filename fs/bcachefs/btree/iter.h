@@ -1035,6 +1035,17 @@ struct bkey_s_c bch2_btree_iter_peek_root(struct btree_trans *, struct btree_ite
 	(_do) ?: bch2_trans_relock(_trans);				\
 })
 
+/*
+ * Like drop_locks_do, but also drops the SRCU read lock so that SRCU grace
+ * periods can complete and the shrinker can free old btree nodes.  Use before
+ * operations that may block for an extended/unbounded time.
+ */
+#define drop_locks_long_do(_trans, _do)					\
+({									\
+	bch2_trans_unlock_long(_trans);					\
+	(_do) ?: bch2_trans_relock(_trans);				\
+})
+
 #define allocate_dropping_locks_errcode(_trans, _do)			\
 ({									\
 	gfp_t _gfp = GFP_NOWAIT;					\
