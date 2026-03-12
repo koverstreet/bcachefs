@@ -521,7 +521,7 @@ int bch2_journal_replay(struct bch_fs *c)
 
 	/* if we did any repair, flush it immediately */
 	if (immediate_flush) {
-		bch2_journal_flush_all_pins(&c->journal);
+		bch2_journal_flush_outstanding_pins(&c->journal);
 		ret = bch2_journal_meta(&c->journal);
 	}
 
@@ -860,7 +860,7 @@ use_clean:
 		test_bit(BCH_FS_errors_fixed_silent, &c->flags);
 
 	if (errors_fixed) {
-		bch2_journal_flush_all_pins(&c->journal);
+		bch2_journal_flush_outstanding_pins(&c->journal);
 		bch2_journal_meta(&c->journal);
 	}
 

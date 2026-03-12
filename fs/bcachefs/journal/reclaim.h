@@ -99,6 +99,11 @@ static inline bool bch2_journal_flush_all_pins(struct journal *j)
 	return bch2_journal_flush_pins(j, U64_MAX);
 }
 
+static inline bool bch2_journal_flush_outstanding_pins(struct journal *j)
+{
+	return bch2_journal_flush_pins(j, journal_cur_seq(j));
+}
+
 int bch2_journal_flush_device_pins(struct journal *, int);
 
 void bch2_journal_pins_to_text(struct printbuf *, struct journal *);

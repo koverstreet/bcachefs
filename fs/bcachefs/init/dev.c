@@ -884,7 +884,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 	 * We need to flush the entire journal to get rid of keys that reference
 	 * the device being removed before removing the superblock entry
 	 */
-	bch2_journal_flush_all_pins(&c->journal);
+	bch2_journal_flush_outstanding_pins(&c->journal);
 
 	/*
 	 * this is really just needed for the bch2_replicas_gc_(start|end)

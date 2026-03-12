@@ -491,7 +491,7 @@ STORE(bch2_fs)
 		bch2_journal_flush(&c->journal);
 
 	if (attr == &sysfs_trigger_journal_flush) {
-		bch2_journal_flush_all_pins(&c->journal);
+		bch2_journal_flush_outstanding_pins(&c->journal);
 		bch2_journal_meta(&c->journal);
 	}
 
