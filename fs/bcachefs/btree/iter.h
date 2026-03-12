@@ -1049,13 +1049,14 @@ struct bkey_s_c bch2_btree_iter_peek_root(struct btree_trans *, struct btree_ite
 })
 
 /*
- * Two-phase unlock: first drop btree locks only (fast, keeps SRCU), run the
- * blocking operation, then if it took longer than
- * srcu_escalation_timeout_ms, also drop SRCU so grace periods can complete.
+ * Two-phase unlock with runtime-tunable escalation timeout.
  *
- * This avoids paying the full transaction restart cost for operations that
- * complete quickly, while still preventing SRCU-vs-reclaim deadlocks when
- * an operation blocks for a long time.
+ * srcu_escalation_timeout_ms controls the behavior:
+ *   0       = original behavior: always drop SRCU before the blocking op
+ *             (equivalent to drop_locks_long_do)
+ *   N > 0   = two-phase: keep SRCU during blocking op, escalate to
+ *             unlock_long after (N-1) ms.  So 1 = escalate after 0ms,
+ *             51 = escalate after 50ms, etc.
  *
  * Tunable at runtime via /sys/module/bcachefs/parameters/srcu_escalation_timeout_ms
  */
@@ -1063,12 +1064,16 @@ extern unsigned bch2_srcu_escalation_timeout_ms;
 
 #define drop_locks_escalating_do(_trans, _do)				\
 ({									\
-	bch2_trans_unlock(_trans);					\
+	unsigned _timeout = bch2_srcu_escalation_timeout_ms;		\
+	if (_timeout == 0) {						\
+		bch2_trans_unlock_long(_trans);				\
+	} else {							\
+		bch2_trans_unlock(_trans);				\
+	}								\
 	unsigned long _start = jiffies;					\
 	int _ret = (_do);						\
-	if (time_after(jiffies,						\
-		       _start + msecs_to_jiffies(			\
-				bch2_srcu_escalation_timeout_ms)))	\
+	if (_timeout && time_after(jiffies,				\
+			_start + msecs_to_jiffies(_timeout - 1)))	\
 		bch2_trans_srcu_unlock(_trans);				\
 	_ret ?: bch2_trans_relock(_trans);				\
 })
