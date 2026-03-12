@@ -696,6 +696,13 @@ static int __bch2_fs_recovery(struct bch_fs *c)
 		try(bch2_journal_read(c, &journal_start));
 
 		/*
+		 * If we found persisted rewind ranges from a previous
+		 * crashed rewind, re-read any journal entries that were
+		 * dropped because they were older than last_seq:
+		 */
+		try(bch2_journal_reread_for_rewind(c));
+
+		/*
 		 * note: cmd_list_journal needs the blacklist table fully up to date so
 		 * it can asterisk ignored journal entries:
 		 */
@@ -739,8 +746,6 @@ static int __bch2_fs_recovery(struct bch_fs *c)
 					break;
 				}
 		}
-
-		try(bch2_journal_keys_sort(c));
 
 		if (c->sb.clean && last_journal_entry)
 			try(bch2_verify_superblock_clean(c, &clean, last_journal_entry));
@@ -787,8 +792,12 @@ use_clean:
 		bch2_reconstruct_alloc(c);
 	}
 
-	if (c->opts.journal_rewind)
+	if (c->opts.journal_rewind) {
+		try(bch2_journal_add_rewind_range(c,
+				journal_start.replay_end,
+				c->opts.journal_rewind));
 		bch2_ignore_journal_rewind_errors(c);
+	}
 
 	if (c->sb.features & BIT_ULL(BCH_FEATURE_no_alloc_info)) {
 		/* We can't go RW to fix errors without alloc info */
@@ -829,6 +838,8 @@ use_clean:
 	 */
 	if (c->sb.encryption_type && !c->sb.clean)
 		atomic64_add(1 << 16, &c->key_version);
+
+	try(bch2_journal_keys_sort(c));
 
 	try(read_btree_roots(c));
 

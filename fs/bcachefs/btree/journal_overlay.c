@@ -785,6 +785,15 @@ static void __journal_keys_sort(struct journal_keys *keys)
 	keys->nr = dst - keys->data;
 }
 
+static bool journal_seq_is_rewound(struct bch_fs *c, u64 seq)
+{
+	darray_for_each(c->journal.rewind_ranges, range)
+		if (seq > range->to && seq <= range->from)
+			return true;
+
+	return false;
+}
+
 int bch2_journal_keys_sort(struct bch_fs *c)
 {
 	struct genradix_iter iter;
@@ -797,8 +806,6 @@ int bch2_journal_keys_sort(struct bch_fs *c)
 	 * opts.scrub_recent_journal_entries */
 	bch2_journal_keys_reset(c);
 
-	u64 rewind_seq = c->opts.journal_rewind ?: U64_MAX;
-
 	genradix_for_each(&c->journal_entries, iter, _i) {
 		i = *_i;
 
@@ -810,7 +817,7 @@ int bch2_journal_keys_sort(struct bch_fs *c)
 		vstruct_for_each(&i->j, entry) {
 			bool rewind = !entry->level &&
 				!btree_id_is_alloc(entry->btree_id) &&
-				le64_to_cpu(i->j.seq) > rewind_seq;
+				journal_seq_is_rewound(c, le64_to_cpu(i->j.seq));
 
 			if (entry->type != (rewind
 					    ? BCH_JSET_ENTRY_overwrite

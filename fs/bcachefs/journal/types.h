@@ -177,6 +177,11 @@ struct journal_bio {
 	struct bio		bio;
 };
 
+struct journal_rewind_range {
+	u64			from;
+	u64			to;
+};
+
 /* Embedded in struct bch_fs */
 struct journal {
 	/* Fastpath stuff up front: */
@@ -256,6 +261,13 @@ struct journal {
 	 * freed at >= this seq have not yet been issued */
 	u64			rewind_seq;
 	u64			rewind_seq_ondisk;
+
+	/*
+	 * Rewind ranges: keys from journal entries with seq
+	 * in (to, from] use overwrite entries instead of
+	 * btree_keys entries.
+	 */
+	DARRAY(struct journal_rewind_range) rewind_ranges;
 
 	/*
 	 * FIFO of journal entries whose btree updates have not yet been

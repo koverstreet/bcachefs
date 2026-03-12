@@ -1549,7 +1549,10 @@ static inline __u64 __bset_magic(struct bch_sb *sb)
 	  "Structured log entry containing a btree key")	\
 	x(rewind_limit,		14,				\
 	  "Oldest journal seq safe for rewind "			\
-	  "(discards may have invalidated earlier seqs)")
+	  "(discards may have invalidated earlier seqs)")	\
+	x(rewind,		15,				\
+	  "Rewind in progress: keys from entries in this "	\
+	  "seq range use overwrite entries")
 
 enum bch_jset_entry_type {
 #define x(f, nr, ...)	BCH_JSET_ENTRY_##f	= nr,
@@ -1666,6 +1669,16 @@ struct jset_entry_datetime {
 struct jset_entry_rewind_limit {
 	struct jset_entry	entry;
 	__le64			seq;
+} __packed __aligned(8);
+
+/*
+ * Records a journal rewind in progress. Keys from journal entries
+ * with seq in (to, from] use overwrite entries instead of btree_keys.
+ */
+struct jset_entry_rewind {
+	struct jset_entry	entry;
+	__le64			from;
+	__le64			to;
 } __packed __aligned(8);
 
 /*

@@ -578,6 +578,7 @@ void bch2_fs_journal_exit(struct journal *j)
 		destroy_workqueue(j->wq);
 
 	darray_exit(&j->early_journal_entries);
+	darray_exit(&j->rewind_ranges);
 
 	for (unsigned i = 0; i < ARRAY_SIZE(j->buf); i++)
 		kvfree(j->buf[i].data);

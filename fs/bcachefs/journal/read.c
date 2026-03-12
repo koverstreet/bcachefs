@@ -876,10 +876,11 @@ static int journal_entry_rewind_limit_validate(struct bch_fs *c,
 	unsigned bytes = jset_u64s(le16_to_cpu(entry->u64s)) * sizeof(u64);
 	int ret = 0;
 
-	if (journal_entry_err_on(bytes != sizeof(struct jset_entry_rewind_limit),
+	if (journal_entry_err_on(bytes < sizeof(struct jset_entry_rewind_limit),
 				 c, version, jset, entry,
 				 journal_entry_rewind_limit_bad_size,
-				 "bad size")) {
+				 "bad size (got %u, expected >= %zu)",
+				 bytes, sizeof(struct jset_entry_rewind_limit))) {
 		journal_entry_null_range(entry, vstruct_next(entry));
 	}
 fsck_err:
@@ -893,6 +894,35 @@ static void journal_entry_rewind_limit_to_text(struct printbuf *out, struct bch_
 		container_of(entry, struct jset_entry_rewind_limit, entry);
 
 	prt_printf(out, "seq %llu", le64_to_cpu(r->seq));
+}
+
+static int journal_entry_rewind_validate(struct bch_fs *c,
+				struct jset *jset,
+				struct jset_entry *entry,
+				unsigned version, int big_endian,
+				struct bkey_validate_context from)
+{
+	unsigned bytes = jset_u64s(le16_to_cpu(entry->u64s)) * sizeof(u64);
+	int ret = 0;
+
+	if (journal_entry_err_on(bytes < sizeof(struct jset_entry_rewind),
+				 c, version, jset, entry,
+				 journal_entry_rewind_bad_size,
+				 "bad size (got %u, expected >= %zu)",
+				 bytes, sizeof(struct jset_entry_rewind))) {
+		journal_entry_null_range(entry, vstruct_next(entry));
+	}
+fsck_err:
+	return ret;
+}
+
+static void journal_entry_rewind_to_text(struct printbuf *out, struct bch_fs *c,
+					 struct jset_entry *entry)
+{
+	struct jset_entry_rewind *r =
+		container_of(entry, struct jset_entry_rewind, entry);
+
+	prt_printf(out, "from %llu to %llu", le64_to_cpu(r->from), le64_to_cpu(r->to));
 }
 
 struct jset_entry_ops {
@@ -1383,29 +1413,30 @@ fsck_err:
 /*
  * Re-read journal buckets needed for rewind.
  *
- * When journal scrub triggers an automatic rewind, the first journal read
- * already dropped entries older than the original last_seq.  We need those
- * entries back: find the rewind target's last_seq, then re-read only the
- * journal buckets that contain entries in that range.
+ * The first journal read drops entries older than the most recent flush
+ * entry's last_seq.  When rewinding, we need entries back to the rewind
+ * target's last_seq.  Check all rewind ranges in journal.rewind_ranges
+ * and re-read any buckets containing entries we need.
  */
-int bch2_journal_reread_for_rewind(struct bch_fs *c, u64 rewind_seq)
+int bch2_journal_reread_for_rewind(struct bch_fs *c)
 {
-	struct journal_replay *rewind_entry, **p;
+	u64 need_from = U64_MAX;
 
-	/*
-	 * rewind_seq is the flush seq we're rewinding to — entries after
-	 * rewind_seq get rewound. Look up the flush entry to get its last_seq:
-	 */
-	p = genradix_ptr(&c->journal_entries,
-			 journal_entry_radix_idx(c, rewind_seq));
-	if (!p || !*p) {
-		bch_err(c, "journal rewind: flush entry at seq %llu not found",
-			rewind_seq);
-		return bch_err_throw(c, EINVAL_journal_rewind_before_discard);
+	darray_for_each(c->journal.rewind_ranges, range) {
+		struct journal_replay **p =
+			genradix_ptr(&c->journal_entries,
+				     journal_entry_radix_idx(c, range->to));
+		if (!p || !*p) {
+			bch_err(c, "journal rewind: flush entry at seq %llu not found",
+				range->to);
+			return bch_err_throw(c, EINVAL_journal_rewind_before_discard);
+		}
+
+		need_from = min(need_from, le64_to_cpu((*p)->j.last_seq));
 	}
-	rewind_entry = *p;
 
-	u64 need_from = le64_to_cpu(rewind_entry->j.last_seq);
+	if (need_from == U64_MAX)
+		return 0;
 
 	bch_info(c, "journal rewind: re-reading entries %llu-%llu",
 		 need_from, c->journal_replay_seq_start);
@@ -1665,13 +1696,24 @@ int bch2_journal_read(struct bch_fs *c, struct journal_start_info *info)
 
 		bch2_replicas_entry_sort(&replicas.e);
 
-		vstruct_for_each(&i->j, entry)
+		vstruct_for_each(&i->j, entry) {
 			if (entry->type == BCH_JSET_ENTRY_rewind_limit) {
 				struct jset_entry_rewind_limit *r =
 					container_of(entry, struct jset_entry_rewind_limit, entry);
 				c->journal.rewind_seq		= le64_to_cpu(r->seq);
 				c->journal.rewind_seq_ondisk	= le64_to_cpu(r->seq);
 			}
+
+			if (entry->type == BCH_JSET_ENTRY_rewind) {
+				struct jset_entry_rewind *r =
+					container_of(entry, struct jset_entry_rewind, entry);
+				struct journal_rewind_range range = {
+					.from	= le64_to_cpu(r->from),
+					.to	= le64_to_cpu(r->to),
+				};
+				darray_push(&c->journal.rewind_ranges, range);
+			}
+		}
 	}
 fsck_err:
 	return ret;
