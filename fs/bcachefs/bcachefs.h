@@ -338,7 +338,7 @@ BCH_DEBUG_PARAMS_ALL()
 	  "update extents btree")					\
 	x(data_read,							\
 	  "Core read path: look up extents btree, "			\
-	  "issue reads, checksum, decompress, decrypt")			\
+	  "issue reads, checksum, decrypt, decompress")			\
 	x(data_promote,							\
 	  "Promote: write a cached copy of an extent "			\
 	  "to promote_target on read")					\

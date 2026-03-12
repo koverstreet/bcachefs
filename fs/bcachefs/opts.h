@@ -405,7 +405,7 @@ enum fsck_err_opts {
 	  OPT_FS|OPT_MOUNT|OPT_FORMAT,					\
 	  OPT_UINT(0, 3600),						\
 	  BCH_SB_EXT_SCRUB_MAX_REWIND_SECS, 10,				\
-	  NULL,		"Maximum time in seconds the journal scrub will rewind (default 30)")\
+	  NULL,		"Maximum time in seconds the journal scrub will rewind (default 10)")\
 	x(recovery_passes,		u64,				\
 	  OPT_FS|OPT_MOUNT,						\
 	  OPT_BITFIELD(bch2_recovery_passes),				\

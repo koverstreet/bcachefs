@@ -17,7 +17,7 @@
  * automatically prefer the SSD for reads without explicit configuration.
  *
  * End-to-end flow: extent lookup, device selection, disk read, checksum
- * verification, decompression, decryption. For compressed or checksummed
+ * verification, decryption, decompression. For compressed or checksummed
  * extents the full extent must be read even for partial requests, because
  * checksums and compression operate on the whole extent.
  */

@@ -6,8 +6,8 @@
 
 /* DOC(data-write-path)
  *
- * Writes go through a pipeline of optional transformations: encryption
- * (ChaCha20), compression (lz4/zstd/gzip), and checksumming, applied in that
+ * Writes go through a pipeline of optional transformations: compression
+ * (lz4/zstd/gzip), encryption (ChaCha20), and checksumming, applied in that
  * order. The data is then written to each replica device and the extent
  * metadata is updated in the btree atomically. If encryption or compression
  * are not enabled, those stages are skipped entirely.
@@ -26,7 +26,7 @@
  * \bchdoc{data-write-path}
  *
  * The normal (COW) write path allocates new disk space, encodes the data
- * (encryption, then compression, then checksumming), writes it to each replica
+ * (compression, then encryption, then checksumming), writes it to each replica
  * device, and inserts a new extent key into the btree. Because writes always go
  * to new locations, the old data remains intact until the btree update commits ---
  * there is no window where a crash can leave partially-written data.
@@ -474,7 +474,7 @@
  * The pad fields exist because copygc or reconcile may split an indirect extent
  * into fragments. Without the pads, fragments outside the pointer's nominal
  * range would have their refcounts leaked. The pads remember the full range
- * originally referenced so that triggers walk all fragments when updating
+ * originally referenced so that triggers walk all of the fragments when updating
  * refcounts. If the indirect extent is missing in the live data range (e.g.
  * due to corruption), fsck sets the \texttt{REFLINK\_P\_ERROR} flag on the
  * pointer; gaps only in the padded region adjust the pad instead.
