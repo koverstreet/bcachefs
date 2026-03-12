@@ -178,6 +178,9 @@ void bch2_moving_ctxt_init(struct moving_context *ctxt,
 	ctxt->wp	= wp;
 	ctxt->wait_on_copygc = wait_on_copygc;
 
+	ctxt->max_sectors_in_flight = c->opts.move_bytes_in_flight >> 9;
+	ctxt->max_ios_in_flight	   = c->opts.move_ios_in_flight;
+
 	closure_init_stack(&ctxt->cl);
 
 	mutex_init(&ctxt->lock);
@@ -394,14 +397,14 @@ int bch2_move_ratelimit(struct moving_context *ctxt)
 	} while (delay);
 
 	/*
-	 * XXX: these limits really ought to be per device, SSDs and hard drives
-	 * will want different limits
+	 * Per-context limits: set from c->opts by default, but may be
+	 * overridden for device-aware limiting (e.g. rotational devices).
 	 */
 	move_ctxt_wait_event(ctxt,
-		atomic_read(&ctxt->write_sectors) < c->opts.move_bytes_in_flight >> 9 &&
-		atomic_read(&ctxt->read_sectors) < c->opts.move_bytes_in_flight >> 9 &&
-		atomic_read(&ctxt->write_ios) < c->opts.move_ios_in_flight &&
-		atomic_read(&ctxt->read_ios) < c->opts.move_ios_in_flight);
+		atomic_read(&ctxt->write_sectors) < ctxt->max_sectors_in_flight &&
+		atomic_read(&ctxt->read_sectors) < ctxt->max_sectors_in_flight &&
+		atomic_read(&ctxt->write_ios) < ctxt->max_ios_in_flight &&
+		atomic_read(&ctxt->read_ios) < ctxt->max_ios_in_flight);
 
 	return 0;
 }

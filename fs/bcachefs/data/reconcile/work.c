@@ -35,6 +35,11 @@
 #include <linux/kthread.h>
 #include <linux/sched/cputime.h>
 
+static unsigned move_ios_in_flight_rotational = 8;
+module_param(move_ios_in_flight_rotational, uint, 0644);
+MODULE_PARM_DESC(move_ios_in_flight_rotational,
+	"Max in-flight IOs for background data moves on rotational devices (default 8)");
+
 #define RECONCILE_PHASE_TYPES()		\
 	x(scan)				\
 	x(btree)			\
@@ -1165,6 +1170,14 @@ static CLOSURE_CALLBACK(do_reconcile_phys_thread)
 	bch2_moving_ctxt_init(&ctxt, c, NULL, &thr->stats,
 			      writepoint_ptr(&c->allocator.reconcile_write_point),
 			      true);
+
+	/*
+	 * Rotational devices can only do ~100 random IOPS; a deep queue
+	 * just causes head thrashing and holds btree transaction state
+	 * for longer, blocking journal reclaim and sync.
+	 */
+	ctxt.max_ios_in_flight     = move_ios_in_flight_rotational;
+	ctxt.max_sectors_in_flight = move_ios_in_flight_rotational << (17 - 9); /* ios * 128K */
 
 	struct btree_trans *trans = ctxt.trans;
 
