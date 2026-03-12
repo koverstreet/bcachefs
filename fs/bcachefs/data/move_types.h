@@ -4,6 +4,7 @@
 
 #include "btree/bbpos_types.h"
 #include "bcachefs_ioctl.h"
+#include "init/dev_types.h"
 
 struct bch_move_stats {
 	char			name[32];
@@ -28,6 +29,7 @@ struct bch_move_stats {
 	atomic64_t		sectors_raced;
 	atomic64_t		sectors_error_corrected;
 	atomic64_t		sectors_error_uncorrected;
+	struct bch_devs_mask	devs_error_uncorrected;
 };
 
 struct move_bucket_key {

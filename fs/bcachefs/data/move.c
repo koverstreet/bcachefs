@@ -74,10 +74,12 @@ static void move_write(struct data_update *u)
 	struct bch_read_bio *rbio = &u->rbio;
 
 	if (ctxt->stats) {
-		if (rbio->ret)
+		if (rbio->ret) {
 			atomic64_add(u->rbio.bvec_iter.bi_size >> 9,
 				     &ctxt->stats->sectors_error_uncorrected);
-		else if (rbio->saw_error)
+			set_bit(rbio->pick.ptr.dev,
+				ctxt->stats->devs_error_uncorrected.d);
+		} else if (rbio->saw_error)
 			atomic64_add(u->rbio.bvec_iter.bi_size >> 9,
 				     &ctxt->stats->sectors_error_corrected);
 	}
