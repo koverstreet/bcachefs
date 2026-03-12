@@ -1393,14 +1393,14 @@ int bch2_journal_reread_for_rewind(struct bch_fs *c, u64 rewind_seq)
 	struct journal_replay *rewind_entry, **p;
 
 	/*
-	 * rewind_seq is flush + 1 (entries >= rewind_seq get rewound).
-	 * Look up the flush entry to get its last_seq:
+	 * rewind_seq is the flush seq we're rewinding to — entries after
+	 * rewind_seq get rewound. Look up the flush entry to get its last_seq:
 	 */
 	p = genradix_ptr(&c->journal_entries,
-			 journal_entry_radix_idx(c, rewind_seq - 1));
+			 journal_entry_radix_idx(c, rewind_seq));
 	if (!p || !*p) {
 		bch_err(c, "journal rewind: flush entry at seq %llu not found",
-			rewind_seq - 1);
+			rewind_seq);
 		return bch_err_throw(c, EINVAL_journal_rewind_before_discard);
 	}
 	rewind_entry = *p;

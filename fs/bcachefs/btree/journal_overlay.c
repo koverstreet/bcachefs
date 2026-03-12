@@ -810,7 +810,7 @@ int bch2_journal_keys_sort(struct bch_fs *c)
 		vstruct_for_each(&i->j, entry) {
 			bool rewind = !entry->level &&
 				!btree_id_is_alloc(entry->btree_id) &&
-				le64_to_cpu(i->j.seq) >= rewind_seq;
+				le64_to_cpu(i->j.seq) > rewind_seq;
 
 			if (entry->type != (rewind
 					    ? BCH_JSET_ENTRY_overwrite
