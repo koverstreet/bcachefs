@@ -536,6 +536,7 @@ static int journal_entry_open(struct journal *j)
 	buf->write_allocated	= false;
 	buf->write_done		= false;
 	buf->empty		= false;
+	buf->has_overwrites	= READ_ONCE(c->opts.journal_transaction_names);
 
 	memset(buf->data, 0, sizeof(*buf->data));
 	buf->data->seq	= cpu_to_le64(journal_cur_seq(j));

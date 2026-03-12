@@ -379,8 +379,19 @@ static inline void btree_insert_entry_checks(struct btree_trans *trans,
 static __always_inline int bch2_trans_journal_res_get(struct btree_trans *trans,
 						      unsigned flags)
 {
-	return bch2_journal_res_get(&trans->c->journal, &trans->journal_res,
-				    trans->journal_u64s, flags, trans);
+	struct journal *j = &trans->c->journal;
+
+	try(bch2_journal_res_get(j, &trans->journal_res,
+				 trans->journal_u64s, flags, trans));
+
+	if (unlikely(trans->journal_res.has_overwrites !=
+		     trans->journal_transaction_names)) {
+		bch2_journal_res_put(j, &trans->journal_res);
+		return btree_trans_restart(trans,
+			BCH_ERR_transaction_restart_journal_overwrites_changed);
+	}
+
+	return 0;
 }
 
 #define JSET_ENTRY_LOG_U64s		4

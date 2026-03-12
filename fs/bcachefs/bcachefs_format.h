@@ -1717,6 +1717,7 @@ struct jset {
 LE32_BITMASK(JSET_CSUM_TYPE,	struct jset, flags, 0, 4);
 LE32_BITMASK(JSET_BIG_ENDIAN,	struct jset, flags, 4, 5);
 LE32_BITMASK(JSET_NO_FLUSH,	struct jset, flags, 5, 6);
+LE32_BITMASK(JSET_HAS_OVERWRITES, struct jset, flags, 6, 7);
 
 #define BCH_JOURNAL_BUCKETS_MIN		8
 

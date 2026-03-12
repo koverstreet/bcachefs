@@ -410,6 +410,7 @@ static inline int journal_res_get_fast(struct journal *j,
 	res->offset	= old.cur_entry_offset;
 	res->seq	= journal_cur_seq(j);
 	res->seq -= (res->seq - old.idx) & JOURNAL_STATE_BUF_MASK;
+	res->has_overwrites = j->buf[res->seq & JOURNAL_BUF_MASK].has_overwrites;
 	return 1;
 }
 

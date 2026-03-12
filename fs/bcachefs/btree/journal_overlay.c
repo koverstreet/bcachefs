@@ -814,10 +814,18 @@ int bch2_journal_keys_sort(struct bch_fs *c)
 
 		cond_resched();
 
+		bool seq_rewound = journal_seq_is_rewound(c, le64_to_cpu(i->j.seq));
+
+		if (seq_rewound && !JSET_HAS_OVERWRITES(&i->j)) {
+			bch_err(c, "cannot rewind journal seq %llu: no overwrite entries (journal_transaction_names was off)",
+				le64_to_cpu(i->j.seq));
+			return bch_err_throw(c, journal_rewind_no_overwrites);
+		}
+
 		vstruct_for_each(&i->j, entry) {
-			bool rewind = !entry->level &&
-				!btree_id_is_alloc(entry->btree_id) &&
-				journal_seq_is_rewound(c, le64_to_cpu(i->j.seq));
+			bool rewind = seq_rewound &&
+				!entry->level &&
+				!btree_id_is_alloc(entry->btree_id);
 
 			if (entry->type != (rewind
 					    ? BCH_JSET_ENTRY_overwrite

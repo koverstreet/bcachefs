@@ -55,6 +55,7 @@ struct journal_buf {
 	bool			write_allocated:1;
 	bool			write_done:1;
 	bool			empty:1;
+	bool			has_overwrites:1;
 	u8			idx;
 };
 
@@ -94,6 +95,7 @@ struct journal_entry_pin {
 
 struct journal_res {
 	bool			ref;
+	bool			has_overwrites;
 	u16			u64s;
 	u32			offset;
 	u64			seq;

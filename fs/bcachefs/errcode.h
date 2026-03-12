@@ -226,6 +226,7 @@
 	x(BCH_ERR_transaction_restart,	transaction_restart_write_buffer_flush)	\
 	x(BCH_ERR_transaction_restart,	transaction_restart_nested)		\
 	x(BCH_ERR_transaction_restart,	transaction_restart_commit)		\
+	x(BCH_ERR_transaction_restart,	transaction_restart_journal_overwrites_changed)	\
 	x(0,				no_btree_node)				\
 	x(BCH_ERR_no_btree_node,	no_btree_node_relock)			\
 	x(BCH_ERR_no_btree_node,	no_btree_node_upgrade)			\
@@ -243,6 +244,7 @@
 	x(BCH_ERR_btree_insert_fail,	btree_insert_need_journal_reclaim)	\
 	x(0,				backpointer_to_overwritten_btree_node)	\
 	x(0,				journal_reclaim_would_deadlock)		\
+	x(0,				journal_rewind_no_overwrites)		\
 	x(EROFS,			fsck)					\
 	x(BCH_ERR_fsck,			fsck_ask)				\
 	x(BCH_ERR_fsck,			fsck_fix)				\

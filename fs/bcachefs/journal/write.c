@@ -624,6 +624,7 @@ static int bch2_journal_write_checksum(struct journal *j, struct journal_buf *w)
 
 	SET_JSET_BIG_ENDIAN(jset, CPU_BIG_ENDIAN);
 	SET_JSET_CSUM_TYPE(jset, bch2_meta_checksum_type(c));
+	SET_JSET_HAS_OVERWRITES(jset, w->has_overwrites);
 
 	if (bch2_csum_type_is_encryption(JSET_CSUM_TYPE(jset)))
 		validate_before_checksum = true;
