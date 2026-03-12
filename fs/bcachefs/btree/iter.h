@@ -346,6 +346,7 @@ int bch2_trans_relock(struct btree_trans *);
 int bch2_trans_relock_notrace(struct btree_trans *);
 void bch2_trans_unlock(struct btree_trans *);
 void bch2_trans_unlock_long(struct btree_trans *);
+void bch2_trans_srcu_unlock_if_elapsed(struct btree_trans *, unsigned long);
 
 static inline int trans_was_restarted(struct btree_trans *trans, u32 restart_count)
 {
@@ -1037,13 +1038,44 @@ struct bkey_s_c bch2_btree_iter_peek_root(struct btree_trans *, struct btree_ite
 
 /*
  * Like drop_locks_do, but also drops the SRCU read lock so that SRCU grace
- * periods can complete and the shrinker can free old btree nodes.  Use before
- * operations that may block for an extended/unbounded time.
+ * periods can complete and the shrinker can free old btree nodes.  Use only
+ * before operations known to block for an unbounded time (user input, disk
+ * I/O waits).
  */
 #define drop_locks_long_do(_trans, _do)					\
 ({									\
 	bch2_trans_unlock_long(_trans);					\
 	(_do) ?: bch2_trans_relock(_trans);				\
+})
+
+/*
+ * Two-phase unlock with runtime-tunable escalation timeout.
+ *
+ * srcu_escalation_timeout_ms controls the behavior:
+ *   0       = original behavior: always drop SRCU before the blocking op
+ *             (equivalent to drop_locks_long_do)
+ *   N > 0   = two-phase: keep SRCU during blocking op, escalate to
+ *             unlock_long after (N-1) ms.  So 1 = escalate after 0ms,
+ *             51 = escalate after 50ms, etc.
+ *
+ * Tunable at runtime via /sys/module/bcachefs/parameters/srcu_escalation_timeout_ms
+ */
+extern unsigned bch2_srcu_escalation_timeout_ms;
+
+#define drop_locks_escalating_do(_trans, _do)				\
+({									\
+	unsigned _timeout = bch2_srcu_escalation_timeout_ms;		\
+	if (_timeout == 0) {						\
+		bch2_trans_unlock_long(_trans);				\
+	} else {							\
+		bch2_trans_unlock(_trans);				\
+	}								\
+	unsigned long _start = jiffies;					\
+	int _ret = (_do);						\
+	if (_timeout && time_after(jiffies,				\
+			_start + msecs_to_jiffies(_timeout - 1)))	\
+		bch2_trans_srcu_unlock(_trans);				\
+	_ret ?: bch2_trans_relock(_trans);				\
 })
 
 #define allocate_dropping_locks_errcode(_trans, _do)			\

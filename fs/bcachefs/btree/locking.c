@@ -878,6 +878,19 @@ void bch2_trans_unlock_long(struct btree_trans *trans)
 	bch2_trans_srcu_unlock(trans);
 }
 
+/*
+ * Call after a blocking operation that was preceded by bch2_trans_unlock().
+ * If the operation took longer than srcu_escalation_timeout_ms, also drop
+ * the SRCU read lock to allow grace periods to complete.
+ */
+void bch2_trans_srcu_unlock_if_elapsed(struct btree_trans *trans,
+				       unsigned long start_time)
+{
+	if (time_after(jiffies, start_time +
+		       msecs_to_jiffies(bch2_srcu_escalation_timeout_ms)))
+		bch2_trans_srcu_unlock(trans);
+}
+
 void bch2_trans_unlock_write(struct btree_trans *trans)
 {
 	struct btree_path *path;
@@ -892,7 +905,7 @@ void bch2_trans_unlock_write(struct btree_trans *trans)
 int __bch2_trans_mutex_lock(struct btree_trans *trans,
 			    struct mutex *lock)
 {
-	int ret = drop_locks_long_do(trans, (mutex_lock(lock), 0));
+	int ret = drop_locks_escalating_do(trans, (mutex_lock(lock), 0));
 
 	if (ret)
 		mutex_unlock(lock);

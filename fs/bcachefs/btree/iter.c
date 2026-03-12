@@ -30,6 +30,11 @@
 #include <linux/random.h>
 #include <linux/prefetch.h>
 
+unsigned bch2_srcu_escalation_timeout_ms = 0;
+module_param_named(srcu_escalation_timeout_ms, bch2_srcu_escalation_timeout_ms, uint, 0644);
+MODULE_PARM_DESC(srcu_escalation_timeout_ms,
+	"0=always drop SRCU before blocking (original), N>0=two-phase with (N-1)ms timeout");
+
 static inline void btree_path_list_remove(struct btree_trans *, struct btree_path *);
 static inline void btree_path_list_add(struct btree_trans *,
 			btree_path_idx_t, btree_path_idx_t);
