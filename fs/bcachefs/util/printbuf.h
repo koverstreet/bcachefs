@@ -63,6 +63,7 @@
  * human readable bytes. prt_units() obeys it.
  */
 
+#include <linux/hex.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
 
