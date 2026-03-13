@@ -2480,6 +2480,7 @@ void bch2_fs_vfs_exit(struct bch_fs *c)
 
 int bch2_fs_vfs_init(struct bch_fs *c)
 {
+	fdm_init(&c->fdm_table);
 	INIT_LIST_HEAD(&c->vfs.inodes_list);
 	mutex_init(&c->vfs.inodes_lock);
 

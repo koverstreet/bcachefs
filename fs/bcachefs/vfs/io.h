@@ -7,6 +7,7 @@
 #include "alloc/buckets.h"
 #include "data/write_types.h"
 #include "fs/quota.h"
+#include "vfs/fdm.h"
 #include "vfs/fs.h"
 
 #include <linux/uio.h>
@@ -143,20 +144,19 @@ static inline void bch2_i_sectors_acct(struct bch_fs *c, struct bch_inode_info *
 	}
 }
 
-static inline struct address_space *faults_disabled_mapping(void)
+static inline struct address_space *faults_disabled_mapping(struct bch_fs *c)
 {
-	return (void *) (((unsigned long) current->faults_disabled_mapping) & ~1UL);
+	return fdm_get(&c->fdm_table);
 }
 
-static inline void set_fdm_dropped_locks(void)
+static inline void set_fdm_dropped_locks(struct bch_fs *c)
 {
-	current->faults_disabled_mapping =
-		(void *) (((unsigned long) current->faults_disabled_mapping)|1);
+	fdm_set_dropped_locks(&c->fdm_table);
 }
 
-static inline bool fdm_dropped_locks(void)
+static inline bool bch2_fdm_dropped_locks(struct bch_fs *c)
 {
-	return ((unsigned long) current->faults_disabled_mapping) & 1;
+	return fdm_dropped_locks(&c->fdm_table);
 }
 
 void bch2_inode_flush_nocow_writes_async(struct bch_fs *,

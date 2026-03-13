@@ -103,6 +103,7 @@
 
 #include "snapshots/types.h"
 
+#include "vfs/fdm.h"
 #include "vfs/types.h"
 
 #define bch2_fs_init_fault(name)					\
@@ -771,6 +772,7 @@ struct bch_fs {
 
 #ifndef NO_BCACHEFS_FS
 	struct bch_fs_vfs	vfs;
+	struct fdm_hash		fdm_table;
 #endif
 
 	/* QUOTAS */

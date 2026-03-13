@@ -633,8 +633,9 @@ vm_fault_t bch2_page_fault(struct vm_fault *vmf)
 {
 	struct file *file = vmf->vma->vm_file;
 	struct address_space *mapping = file->f_mapping;
-	struct address_space *fdm = faults_disabled_mapping();
 	struct bch_inode_info *inode = file_bch_inode(file);
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct address_space *fdm = faults_disabled_mapping(c);
 	vm_fault_t ret;
 
 	if (fdm == mapping)
@@ -655,7 +656,7 @@ vm_fault_t bch2_page_fault(struct vm_fault *vmf)
 		bch2_pagecache_block_get(fdm_host);
 
 		/* Signal that lock has been dropped: */
-		set_fdm_dropped_locks();
+		set_fdm_dropped_locks(c);
 		return VM_FAULT_SIGBUS;
 	}
 

@@ -440,14 +440,14 @@ static __always_inline long bch2_dio_write_loop(struct dio_write *dio)
 	while (1) {
 		iter_count = dio->iter.count;
 
-		EBUG_ON(current->faults_disabled_mapping);
-		current->faults_disabled_mapping = mapping;
+		EBUG_ON(faults_disabled_mapping(c));
+		fdm_set(&c->fdm_table, mapping);
 
 		ret = bch2_bio_iov_iter_get_pages(bio, &dio->iter, 0);
 
-		dropped_locks = fdm_dropped_locks();
+		dropped_locks = bch2_fdm_dropped_locks(c);
 
-		current->faults_disabled_mapping = NULL;
+		fdm_clear(&c->fdm_table);
 
 		/*
 		 * If the fault handler returned an error but also signalled
