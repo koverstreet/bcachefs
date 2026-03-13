@@ -2388,7 +2388,7 @@ static int bch2_btree_node_merge_key(struct btree_trans *trans,
 				     struct bkey_i *k,
 				     enum bch_trans_commit_flags flags)
 {
-	CLASS(btree_node_iter, iter)(trans, btree, k->k.p, 0, level, 0);
+	CLASS(btree_node_iter, iter)(trans, btree, k->k.p, level + 1, level, 0);
 	struct btree *b = errptr_try(bch2_btree_iter_peek_node(&iter));
 
 	bool found = b && btree_ptr_hash_val(&b->key) == btree_ptr_hash_val(k);
