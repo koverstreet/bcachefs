@@ -83,8 +83,10 @@ do {									\
 #define fifo_empty(fifo)	((fifo)->front == (fifo)->back)
 #define fifo_full(fifo)		(fifo_used(fifo) == (fifo)->size)
 
-#define fifo_peek_front(fifo)	((fifo)->data[(fifo)->front & (fifo)->mask])
-#define fifo_peek_back(fifo)	((fifo)->data[((fifo)->back - 1) & (fifo)->mask])
+#define fifo_entry(fifo, idx)	((fifo)->data[(idx) & (fifo)->mask])
+
+#define fifo_peek_front(fifo)	fifo_entry((fifo), (fifo)->front)
+#define fifo_peek_back(fifo)	fifo_entry((fifo), (fifo)->back - 1)
 
 #define fifo_entry_idx_abs(fifo, p)					\
 	((((p) >= &fifo_peek_front(fifo)				\
@@ -141,21 +143,21 @@ do {									\
 	for (typecheck(typeof((_fifo)->front), _iter),			\
 	     (_iter) = (_fifo)->front;					\
 	     ((_iter != (_fifo)->back) &&				\
-	      (_entry = (_fifo)->data[(_iter) & (_fifo)->mask], true));	\
+	      (_entry = fifo_entry(_fifo, _iter), true));		\
 	     (_iter)++)
 
 #define fifo_for_each_entry_ptr(_ptr, _fifo, _iter)			\
 	for (typecheck(typeof((_fifo)->front), _iter),			\
 	     (_iter) = (_fifo)->front;					\
 	     ((_iter != (_fifo)->back) &&				\
-	      (_ptr = &(_fifo)->data[(_iter) & (_fifo)->mask], true));	\
+	      (_ptr = &fifo_entry(_fifo, _iter), true));		\
 	     (_iter)++)
 
 #define fifo_for_each_entry_ptr_reverse(_ptr, _fifo, _iter)		\
 	for (typecheck(typeof((_fifo)->front), _iter),			\
 	     (_iter) = (_fifo)->back;					\
 	     ((_iter != (_fifo)->front) &&				\
-	      (_ptr = &(_fifo)->data[((_iter) - 1) & (_fifo)->mask], true)); \
+	      (_ptr = &fifo_entry(_fifo, _iter - 1), true));		\
 	     (_iter)--)
 
 #endif /* _BCACHEFS_FIFO_H */
