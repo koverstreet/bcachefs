@@ -629,6 +629,29 @@ void bch2_data_update_read_done(struct data_update *u)
 		}
 	}
 
+	if (unlikely(u->opts.checksum_only)) {
+		CLASS(btree_trans, trans)(c);
+		struct nonce nonce = extent_nonce(u->op.version, crc);
+
+		crc.csum_type = u->op.csum_type;
+		crc.csum = bch2_checksum_bio(c, crc.csum_type, nonce, &rbio->bio);
+
+		/* 
+		 * We don't need to rebuild the pointers manually here;
+		 * data_update_index_update_nowrite will drop ptrs_kill (none in this case)
+		 * and we just need it to write the updated CRC.
+		 * But wait, data_update_index_update_nowrite only drops ptrs_kill.
+		 * To update the CRC, we actually need to change the key we're giving it.
+		 * u->k is the key that will be written. We should update the CRC in u->k
+		 * before calling nowrite.
+		 */
+		bch2_bkey_narrow_crc(c, u->k.k, rbio->pick.crc, crc);
+
+		u->op.error = data_update_index_update_nowrite(trans, u);
+		u->op.end_io(&u->op);
+		return;
+	}
+
 	/* write bio must own pages: */
 	BUG_ON(!u->op.wbio.bio.bi_vcnt);
 
@@ -1277,7 +1300,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 		 * replicas or durability settings have been changed since the extent
 		 * was written:
 		 */
-		if (!m->op.nr_replicas) {
+		if (!m->op.nr_replicas && !m->opts.checksum_only) {
 			/* if iter == NULL, it's just a promote */
 			if (iter)
 				ret = bch2_extent_drop_ptrs(trans, iter, k, io_opts, &m->opts);
@@ -1299,7 +1322,8 @@ int bch2_data_update_init(struct btree_trans *trans,
 		 *   (i.e. trying to move a durability=2 replica to a target with a
 		 *   single durability=2 device)
 		 */
-		if (data_opts.type != BCH_DATA_UPDATE_copygc) {
+		if (data_opts.type != BCH_DATA_UPDATE_copygc &&
+		    !m->opts.checksum_only) {
 			ret = __bch2_can_do_write(c, io_opts, &m->opts, &m->op.devs_have, k, NULL);
 			if (ret)
 				goto out;
@@ -1311,7 +1335,8 @@ int bch2_data_update_init(struct btree_trans *trans,
 			}
 		}
 
-		if (!rhltable_insert_key(&c->update_table, &m->pos, &m->hash, bch_update_params))
+		if (!m->opts.checksum_only &&
+		    !rhltable_insert_key(&c->update_table, &m->pos, &m->hash, bch_update_params))
 			m->on_hashtable = true;
 	} else {
 		if (unwritten) {

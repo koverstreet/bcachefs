@@ -33,6 +33,7 @@ struct data_update_opts {
 	u16				target;
 	bool				no_devs_have:1;
 	bool				checksum_paranoia:1;
+	bool				checksum_only:1;
 
 	unsigned			read_dev;
 	enum bch_read_flags		read_flags;
