@@ -707,6 +707,8 @@ static inline void bch2_io_opts_fixups(struct bch_inode_opts *opts)
 		opts->background_target = opts->foreground_target;
 	if (!opts->background_compression)
 		opts->background_compression = opts->compression;
+	if (opts->data_replicas == 1)
+		opts->erasure_code = 0;
 	if (opts->nocow) {
 		opts->compression = opts->background_compression = 0;
 		opts->data_checksum = 0;
