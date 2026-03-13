@@ -340,8 +340,12 @@ void bch2_journal_do_discards(struct journal *j)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 
-	for_each_member_device(c, ca)
-		bch2_journal_dev_do_discards(&ca->journal);
+	for_each_member_device(c, ca) {
+		if (test_bit(BCH_FS_rw_init_done, &c->flags))
+			queue_work(j->discard_wq, &ca->journal.discard);
+		else
+			bch2_journal_dev_do_discards(&ca->journal);
+	}
 }
 
 /*
