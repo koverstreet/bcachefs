@@ -1634,6 +1634,7 @@ void bch2_dev_allocator_add(struct bch_fs *c, struct bch_dev *ca)
 void bch2_fs_allocator_background_init(struct bch_fs *c)
 {
 	spin_lock_init(&c->allocator.freelist_lock);
+	mutex_init(&c->allocator.discard_lock);
 }
 
 void bch2_fs_capacity_exit(struct bch_fs *c)

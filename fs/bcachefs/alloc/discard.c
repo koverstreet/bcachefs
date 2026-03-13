@@ -57,7 +57,8 @@ discard_fifo_entry(struct bch_dev *ca, u64 journal_seq, bool create)
  */
 void bch2_discard_bucket_del(struct bch_dev *ca, u64 journal_seq, u64 bucket)
 {
-	guard(mutex)(&ca->discard_lock);
+	struct bch_fs *c = ca->fs;
+	guard(mutex)(&c->allocator.discard_lock);
 
 	if (journal_seq) {
 		struct discard_fifo_entry *e = discard_fifo_entry(ca, journal_seq, false);
@@ -81,7 +82,8 @@ void bch2_discard_bucket_del(struct bch_dev *ca, u64 journal_seq, u64 bucket)
 
 void bch2_discard_bucket_add(struct bch_dev *ca, u64 journal_seq, u64 bucket)
 {
-	scoped_guard(mutex, &ca->discard_lock) {
+	struct bch_fs *c = ca->fs;
+	scoped_guard(mutex, &c->allocator.discard_lock) {
 		if (journal_seq) {
 			struct discard_fifo_entry *e = discard_fifo_entry(ca, journal_seq, true);
 
@@ -107,8 +109,6 @@ void bch2_discard_bucket_add(struct bch_dev *ca, u64 journal_seq, u64 bucket)
 		/* Non-fastpath discards are triggered from the journal path -
 		 * journal commits make them elegible to be discarded */
 	} else {
-		struct bch_fs *c = ca->fs;
-
 		if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_discard_fast))
 			return;
 
@@ -158,9 +158,10 @@ int bch2_discard_buckets_populate(struct bch_fs *c)
 
 static u64 discard_fifo_get(struct bch_dev *ca, struct discard_fifo_cursor *cursor)
 {
-	u64 threshold = ca->fs->journal.flushed_seq_ondisk;
+	struct bch_fs *c = ca->fs;
+	guard(mutex)(&c->allocator.discard_lock);
 
-	guard(mutex)(&ca->discard_lock);
+	u64 threshold = ca->fs->journal.flushed_seq_ondisk;
 
 	if (cursor->fifo_idx < ca->discard_fifo.front)
 		cursor->bucket_idx = 0;
@@ -183,7 +184,8 @@ static u64 discard_fifo_get(struct bch_dev *ca, struct discard_fifo_cursor *curs
 
 static u64 discard_fifo_nr_pending(struct bch_dev *ca)
 {
-	guard(mutex)(&ca->discard_lock);
+	struct bch_fs *c = ca->fs;
+	guard(mutex)(&c->allocator.discard_lock);
 
 	u64 nr = 0;
 	size_t iter;
@@ -197,7 +199,8 @@ void bch2_discard_buckets_to_text(struct printbuf *out, struct bch_dev *ca)
 {
 	u64 threshold = ca->fs->journal.flushed_seq_ondisk;
 
-	guard(mutex)(&ca->discard_lock);
+	struct bch_fs *c = ca->fs;
+	guard(mutex)(&c->allocator.discard_lock);
 
 	prt_printf(out, "discard fifo (threshold %llu):\n", threshold);
 
@@ -414,7 +417,7 @@ void bch2_do_discards_fast_work(struct work_struct *work)
 	while (1) {
 		u64 bucket;
 
-		scoped_guard(mutex, &ca->discard_lock) {
+		scoped_guard(mutex, &c->allocator.discard_lock) {
 			if (cursor >= ca->discard_fast.nr)
 				bucket = 0;
 			else
@@ -438,7 +441,7 @@ void bch2_do_discards_fast_work(struct work_struct *work)
 		 * the next entry. If it was skipped (open, wrong
 		 * data_type), it's still there — advance past it.
 		 */
-		scoped_guard(mutex, &ca->discard_lock) {
+		scoped_guard(mutex, &c->allocator.discard_lock) {
 			if (cursor < ca->discard_fast.nr &&
 			    ca->discard_fast.data[cursor] == bucket)
 				cursor++;
@@ -685,7 +688,6 @@ int bch2_dev_discards_init(struct bch_dev *ca)
 	INIT_WORK(&ca->invalidate_work, bch2_do_invalidates_work);
 	INIT_WORK(&ca->discard_work, bch2_do_discards_work);
 	INIT_WORK(&ca->discard_fast_work, bch2_do_discards_fast_work);
-	mutex_init(&ca->discard_lock);
 
 	if (!init_fifo(&ca->discard_fifo, 1024, GFP_KERNEL))
 		return -ENOMEM;

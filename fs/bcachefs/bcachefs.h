@@ -517,7 +517,6 @@ struct bch_dev {
 
 	struct work_struct	discard_work;
 	struct work_struct	discard_fast_work;
-	struct mutex		discard_lock;
 	darray_u64		discard_fast;
 	FIFO(struct discard_fifo_entry) discard_fifo;
 	bool			discard_buckets_degraded;

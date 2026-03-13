@@ -173,6 +173,8 @@ struct bch_fs_allocator {
 
 	struct write_point	btree_write_point;
 	struct write_point	reconcile_write_point;
+
+	struct mutex		discard_lock;
 };
 
 struct discard_fifo_entry {
