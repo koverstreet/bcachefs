@@ -19,7 +19,7 @@
 static inline struct discard_fifo_entry *
 discard_fifo_entry(struct bch_dev *ca, u64 journal_seq, bool create)
 {
-	size_t iter, insert_at = ca->discard_fifo.back;
+	size_t iter;
 	struct discard_fifo_entry *e;
 
 	/*
@@ -31,8 +31,9 @@ discard_fifo_entry(struct bch_dev *ca, u64 journal_seq, bool create)
 			return e;
 		if (e->seq < journal_seq)
 			break;
-		insert_at = iter - 1;
 	}
+
+	size_t insert_at = iter;
 
 	if (!create ||
 	    (fifo_full(&ca->discard_fifo) &&
@@ -42,10 +43,9 @@ discard_fifo_entry(struct bch_dev *ca, u64 journal_seq, bool create)
 	/* Make room and shift entries after insert_at toward back */
 	ca->discard_fifo.back++;
 	for (size_t j = ca->discard_fifo.back - 1; j > insert_at; j--)
-		ca->discard_fifo.data[j & ca->discard_fifo.mask] =
-			ca->discard_fifo.data[(j - 1) & ca->discard_fifo.mask];
+		fifo_entry(&ca->discard_fifo, j) = fifo_entry(&ca->discard_fifo, j - 1);
 
-	e = &ca->discard_fifo.data[insert_at & ca->discard_fifo.mask];
+	e = &fifo_entry(&ca->discard_fifo, insert_at);
 	e->seq = journal_seq;
 	darray_init(&e->buckets);
 	return e;
@@ -169,8 +169,7 @@ static u64 discard_fifo_get(struct bch_dev *ca, struct discard_fifo_cursor *curs
 	for (cursor->fifo_idx = max(cursor->fifo_idx, ca->discard_fifo.front);
 	     cursor->fifo_idx < ca->discard_fifo.back;
 	     cursor->fifo_idx++, cursor->bucket_idx = 0) {
-		struct discard_fifo_entry *e =
-			&ca->discard_fifo.data[cursor->fifo_idx & ca->discard_fifo.mask];
+		struct discard_fifo_entry *e = &fifo_entry(&ca->discard_fifo, cursor->fifo_idx);
 
 		if (e->seq > threshold)
 			break;
