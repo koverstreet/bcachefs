@@ -490,10 +490,14 @@ do_write:
 	 * blk-wbt.c throttles all writes except those that have both REQ_SYNC
 	 * and REQ_IDLE set...
 	 */
+	blk_opf_t opf = REQ_OP_WRITE|REQ_META|REQ_SYNC|REQ_IDLE;
+
+	if (type == BTREE_WRITE_journal_reclaim)
+		opf = REQ_OP_WRITE|REQ_META|REQ_SYNC|REQ_PRIO;
 
 	wbio = container_of(bio_alloc_bioset(NULL,
 				buf_pages(data, sectors_to_write << 9),
-				REQ_OP_WRITE|REQ_META|REQ_SYNC|REQ_IDLE,
+				opf,
 				GFP_NOFS,
 				&c->btree.bio),
 			    struct btree_write_bio, wbio.bio);
