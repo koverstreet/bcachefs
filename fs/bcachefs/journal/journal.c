@@ -1212,6 +1212,8 @@ void __bch2_journal_debug_to_text(struct printbuf *out, struct journal *j)
 	prt_printf(out, "last_seq_ondisk:\t%llu\n",		j->last_seq_ondisk);
 	prt_printf(out, "flushed_seq_ondisk:\t%llu\n",		j->flushed_seq_ondisk);
 	prt_printf(out, "last_empty_seq:\t%llu\n",		j->last_empty_seq);
+	prt_printf(out, "rewind_seq:\t%llu\n",			j->rewind_seq);
+	prt_printf(out, "rewind_seq_ondisk:\t%llu\n",		j->rewind_seq_ondisk);
 	prt_printf(out, "watermark:\t%s\n",			bch2_watermarks[j->watermark]);
 	prt_printf(out, "each entry reserved:\t%u\n",		j->entry_u64s_reserved);
 	prt_printf(out, "nr flush writes:\t%llu\n",		j->nr_flush_writes);
