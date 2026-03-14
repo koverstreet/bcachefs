@@ -68,12 +68,9 @@ void bch2_journal_ptrs_to_text(struct printbuf *out, struct bch_fs *c, struct jo
 
 static void bch2_journal_datetime_to_text(struct printbuf *out, struct jset *j)
 {
-	for_each_jset_entry_type(entry, j, BCH_JSET_ENTRY_datetime) {
-		struct jset_entry_datetime *datetime =
-			container_of(entry, struct jset_entry_datetime, entry);
-		bch2_prt_datetime(out, le64_to_cpu(datetime->seconds));
-		break;
-	}
+	u64 t = jset_datetime(j);
+	if (t)
+		bch2_prt_datetime(out, t);
 }
 
 static void bch2_journal_replay_to_text(struct printbuf *out, struct bch_fs *c,

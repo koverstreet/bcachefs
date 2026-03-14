@@ -41,6 +41,16 @@ static inline struct jset_entry *__jset_entry_type_next(struct jset *jset,
 	for_each_jset_entry_type(entry, jset, BCH_JSET_ENTRY_btree_keys)\
 		jset_entry_for_each_key(entry, k)
 
+static inline time64_t jset_datetime(struct jset *j)
+{
+	for_each_jset_entry_type(entry, j, BCH_JSET_ENTRY_datetime) {
+		struct jset_entry_datetime *dt =
+			container_of(entry, struct jset_entry_datetime, entry);
+		return le64_to_cpu(dt->seconds);
+	}
+	return 0;
+}
+
 static inline struct nonce journal_nonce(const struct jset *jset)
 {
 	return (struct nonce) {{
