@@ -1154,6 +1154,8 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 
 		sb = c->disk_sb.sb;
 
+		try(bch2_sb_members_v2_init(c));
+
 		/* Ensure sb_field_ext and members_v2 exist at current size
 		 * before reading opts, so ext opts see a fully-sized field: */
 		struct bch_sb_field_ext *ext =
@@ -1163,8 +1165,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 			return bch_err_throw(c, ENOSPC_sb);
 
 		sb = c->disk_sb.sb;
-
-		try(bch2_sb_members_v2_init(c));
 
 		/* Compat: */
 		if (!BCH_SB_JOURNAL_FLUSH_DELAY(sb))
@@ -1204,7 +1204,7 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 				CLASS(printbuf, err)();
 				int ret = bch2_opt_validate(opt, v, &err);
 				if (ret) {
-					prt_printf(out, "Invalid superblock option %s", err.buf);
+					prt_printf(out, "Invalid superblock option %s\n", err.buf);
 					return ret;
 				}
 			}
