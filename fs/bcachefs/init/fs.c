@@ -704,7 +704,8 @@ int bch2_fs_stop(struct bch_fs *c)
 		kobject_put(&c->time_stats_json);
 		kobject_put(&c->time_stats);
 		kobject_put(&c->opts_dir);
-		sysfs_remove_bin_file(&c->internal, &bin_attr_btree_trans_stats_json);
+		if (c->internal.state_in_sysfs)
+			sysfs_remove_bin_file(&c->internal, &bin_attr_btree_trans_stats_json);
 		kobject_put(&c->internal);
 
 		/* btree prefetch might have kicked off reads in the background: */
@@ -1121,6 +1122,7 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	bch2_fs_btree_gc_init_early(c);
 	bch2_fs_btree_init_early(c);
 	bch2_fs_copygc_init(c);
+	bch2_fs_counters_init_early(c);
 	bch2_fs_ec_init_early(c);
 	bch2_fs_errors_init_early(c);
 	bch2_fs_journal_init_early(&c->journal);

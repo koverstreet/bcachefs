@@ -9,6 +9,7 @@ int bch2_sb_counters_to_cpu(struct bch_fs *);
 int bch2_sb_counters_from_cpu(struct bch_fs *);
 
 void bch2_fs_counters_exit(struct bch_fs *);
+void bch2_fs_counters_init_early(struct bch_fs *);
 int bch2_fs_counters_init(struct bch_fs *);
 int bch2_fs_counters_init_late(struct bch_fs *);
 

@@ -696,6 +696,9 @@ static bool __bch2_btree_flush_all(struct bch_fs *c, unsigned flag)
 	struct btree *b;
 	unsigned i;
 	bool ret = false;
+
+	if (!c->btree.cache.table_init_done)
+		return false;
 restart:
 	rcu_read_lock();
 	for_each_cached_btree(b, c, tbl, i, pos)
