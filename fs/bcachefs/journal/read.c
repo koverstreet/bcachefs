@@ -1268,6 +1268,65 @@ next_block:
 	return 0;
 }
 
+typedef struct {
+	unsigned	bucket;
+	u64		seq;
+} journal_bucket_entry;
+
+DEFINE_DARRAY(journal_bucket_entry);
+
+/* Sort by seq descending */
+static int journal_bucket_entry_cmp(const void *_a, const void *_b)
+{
+	const journal_bucket_entry *a = _a, *b = _b;
+
+	return cmp_int(b->seq, a->seq);
+}
+
+/*
+ * Read just the first block of a journal bucket to extract the sequence
+ * number from the jset header. Returns 0 on success (seq stored in
+ * ja->bucket_seq[bucket]), or the seq is left at 0 if the bucket
+ * doesn't contain a valid journal entry.
+ */
+static int journal_peek_bucket(struct bch_dev *ca,
+			       struct journal_read_buf *buf,
+			       unsigned bucket)
+{
+	struct bch_fs *c = ca->fs;
+	struct journal_device *ja = &ca->journal;
+	u64 offset = bucket_to_sector(ca, ja->buckets[bucket]);
+
+	if (buf->size < block_bytes(c)) {
+		int ret = journal_read_buf_realloc(c, buf, block_bytes(c));
+		if (ret)
+			return ret;
+	}
+
+	unsigned nr_bvecs = buf_pages(buf->data, block_bytes(c));
+	struct bio *bio = kmalloc(sizeof(struct bio) +
+				  sizeof(struct bio_vec) * nr_bvecs, GFP_KERNEL);
+	if (!bio)
+		return bch_err_throw(c, ENOMEM_journal_read_bucket);
+
+	bio_init(bio, ca->disk_sb.bdev, bio_inline_vecs(bio), nr_bvecs, REQ_OP_READ);
+	bio->bi_iter.bi_sector = offset;
+	bch2_bio_map(bio, buf->data, block_bytes(c));
+
+	int ret = submit_bio_wait(bio);
+	kfree(bio);
+
+	if (ret)
+		return 0; /* not fatal - bucket may be readable on another device */
+
+	struct jset *j = buf->data;
+	if (le64_to_cpu(j->magic) != jset_magic(c))
+		return 0;
+
+	ja->bucket_seq[bucket] = le64_to_cpu(j->seq);
+	return 0;
+}
+
 static CLOSURE_CALLBACK(bch2_journal_read_device)
 {
 	closure_type(ja, struct journal_device, read);
@@ -1288,12 +1347,122 @@ static CLOSURE_CALLBACK(bch2_journal_read_device)
 
 	pr_debug("%u journal buckets", ja->nr);
 
+	/*
+	 * Optimization for large journals on slow devices (e.g. SD cards):
+	 * first read just the header of each bucket to find sequence numbers,
+	 * then only fully read buckets that contain live journal entries.
+	 *
+	 * Skip when reading the entire journal is requested (fsck, debugging).
+	 */
+	if (!c->opts.read_entire_journal && !c->opts.fsck && ja->nr > 32) {
+		CLASS(darray_journal_bucket_entry, order)();
+
+		/* Pass 1: read first block of each bucket for seq numbers */
+		for (i = 0; i < ja->nr; i++) {
+			ret = journal_peek_bucket(ca, &buf, i);
+			if (ret)
+				goto err;
+			if (!ja->bucket_seq[i])
+				continue;
+
+			journal_bucket_entry e = {
+				.bucket	= i,
+				.seq	= ja->bucket_seq[i],
+			};
+			ret = darray_push(&order, e);
+			if (ret)
+				goto full_read;
+		}
+
+		if (!order.nr)
+			goto full_read;
+
+		/*
+		 * Check monotonicity: walk all journal buckets backwards
+		 * from the write head (wrapping around). Seq should be
+		 * non-increasing, and once we hit an empty (discarded)
+		 * bucket, everything after it should also be empty.
+		 * Groundwork for a future binary search.
+		 */
+		{
+			/* Find write head — bucket with max seq among all buckets */
+			unsigned max_bucket = 0;
+			for (i = 0; i < ja->nr; i++)
+				if (ja->bucket_seq[i] > ja->bucket_seq[max_bucket])
+					max_bucket = i;
+
+			u64 prev_seq = ja->bucket_seq[max_bucket];
+			bool monotonic = true;
+			bool saw_empty = false;
+			for (unsigned k = 1; k < ja->nr; k++) {
+				unsigned idx = (max_bucket + ja->nr - k) % ja->nr;
+				u64 seq = ja->bucket_seq[idx];
+
+				if (!seq) {
+					saw_empty = true;
+				} else if (saw_empty) {
+					monotonic = false;
+				} else if (seq > prev_seq) {
+					monotonic = false;
+				}
+				prev_seq = seq;
+			}
+			if (!monotonic) {
+				CLASS(bch_log_msg, msg)(c);
+				prt_printf(&msg.m, "%s: journal bucket seqs not monotonic "
+					   "(write head bucket %u seq %llu):",
+					   ca->name, max_bucket,
+					   ja->bucket_seq[max_bucket]);
+				for (unsigned k = 0; k < ja->nr; k++) {
+					unsigned idx = (max_bucket + ja->nr - k) % ja->nr;
+					if (ja->bucket_seq[idx] || k < 4)
+						prt_printf(&msg.m, " [%u]=%llu",
+							   idx, ja->bucket_seq[idx]);
+				}
+				bch2_sb_error_count(c, BCH_FSCK_ERR_journal_bucket_seq_not_monotonic);
+			}
+		}
+
+		/*
+		 * Sort by seq descending, then read in that order. Once
+		 * we've read past last_seq, all remaining buckets are
+		 * dead — stop.
+		 */
+		darray_sort(order, journal_bucket_entry_cmp);
+
+		unsigned nr_read = 0;
+		darray_for_each(order, e) {
+			ret = journal_read_bucket(ca, &buf, jlist, e->bucket);
+			if (ret)
+				goto err;
+			nr_read++;
+
+			u64 last_seq;
+			scoped_guard(mutex, &jlist->lock)
+				last_seq = jlist->last_seq;
+
+			/*
+			 * Once we've established last_seq and this bucket's
+			 * max seq (now in bucket_seq from the full read) is
+			 * below it, we're done:
+			 */
+			if (last_seq && ja->bucket_seq[e->bucket] < last_seq)
+				break;
+		}
+
+		bch_verbose_dev(ca, "journal read: %u/%u buckets read",
+			nr_read, ja->nr);
+
+		goto done;
+	}
+full_read:
 	for (i = 0; i < ja->nr; i++) {
 		ret = journal_read_bucket(ca, &buf, jlist, i);
 		if (ret)
 			goto err;
 	}
 
+done:
 	/*
 	 * Set dirty_idx to indicate the entire journal is full and needs to be
 	 * reclaimed - journal reclaim will immediately reclaim whatever isn't
