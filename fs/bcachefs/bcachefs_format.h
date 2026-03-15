@@ -1038,12 +1038,15 @@ LE64_BITMASK(BCH_SB_EXT_SCRUB_MAX_REWIND_SECS,	struct bch_sb_field_ext, flags0, 
 	  "and background data movement",			"2025-11")	\
 	x(extented_key_type_error,	BCH_VERSION(1, 34),		\
 	  "KEY_TYPE_error changed to zero-byte value",		"2025-12")	\
-	x(bucket_stripe_index,		BCH_VERSION(1, 35),		\
-	  "Stripe index in alloc keys for efficient "			\
+	x(bucket_stripe_index,		BCH_VERSION(1, 35),			\
+	  "Stripe index in alloc keys for efficient "				\
 	  "stripe-bucket lookups",				"2026-01")	\
-	x(no_sb_user_data_replicas,	BCH_VERSION(1, 36),		\
-	  "Removed redundant user_data replicas "			\
-	  "from superblock",					"2026-01")
+	x(no_sb_user_data_replicas,	BCH_VERSION(1, 36),			\
+	  "Removed redundant user_data replicas "				\
+	  "from superblock",					"2026-01")	\
+	x(erasure_coding,		BCH_VERSION(1, 37),			\
+	  "First release with fully supported erasure coding: all key "		\
+	  "functionality done, resilver integrated with reconcile","2026-03")	\
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,
