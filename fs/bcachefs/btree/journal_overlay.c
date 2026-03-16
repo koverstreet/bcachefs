@@ -865,6 +865,12 @@ int bch2_journal_keys_sort(struct bch_fs *c)
 	__journal_keys_sort(keys);
 	keys->gap = keys->nr;
 
+	darray_for_each(*keys, i) {
+		struct bkey_i *k = journal_key_k(c, i);
+		if (k->k.type == KEY_TYPE_btree_ptr_v2)
+			bkey_i_to_btree_ptr_v2(k)->v.mem_ptr = 0;
+	}
+
 	CLASS(bch_log_msg_level, msg)(c, nr_extra_sorts ? LOGLEVEL_debug : LOGLEVEL_notice);
 	prt_printf(&msg.m, "Journal keys: %zu read, %zu after sorting and compacting", nr_read, keys->nr);
 	if (nr_extra_sorts)

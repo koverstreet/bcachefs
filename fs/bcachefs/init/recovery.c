@@ -225,21 +225,6 @@ void bch2_ignore_journal_rewind_errors(struct bch_fs *c)
 	bch2_write_super(c);
 }
 
-/*
- * Btree node pointers have a field to stack a pointer to the in memory btree
- * node; we need to zero out this field when reading in btree nodes, or when
- * reading in keys from the journal:
- */
-static void zero_out_btree_mem_ptr(struct journal_keys *keys)
-{
-	struct bch_fs *c = container_of(keys, struct bch_fs, journal_keys);
-	darray_for_each(*keys, i) {
-		struct bkey_i *k = journal_key_k(c, i);
-		if (k->k.type == KEY_TYPE_btree_ptr_v2)
-			bkey_i_to_btree_ptr_v2(k)->v.mem_ptr = 0;
-	}
-}
-
 int bch2_set_may_go_rw(struct bch_fs *c)
 {
 	struct journal_keys *keys = &c->journal_keys;
@@ -764,8 +749,6 @@ use_clean:
 
 	c->journal_replay_seq_start	= journal_start.last_seq;
 	c->journal_replay_seq_end	= journal_start.replay_end;
-
-	zero_out_btree_mem_ptr(&c->journal_keys);
 
 	try(journal_replay_early(c, clean));
 
