@@ -1582,8 +1582,9 @@ int bch2_stripe_repair(struct moving_context *ctxt,
 
 	const struct bch_stripe *old_s = s.v;
 	if (!stripe_degraded(c, old_s)) {
-		/* confused */
-		BUG();
+		event_inc_trace(c, stripe_repair_race, buf,
+				bch2_bkey_val_to_text(&buf, c, s.s_c));
+		return 0;
 	}
 
 	unsigned nr_data = old_s->nr_blocks - old_s->nr_redundant;

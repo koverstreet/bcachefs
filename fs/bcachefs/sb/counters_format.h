@@ -111,6 +111,8 @@ enum bch_counters_flags {
 	  "Stripe extent updates")					\
 	x(stripe_update_extent_fail,		100, TYPE_COUNTER,	\
 	  "Stripe extent update failures")				\
+	x(stripe_repair_race,			131, TYPE_COUNTER,	\
+	  "Stripe extent update failures")				\
 	x(copygc,				40,  TYPE_COUNTER,	\
 	  "Copygc runs")						\
 	x(copygc_wait_obsolete,			41,  TYPE_COUNTER,	\
