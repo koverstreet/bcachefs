@@ -805,7 +805,7 @@ u64 bch2_opt_from_sb(struct bch_sb *sb, enum bch_opt_id id, int dev_idx)
 			v = opt->get_sb(sb);
 		} else if (opt->get_ext) {
 			const struct bch_sb_field_ext *ext = bch2_sb_field_get(sb, ext);
-			v = opt->get_ext(ext);
+			v = ext ? opt->get_ext(ext) : 0;
 		} else {
 			v = 0;
 		}
