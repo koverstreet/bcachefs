@@ -396,6 +396,12 @@ enum fsck_err_opts {
 	  OPT_UINT(0, U64_MAX),						\
 	  BCH2_NO_SB_OPT,		0,				\
 	  NULL,		"Rewind journal")				\
+	x(journal_rewind_discard_buffer_percent, u8,			\
+	  OPT_FS|OPT_MOUNT,						\
+	  OPT_UINT(0, 10),						\
+	  BCH_SB_EXT_DISCARD_BUFFER,	4,				\
+	  NULL,		"Percentage of filesystem capacity to leave undiscarded"\
+	  " for journal rewind")					\
 	x(scrub_recent_journal_entries,	u8,				\
 	  OPT_FS|OPT_MOUNT,						\
 	  OPT_STR(bch2_scrub_journal_opts),				\

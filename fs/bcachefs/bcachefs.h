@@ -382,7 +382,10 @@ BCH_DEBUG_PARAMS_ALL()
 	x(blocked_writeback_throttle,					\
 	  "Blocked: writeback throttle")				\
 	x(nocow_lock_contended,						\
-	  "Nocow lock contention")
+	  "Nocow lock contention")					\
+	x(blocked_discard_journal_flush,				\
+	  "Blocked: discard worker waiting for journal flush "		\
+	  "to advance rewind_seq and release buckets")
 
 enum bch_time_stats {
 #define x(name, ...) BCH_TIME_##name,

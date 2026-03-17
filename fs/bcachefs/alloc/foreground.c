@@ -476,7 +476,8 @@ static noinline void bucket_alloc_to_text(struct printbuf *out,
 	prt_printf(out, "will_retry_all_devices\t%u\n",	req->will_retry_all_devices);
 	prt_printf(out, "will_retry_set_devices\t%u\n",	req->will_retry_set_devices);
 	prt_printf(out, "blocking\t%u\n", !(req->flags & BCH_WRITE_alloc_nowait));
-	prt_printf(out, "free\t%llu\n",	req->usage.buckets[BCH_DATA_free]);
+	prt_printf(out, "free\t%llu\n",		req->usage.buckets[BCH_DATA_free]);
+	prt_printf(out, "need_discard\t%llu\n",	req->usage.buckets[BCH_DATA_need_discard]);
 	prt_printf(out, "copygc_wait\t%llu/%lli\n",
 		   bch2_copygc_wait_amount(c),
 		   c->copygc.wait - atomic64_read(&c->io_clock[WRITE].now));
