@@ -1262,6 +1262,17 @@ retry:
 		    req->nr_effective)
 			ret = 0;
 
+		/*
+		 * We don't block until we know we have no retries left, so if
+		 * we didn't block (because the final attempt succeeded) and
+		 * don't have all the replicas we want (freelist_empty) - we
+		 * need another retry so that we can add ourself to the waitlist
+		 */
+		if (ret == -BCH_ERR_freelist_empty &&
+		    req->cl &&
+		    !(req->flags & BCH_WRITE_alloc_nowait))
+			continue;
+
 		if (ret)
 			goto err;
 
