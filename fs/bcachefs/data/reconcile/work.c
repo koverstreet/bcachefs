@@ -725,7 +725,8 @@ static int do_reconcile_extent(struct moving_context *ctxt,
 	struct bch_inode_opts opts;
 	struct data_update_opts data_opts = {};
 	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts, &data_opts,
-				  work, &iter, 0, k, stripe_retry));
+				  work, &iter, 0,
+				  bkey_i_to_s_c(stack_k.k), stripe_retry));
 
 	event_add_trace(c, reconcile_data, stack_k.k->k.size, buf, ({
 		prt_newline(&buf);
@@ -781,9 +782,10 @@ static int do_reconcile_extent_phys(struct moving_context *ctxt,
 		.read_flags	= BCH_READ_soft_require_read_device,
 	};
 	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts,
-				  &data_opts, work, &iter, bp.v->level, k, stripe_retry));
+				  &data_opts, work, &iter, bp.v->level,
+				  bkey_i_to_s_c(stack_k.k), stripe_retry));
 
-	event_add_trace(c, reconcile_phys, k.k->size, buf, ({
+	event_add_trace(c, reconcile_phys, stack_k.k->k.size, buf, ({
 		prt_newline(&buf);
 		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(stack_bp.k));
 		prt_newline(&buf);
@@ -815,7 +817,8 @@ static int do_reconcile_btree(struct moving_context *ctxt,
 
 	struct bch_inode_opts opts;
 	struct data_update_opts data_opts = {};
-	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts, &data_opts, work, &iter, bp.v->level, k, NULL));
+	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts, &data_opts, work, &iter,
+				  bp.v->level, bkey_i_to_s_c(stack_k.k), NULL));
 
 	event_add_trace(c, reconcile_btree, btree_sectors(c), buf, ({
 		prt_newline(&buf);
