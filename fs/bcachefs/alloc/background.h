@@ -317,6 +317,7 @@ void bch2_bucket_gens_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_
 })
 
 int bch2_bucket_gens_init(struct bch_fs *);
+int bch2_dev_remove_bucket_gens(struct bch_fs *, struct bch_dev *, u64);
 
 int bch2_alloc_read(struct bch_fs *);
 
