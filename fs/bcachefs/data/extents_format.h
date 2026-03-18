@@ -276,17 +276,33 @@ struct bch_extent {
 	((sizeof(struct bch_extent_crc128) +			\
 	  sizeof(struct bch_extent_ptr)) / sizeof(__u64))
 
-/* Maximum possible size of an entire extent value: */
+/*
+ * Maximum possible size of an entire extent value:
+ *
+ * BCH_REPLICAS_MAX * 2 pointers because evacuating devices have durability=0
+ * and don't count toward durability accounting, but their pointers remain
+ * until the data is moved. Reconcile adds BCH_SB_MEMBER_INVALID placeholder
+ * pointers to bring durability accounting up to the desired level, so both
+ * sets of pointers coexist.
+ */
 #define BKEY_EXTENT_VAL_U64s_MAX				\
-	(5 + BKEY_EXTENT_PTR_U64s_MAX * (BCH_REPLICAS_MAX + 1))
+	(5 + BKEY_EXTENT_PTR_U64s_MAX * (BCH_REPLICAS_MAX * 2 + 1))
 
 /* * Maximum possible size of an entire extent, key + value: */
 #define BKEY_EXTENT_U64s_MAX		(BKEY_U64s + BKEY_EXTENT_VAL_U64s_MAX)
 
-/* Btree pointers don't carry around checksums: */
+/*
+ * Btree pointers don't carry around checksums:
+ *
+ * BCH_REPLICAS_MAX * 2 pointers because evacuating devices have durability=0
+ * and don't count toward durability accounting, but their pointers remain
+ * until the data is moved. Reconcile adds BCH_SB_MEMBER_INVALID placeholder
+ * pointers to bring durability accounting up to the desired level, so both
+ * sets of pointers coexist.
+ */
 #define BKEY_BTREE_PTR_VAL_U64s_MAX				\
 	((sizeof(struct bch_btree_ptr_v2) +			\
-	  sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX +	\
+	  sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX * 2 +\
 	  sizeof(struct bch_extent_reconcile) +		\
 	  sizeof(struct bch_extent_reconcile_bp)) / sizeof(__u64))
 #define BKEY_BTREE_PTR_U64s_MAX					\
