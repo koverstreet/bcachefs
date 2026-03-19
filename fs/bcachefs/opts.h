@@ -731,6 +731,9 @@ static inline void bch2_io_opts_fixups(struct bch_inode_opts *opts)
 		opts->data_checksum = 0;
 		opts->erasure_code = 0;
 	}
+	/* We currently only support up to RAID6: */
+	if (opts->erasure_code)
+		opts->data_replicas = min(opts->data_replicas, 3);
 }
 
 void bch2_inode_opts_get(struct bch_fs *, struct bch_inode_opts *, bool);
