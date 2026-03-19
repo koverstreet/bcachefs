@@ -1315,6 +1315,17 @@ static bool drop_cached_pointer_trace(struct bch_fs *c, struct bkey_s k,
 	return true;
 }
 
+static bool ptr_has_ec(struct bch_fs *c, struct bkey_s k, struct bch_extent_ptr *ptr)
+{
+	struct extent_ptr_decoded p;
+	union bch_extent_entry *entry;
+
+	bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs(k), p, entry)
+		if (&entry->ptr == ptr)
+			return p.has_ec;
+	return false;
+}
+
 static bool maybe_drop_cached_ptr(struct bch_fs *c, struct bch_inode_opts *opts,
 				  struct bkey_s k,
 				  struct bch_extent_ptr *ptr, bool have_cached_ptr)
@@ -1322,6 +1333,9 @@ static bool maybe_drop_cached_ptr(struct bch_fs *c, struct bch_inode_opts *opts,
 	if (ptr->cached) {
 		if (have_cached_ptr)
 			return drop_cached_pointer_trace(c, k, ptr, "extent already has another cached pointer");
+
+		if (ptr_has_ec(c, k, ptr))
+			return drop_cached_pointer_trace(c, k, ptr, "cached ptr incompatible with erasure coding");
 
 		struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
 		if (ca && dev_ptr_stale_rcu(ca, ptr))
