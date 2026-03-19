@@ -1125,6 +1125,7 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	bch2_fs_btree_init_early(c);
 	bch2_fs_copygc_init(c);
 	bch2_fs_counters_init_early(c);
+	bch2_fs_discards_init_early(c);
 	bch2_fs_ec_init_early(c);
 	bch2_fs_errors_init_early(c);
 	bch2_fs_journal_init_early(&c->journal);

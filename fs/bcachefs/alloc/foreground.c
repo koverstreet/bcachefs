@@ -518,7 +518,7 @@ again:
 
 	if (req->usage.buckets[BCH_DATA_need_discard] >
 	    min(avail, ca->mi.nbuckets >> 7))
-		bch2_dev_do_discards(ca);
+		bch2_do_discards_async(c);
 
 	if (req->usage.buckets[BCH_DATA_need_gc_gens] > avail)
 		bch2_gc_gens_async(c);

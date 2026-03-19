@@ -523,11 +523,8 @@ struct bch_dev {
 
 	struct work_struct	invalidate_work;
 
-	struct work_struct	discard_work;
 	struct work_struct	discard_fast_work;
 	darray_u64		discard_fast;
-	FIFO(struct discard_fifo_entry) discard_fifo;
-	bool			discard_buckets_degraded;
 
 	atomic64_t		rebalance_work;
 
