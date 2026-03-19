@@ -4,6 +4,8 @@
 
 #include "init/error.h"
 
+struct wb_maybe_flush;
+
 int bch2_need_discard_or_freespace_err(struct btree_trans *, struct bkey_s_c, bool, bool, bool);
 
 #define need_discard_or_freespace_err(...)		\
@@ -13,13 +15,13 @@ int bch2_need_discard_or_freespace_err(struct btree_trans *, struct bkey_s_c, bo
 	(unlikely(cond) ?  need_discard_or_freespace_err(__VA_ARGS__) : false)
 
 int __bch2_check_discard_freespace_key(struct btree_trans *, struct btree_iter *, u8 *,
-				       u64 *, enum bch_fsck_flags);
+				       u64 *, enum bch_fsck_flags, struct wb_maybe_flush *);
 
 static inline int bch2_check_discard_freespace_key_async(struct btree_trans *trans,
 							 struct btree_iter *iter,
 							 u8 *gen, u64 *journal_seq_empty)
 {
-	return __bch2_check_discard_freespace_key(trans, iter, gen, journal_seq_empty, FSCK_ERR_NO_LOG);
+	return __bch2_check_discard_freespace_key(trans, iter, gen, journal_seq_empty, FSCK_ERR_NO_LOG, NULL);
 }
 
 int bch2_check_alloc_info(struct bch_fs *);

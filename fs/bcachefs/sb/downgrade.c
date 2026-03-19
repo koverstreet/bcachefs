@@ -119,7 +119,11 @@
 	  BIT_ULL(BCH_RECOVERY_PASS_check_alloc_info)|		\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_alloc_to_lru_refs),	\
 	  BCH_FSCK_ERR_alloc_key_stripe_refcount_wrong,		\
-	  BCH_FSCK_ERR_stripe_to_missing_bucket_ref)
+	  BCH_FSCK_ERR_stripe_to_missing_bucket_ref)		\
+	x(need_discard_by_journal_seq,				\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_alloc_info),		\
+	  BCH_FSCK_ERR_need_discard_freespace_key_bad,		\
+	  BCH_FSCK_ERR_need_discard_key_wrong)
 
 #define UPGRADE_TABLE_INCOMPAT()				\
 	x(reconcile,						\
@@ -179,7 +183,12 @@
 	  BCH_FSCK_ERR_accounting_key_nr_counters_wrong)	\
 	x(bucket_stripe_index,					\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_alloc_info)|		\
-	  BIT_ULL(BCH_RECOVERY_PASS_check_alloc_to_lru_refs))
+	  BIT_ULL(BCH_RECOVERY_PASS_check_alloc_to_lru_refs))	\
+	x(need_discard_by_journal_seq,				\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_alloc_info),		\
+	  BCH_FSCK_ERR_need_discard_freespace_key_bad,		\
+	  BCH_FSCK_ERR_need_discard_key_wrong,			\
+	  BCH_FSCK_ERR_need_discard_freespace_key_to_invalid_dev_bucket)
 
 struct upgrade_downgrade_entry {
 	u64		recovery_passes;

@@ -134,6 +134,8 @@ void bch2_fatal_error(struct bch_fs *c, const char *func, const char *fmt, ...)
 	prt_vprintf(&msg.m, fmt, args);
 	va_end(args);
 
+	prt_newline(&msg.m);
+
 	bch2_fs_emergency_read_only(c, &msg.m);
 	prt_printf(&msg.m, "fatal error - emergency read only");
 }

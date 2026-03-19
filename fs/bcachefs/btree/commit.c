@@ -885,6 +885,15 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 		}
 	}
 
+	/*
+	 * Pre-grow journal entries subbuf for write buffer updates
+	 * that will be added during atomic triggers (can't realloc
+	 * after journal reservation):
+	 */
+	if (trans->extra_journal_u64s)
+		try(bch2_trans_subbuf_reserve(trans, &trans->journal_entries,
+					      trans->extra_journal_u64s));
+
 	try(bch2_trans_lock_write(trans));
 
 	int ret = bch2_trans_commit_write_locked(trans, flags, stopped_at, trace_ip);
@@ -1207,7 +1216,8 @@ retry:
 		memset(&trans->journal_res, 0, sizeof(trans->journal_res));
 	memset(&trans->fs_usage_delta, 0, sizeof(trans->fs_usage_delta));
 
-	trans->journal_u64s = journal_u64s + trans->journal_entries.u64s;
+	trans->journal_u64s = journal_u64s + trans->journal_entries.u64s +
+		trans->extra_journal_u64s;
 
 	ret = do_bch2_trans_commit(trans, flags, &errored_at, _RET_IP_);
 

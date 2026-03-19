@@ -675,7 +675,8 @@ enum btree_id_flags {
 	  BTREE_IS_extents,							\
 	  BIT_ULL(KEY_TYPE_set),						\
 	  "Free space index")							\
-	x(need_discard,		12,	0,					\
+	x(need_discard,		12,						\
+	  BTREE_IS_write_buffer,						\
 	  BIT_ULL(KEY_TYPE_set),						\
 	  "Buckets waiting for discard/TRIM")					\
 	x(backpointers,		13,						\
@@ -1048,6 +1049,9 @@ LE64_BITMASK(BCH_SB_EXT_DISCARD_BUFFER,		struct bch_sb_field_ext, flags0, 38, 42
 	x(erasure_coding,		BCH_VERSION(1, 37),			\
 	  "First release with fully supported erasure coding: all key "		\
 	  "functionality done, resilver integrated with reconcile","2026-03")	\
+	x(need_discard_by_journal_seq,	BCH_VERSION(1, 38),			\
+	  "need_discard btree reindexed by journal seq for O(1) "		\
+	  "discard eligibility checks",				"2026-03")	\
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,

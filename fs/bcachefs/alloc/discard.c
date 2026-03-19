@@ -126,25 +126,17 @@ put_ref:
 	}
 }
 
-static int bch2_dev_discard_buckets_populate(struct btree_trans *trans, struct bch_dev *ca)
+static int bch2_discard_buckets_populate_trans(struct btree_trans *trans)
 {
-	return for_each_btree_key_max(trans, iter,
-			BTREE_ID_need_discard,
-			POS(ca->dev_idx, 0),
-			POS(ca->dev_idx, U64_MAX), 0, k, ({
-		CLASS(btree_iter, alloc_iter)(trans, BTREE_ID_alloc,
-					     k.k->p, BTREE_ITER_cached);
-		struct bkey_s_c alloc_k =
-			bch2_btree_iter_peek_slot(&alloc_iter);
-		int ret = bkey_err(alloc_k);
-		if (!ret) {
-			struct bch_alloc_v4 a_convert;
-			const struct bch_alloc_v4 *a = bch2_alloc_to_v4(alloc_k, &a_convert);
+	return for_each_btree_key(trans, iter,
+			BTREE_ID_need_discard, POS_MIN, 0, k, ({
+		struct bpos bucket = u64_to_bucket(k.k->p.offset);
+		u64 journal_seq = k.k->p.inode;
 
-			if (a->data_type == BCH_DATA_need_discard)
-				bch2_discard_bucket_add(ca, a->journal_seq_empty, k.k->p.offset);
-		}
-		ret;
+		CLASS(bch2_dev_tryget_noerror, ca)(trans->c, bucket.inode);
+		if (ca)
+			bch2_discard_bucket_add(ca, journal_seq, bucket.offset);
+		0;
 	}));
 }
 
@@ -152,10 +144,7 @@ int bch2_discard_buckets_populate(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
 
-	for_each_member_device(c, ca)
-		try(bch2_dev_discard_buckets_populate(trans, ca));
-
-	return 0;
+	return bch2_discard_buckets_populate_trans(trans);
 }
 
 static u64 discard_fifo_get(struct bch_dev *ca, struct discard_fifo_cursor *cursor)
@@ -263,7 +252,7 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 	}
 
 	if (a->v.data_type != BCH_DATA_need_discard) {
-		/* expected race */
+		/* expected race - btree write buffer */
 		s->bad_data_type++;
 		return 0;
 	}
@@ -460,8 +449,9 @@ static void __bch2_dev_do_discards(struct bch_dev *ca)
 		if (new_rewind_seq)
 			bch2_journal_advance_rewind_seq(&c->journal, new_rewind_seq);
 
-		if (s.need_journal_commit > dev_buckets_free(ca, BCH_WATERMARK_normal) ||
-		    r.flush_journal) {
+		if (!ret &&
+		    (s.need_journal_commit > dev_buckets_free(ca, BCH_WATERMARK_normal) ||
+		     r.flush_journal)) {
 			bch2_trans_unlock_long(trans);
 			u64 start_time = local_clock();
 			ret = bch2_journal_flush(&c->journal);
@@ -470,11 +460,26 @@ static void __bch2_dev_do_discards(struct bch_dev *ca)
 			again = true;
 		}
 
+		/*
+		 * If the FIFO is empty but we need free buckets, flush the
+		 * write buffer — need_discard keys may be buffered from
+		 * the alloc trigger's atomic section:
+		 */
+		if (!ret && !s.seen) {
+			struct bch_dev_usage usage = bch2_dev_usage_read(ca);
+
+			if (!__dev_buckets_free(ca, usage, BCH_WATERMARK_stripe) &&
+			    usage.buckets[BCH_DATA_need_discard]) {
+				bch2_btree_write_buffer_flush_sync(trans);
+				again = true;
+			}
+		}
+
 		/* FIFO lost entries due to OOM: repopulate from btree and drain again.
 		 * Clear flag first so concurrent trigger failures re-set it. */
 		if (!ret && READ_ONCE(ca->discard_buckets_degraded)) {
 			WRITE_ONCE(ca->discard_buckets_degraded, false);
-			bch2_dev_discard_buckets_populate(trans, ca);
+			bch2_discard_buckets_populate_trans(trans);
 			again = true;
 		}
 

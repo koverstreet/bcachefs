@@ -161,6 +161,21 @@ void *__bch2_trans_subbuf_alloc(struct btree_trans *,
 				struct btree_trans_subbuf *,
 				unsigned, ulong);
 
+static inline int
+bch2_trans_subbuf_reserve(struct btree_trans *trans,
+			  struct btree_trans_subbuf *buf,
+			  unsigned u64s)
+{
+	if (buf->u64s + u64s > buf->size) {
+		unsigned old_u64s = buf->u64s;
+		void *p = __bch2_trans_subbuf_alloc(trans, buf, u64s, _THIS_IP_);
+		if (IS_ERR(p))
+			return PTR_ERR(p);
+		buf->u64s = old_u64s;
+	}
+	return 0;
+}
+
 static inline void *
 bch2_trans_subbuf_alloc_ip(struct btree_trans *trans,
 			   struct btree_trans_subbuf *buf,
@@ -237,6 +252,7 @@ static inline int __must_check bch2_trans_update_buffered(struct btree_trans *tr
 	 * able to tell which updates need to be applied:
 	 */
 	if (k->k.type != KEY_TYPE_accounting &&
+	    btree != BTREE_ID_need_discard &&
 	    unlikely(trans->journal_replay_not_finished))
 		return bch2_btree_insert_clone_trans(trans, btree, k);
 
@@ -282,6 +298,7 @@ static inline void bch2_trans_reset_updates(struct btree_trans *trans)
 	trans->accounting.size		= 0;
 	trans->hooks			= NULL;
 	trans->extra_disk_res		= 0;
+	trans->extra_journal_u64s	= 0;
 }
 
 /**

@@ -320,8 +320,8 @@ int bch2_bucket_gens_init(struct bch_fs *);
 
 int bch2_alloc_read(struct bch_fs *);
 
-int bch2_bucket_do_index(struct btree_trans *, struct bch_dev *,
-			 struct bkey_s_c, const struct bch_alloc_v4 *, bool);
+int bch2_bucket_do_freespace_index(struct btree_trans *, struct bch_dev *,
+				   struct bkey_s_c, const struct bch_alloc_v4 *, bool);
 
 int bch2_alloc_key_to_dev_counters(struct btree_trans *, struct bch_dev *,
 				   const struct bch_alloc_v4 *,

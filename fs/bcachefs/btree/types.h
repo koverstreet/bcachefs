@@ -609,6 +609,7 @@ struct btree_trans {
 	struct bch_fs_usage_base fs_usage_delta;
 
 	unsigned		journal_u64s;
+	u32			extra_journal_u64s;
 	u64			extra_disk_res;
 
 	__BKEY_PADDED(btree_path_down, BKEY_BTREE_PTR_VAL_U64s_MAX);
