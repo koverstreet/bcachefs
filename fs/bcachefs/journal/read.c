@@ -1378,6 +1378,36 @@ static CLOSURE_CALLBACK(bch2_journal_read_device)
 			goto full_read;
 
 		/*
+		 * Sort by seq descending, then read in that order. Once
+		 * we've read past last_seq, all remaining buckets are
+		 * dead — stop.
+		 */
+		darray_sort(order, journal_bucket_entry_cmp);
+
+		unsigned last_seq_idx = 0;
+		unsigned nr_read = 0;
+		darray_for_each(order, e) {
+			ret = journal_read_bucket(ca, &buf, jlist, e->bucket);
+			if (ret)
+				goto err;
+			nr_read++;
+
+			u64 last_seq;
+			scoped_guard(mutex, &jlist->lock)
+				last_seq = jlist->last_seq;
+
+			/*
+			 * Once we've established last_seq and this bucket's
+			 * max seq (now in bucket_seq from the full read) is
+			 * below it, we're done:
+			 */
+			if (last_seq && ja->bucket_seq[e->bucket] < last_seq)
+				break;
+
+			last_seq_idx = e->bucket;
+		}
+
+		/*
 		 * Check monotonicity: walk all journal buckets backwards
 		 * from the write head (wrapping around). Seq should be
 		 * non-increasing, and once we hit an empty (discarded)
@@ -1409,45 +1439,24 @@ static CLOSURE_CALLBACK(bch2_journal_read_device)
 			}
 			if (!monotonic) {
 				CLASS(bch_log_msg, msg)(c);
-				prt_printf(&msg.m, "%s: journal bucket seqs not monotonic "
-					   "(write head bucket %u seq %llu):",
-					   ca->name, max_bucket,
+				prt_printf(&msg.m, "%s: journal bucket seqs not monotonic\n"
+					   "  last_seq bucket %u write head bucket %u seq %llu:\n",
+					   ca->name, last_seq_idx, max_bucket,
 					   ja->bucket_seq[max_bucket]);
-				for (unsigned k = 0; k < ja->nr; k++) {
+
+				prev_seq = ja->bucket_seq[max_bucket];
+				for (unsigned k = 1; k < ja->nr; k++) {
 					unsigned idx = (max_bucket + ja->nr - k) % ja->nr;
-					if (ja->bucket_seq[idx] || k < 4)
-						prt_printf(&msg.m, " [%u]=%llu",
-							   idx, ja->bucket_seq[idx]);
+					u64 seq = ja->bucket_seq[idx];
+
+					if (seq > prev_seq)
+						prt_printf(&msg.m, "  [%u]=%llu > [%u]=%llu\n",
+							   idx, seq,
+							   (idx + 1) % ja->nr, prev_seq);
+					prev_seq = seq;
 				}
 				bch2_sb_error_count(c, BCH_FSCK_ERR_journal_bucket_seq_not_monotonic);
 			}
-		}
-
-		/*
-		 * Sort by seq descending, then read in that order. Once
-		 * we've read past last_seq, all remaining buckets are
-		 * dead — stop.
-		 */
-		darray_sort(order, journal_bucket_entry_cmp);
-
-		unsigned nr_read = 0;
-		darray_for_each(order, e) {
-			ret = journal_read_bucket(ca, &buf, jlist, e->bucket);
-			if (ret)
-				goto err;
-			nr_read++;
-
-			u64 last_seq;
-			scoped_guard(mutex, &jlist->lock)
-				last_seq = jlist->last_seq;
-
-			/*
-			 * Once we've established last_seq and this bucket's
-			 * max seq (now in bucket_seq from the full read) is
-			 * below it, we're done:
-			 */
-			if (last_seq && ja->bucket_seq[e->bucket] < last_seq)
-				break;
 		}
 
 		bch_verbose_dev(ca, "journal read: %u/%u buckets read",
