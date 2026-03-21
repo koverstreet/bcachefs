@@ -525,6 +525,7 @@ struct bch_dev {
 
 	struct work_struct	discard_fast_work;
 	darray_u64		discard_fast;
+	struct mutex		discard_fast_lock;
 
 	atomic64_t		rebalance_work;
 
@@ -727,6 +728,7 @@ struct bch_fs {
 	struct bch_disk_groups_cpu __rcu	*disk_groups;
 	struct bch_fs_capacity			capacity;
 	struct bch_fs_allocator			allocator;
+	struct bch_fs_discards			discards;
 
 	struct bch_fs_snapshots			snapshots;
 

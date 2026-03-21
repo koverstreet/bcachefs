@@ -174,19 +174,25 @@ struct bch_fs_allocator {
 
 	struct write_point	btree_write_point;
 	struct write_point	reconcile_write_point;
-
-	struct mutex		discard_lock;
-	struct work_struct	discard_work;
 };
 
-struct discard_fifo_entry {
-	u64			seq;
-	DARRAY(u64)		buckets;
-};
+typedef struct {
+	u64				dev_bucket;
+	bool				complete;
+	bool				marking_free;
+} discard_in_flight;
 
-struct discard_fifo_cursor {
-	size_t			fifo_idx;
-	size_t			bucket_idx;
+struct bch_fs_discards {
+	struct work_struct		work;
+	struct bpos			pos;
+	struct bio_set			bioset;
+
+
+	DARRAY(discard_in_flight)	in_flight;
+	spinlock_t			lock;
+	u32				ref;
+	u8				refs[BCH_SB_MEMBERS_MAX];
+	struct closure_waitlist		wait;
 };
 
 #endif /* _BCACHEFS_ALLOC_TYPES_H */

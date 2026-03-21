@@ -396,6 +396,13 @@ int __bch2_check_discard_freespace_key(struct btree_trans *trans, struct btree_i
 	CLASS(printbuf, buf)();
 	int ret = 0;
 
+	if (0 && iter->btree_id == BTREE_ID_need_discard) {
+		CLASS(bch_log_msg, msg)(c);
+		prt_printf(&msg.m, "%s(): ", __func__);
+		bch2_bpos_to_text(&msg.m, iter->pos);
+		prt_newline(&msg.m);
+	}
+
 	bool async_repair = fsck_flags & FSCK_ERR_NO_LOG;
 	fsck_flags |= FSCK_CAN_FIX|FSCK_CAN_IGNORE;
 

@@ -202,7 +202,7 @@ read_attribute(btree_reserve_cache);
 read_attribute(btree_write_buffer);
 read_attribute(open_buckets);
 read_attribute(open_buckets_partial);
-read_attribute(discard_fifo);
+read_attribute(discards);
 read_attribute(nocow_lock_table);
 read_attribute(replicas);
 
@@ -382,12 +382,8 @@ SHOW(bch2_fs)
 	if (attr == &sysfs_open_buckets_partial)
 		bch2_open_buckets_partial_to_text(out, c);
 
-	if (attr == &sysfs_discard_fifo)
-		for_each_member_device(c, ca) {
-			prt_printf(out, "Dev %s\n", ca->name);
-			scoped_guard(printbuf_indent, out)
-				bch2_fast_discards_to_text(out, ca);
-		}
+	if (attr == &sysfs_discards)
+		bch2_discards_to_text(out, c);
 
 	if (attr == &sysfs_compression_stats)
 		bch2_compression_stats_to_text(out, c);
@@ -634,7 +630,7 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_new_stripes,
 	&sysfs_open_buckets,
 	&sysfs_open_buckets_partial,
-	&sysfs_discard_fifo,
+	&sysfs_discards,
 	&sysfs_write_refs,
 	&sysfs_nocow_lock_table,
 	&sysfs_replicas,
@@ -1027,7 +1023,7 @@ SHOW(bch2_dev)
 	if (attr == &sysfs_open_buckets)
 		bch2_open_buckets_to_text(out, c, ca);
 
-	if (attr == &sysfs_discard_fifo)
+	if (attr == &sysfs_discards)
 		bch2_fast_discards_to_text(out, ca);
 
 	int opt_id = bch2_opt_lookup(attr->name);
@@ -1093,7 +1089,7 @@ struct attribute *bch2_dev_files[] = {
 	/* debug: */
 	&sysfs_alloc_debug,
 	&sysfs_open_buckets,
-	&sysfs_discard_fifo,
+	&sysfs_discards,
 
 	&sysfs_read_refs,
 	&sysfs_write_refs,
