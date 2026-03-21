@@ -440,7 +440,7 @@ enum bch_dev_read_ref {
 #define BCH_DEV_WRITE_REFS()				\
 	x(journal_write)				\
 	x(journal_discard)				\
-	x(dev_do_discards)				\
+	x(discard_bucket)				\
 	x(discard_sectors_to_release)			\
 	x(discard_one_bucket_fast)			\
 	x(do_invalidates)				\
