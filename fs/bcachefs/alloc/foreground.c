@@ -126,6 +126,10 @@ void __bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
 		ob->data_type = 0;
 	}
 
+	if (ob->do_discards_fast)
+		bch2_fast_discard_bucket_add(ca, ob->bucket);
+	ob->do_discards_fast = false;
+
 	scoped_guard(spinlock, &c->allocator.freelist_lock) {
 		bch2_open_bucket_hash_remove(c, ob);
 

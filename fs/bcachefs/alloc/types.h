@@ -51,8 +51,9 @@ struct open_bucket {
 	 */
 	u8			ec_idx;
 	enum bch_data_type	data_type:6;
-	unsigned		valid:1;
-	unsigned		on_partial_list:1;
+	bool			valid:1;
+	bool			on_partial_list:1;
+	bool			do_discards_fast:1;
 
 	u8			dev;
 	u8			gen;

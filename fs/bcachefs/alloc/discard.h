@@ -4,9 +4,9 @@
 
 #include "alloc/buckets.h"
 
-void bch2_discard_bucket_del(struct bch_dev *, u64, u64);
-void bch2_discard_bucket_add(struct bch_dev *, u64, u64);
-void bch2_discard_buckets_to_text(struct printbuf *, struct bch_dev *);
+void bch2_fast_discard_bucket_del(struct bch_dev *, u64);
+void bch2_fast_discard_bucket_add(struct bch_dev *, u64);
+void bch2_fast_discards_to_text(struct printbuf *, struct bch_dev *);
 
 void bch2_dev_do_discards(struct bch_dev *);
 void bch2_do_discards_going_ro(struct bch_fs *);

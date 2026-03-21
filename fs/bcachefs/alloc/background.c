@@ -1389,15 +1389,10 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 			/* Transitioning to need_discard: NEED_DISCARD must be set */
 			WARN_ON(!BCH_ALLOC_V4_NEED_DISCARD(new_a));
 
-			bch2_discard_bucket_add(ca,
-						new_a->journal_seq_empty,
-						new.k->p.offset);
+			if (!new_a->journal_seq_empty &&
+			    !bch2_bucket_set_discard_fast(c, new.k->p.inode, new.k->p.offset))
+				bch2_fast_discard_bucket_add(ca, new.k->p.offset);
 		}
-
-		if (statechange_to(a->data_type != BCH_DATA_need_discard))
-			bch2_discard_bucket_del(ca,
-						old_a->journal_seq_empty,
-						new.k->p.offset);
 
 		if (statechange_to(a->data_type == BCH_DATA_cached) &&
 		    !bch2_bucket_is_open(c, new.k->p.inode, new.k->p.offset) &&

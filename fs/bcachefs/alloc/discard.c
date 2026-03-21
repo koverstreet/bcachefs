@@ -16,58 +16,6 @@
 
 #include "journal/journal.h"
 
-void bch2_discard_bucket_del(struct bch_dev *ca, u64 journal_seq, u64 bucket)
-{
-	if (journal_seq)
-		return;
-
-	struct bch_fs *c = ca->fs;
-	guard(mutex)(&c->allocator.discard_lock);
-	u64 *i = darray_find(ca->discard_fast, bucket);
-	if (i)
-		darray_remove_item(&ca->discard_fast, i);
-}
-
-void bch2_discard_bucket_add(struct bch_dev *ca, u64 journal_seq, u64 bucket)
-{
-	if (journal_seq)
-		return;
-
-	struct bch_fs *c = ca->fs;
-	scoped_guard(mutex, &c->allocator.discard_lock) {
-		if (darray_find(ca->discard_fast, bucket)) /* race with populate */
-			return;
-		if (darray_push(&ca->discard_fast, bucket))
-			return;
-	}
-
-	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_discard_fast))
-		return;
-
-	if (!bch2_dev_get_ioref(c, ca->dev_idx, WRITE, BCH_DEV_WRITE_REF_discard_one_bucket_fast))
-		goto put_ref;
-
-	if (queue_work(c->write_ref_wq, &ca->discard_fast_work))
-		return;
-
-	enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_discard_one_bucket_fast);
-put_ref:
-	enumerated_ref_put(&c->writes, BCH_WRITE_REF_discard_fast);
-}
-
-void bch2_discard_buckets_to_text(struct printbuf *out, struct bch_dev *ca)
-{
-
-	struct bch_fs *c = ca->fs;
-	guard(mutex)(&c->allocator.discard_lock);
-
-	prt_printf(out, "discard fifo: flushed_seq %llu rewind_seq %llu\n",
-		   ca->fs->journal.flushed_seq_ondisk,
-		   ca->fs->journal.rewind_seq_ondisk);
-
-	prt_printf(out, "fastpath: %zu\n", ca->discard_fast.nr);
-}
-
 struct discard_buckets_state {
 	u64		seen;
 	u64		open;
@@ -355,14 +303,12 @@ void bch2_do_discards_fast_work(struct work_struct *work)
 
 	CLASS(btree_trans, trans)(c);
 
-	size_t cursor = SIZE_MAX;
 	while (1) {
 		u64 bucket;
 
 		scoped_guard(mutex, &c->allocator.discard_lock) {
-			cursor = min(cursor, ca->discard_fast.nr);
-			bucket = cursor
-				? ca->discard_fast.data[--cursor]
+			bucket = ca->discard_fast.nr
+				? darray_pop(&ca->discard_fast)
 				: 0;
 		}
 
@@ -387,6 +333,36 @@ void bch2_do_discards_fast_work(struct work_struct *work)
 
 	enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_discard_one_bucket_fast);
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_discard_fast);
+}
+
+void bch2_fast_discard_bucket_add(struct bch_dev *ca, u64 bucket)
+{
+	struct bch_fs *c = ca->fs;
+
+	scoped_guard(mutex, &c->allocator.discard_lock)
+		if (darray_push(&ca->discard_fast, bucket))
+			return;
+
+	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_discard_fast))
+		return;
+
+	if (!bch2_dev_get_ioref(c, ca->dev_idx, WRITE, BCH_DEV_WRITE_REF_discard_one_bucket_fast))
+		goto put_ref;
+
+	if (queue_work(c->write_ref_wq, &ca->discard_fast_work))
+		return;
+
+	enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_discard_one_bucket_fast);
+put_ref:
+	enumerated_ref_put(&c->writes, BCH_WRITE_REF_discard_fast);
+}
+
+void bch2_fast_discards_to_text(struct printbuf *out, struct bch_dev *ca)
+{
+	struct bch_fs *c = ca->fs;
+	guard(mutex)(&c->allocator.discard_lock);
+
+	prt_printf(out, "fastpath: %zu\n", ca->discard_fast.nr);
 }
 
 /* Invalidates */

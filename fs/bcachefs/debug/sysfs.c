@@ -386,7 +386,7 @@ SHOW(bch2_fs)
 		for_each_member_device(c, ca) {
 			prt_printf(out, "Dev %s\n", ca->name);
 			scoped_guard(printbuf_indent, out)
-				bch2_discard_buckets_to_text(out, ca);
+				bch2_fast_discards_to_text(out, ca);
 		}
 
 	if (attr == &sysfs_compression_stats)
@@ -1028,7 +1028,7 @@ SHOW(bch2_dev)
 		bch2_open_buckets_to_text(out, c, ca);
 
 	if (attr == &sysfs_discard_fifo)
-		bch2_discard_buckets_to_text(out, ca);
+		bch2_fast_discards_to_text(out, ca);
 
 	int opt_id = bch2_opt_lookup(attr->name);
 	if (opt_id >= 0)

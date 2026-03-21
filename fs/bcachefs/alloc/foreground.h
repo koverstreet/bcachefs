@@ -238,7 +238,7 @@ static inline open_bucket_idx_t *open_bucket_hashslot(struct bch_fs *c,
 		 (OPEN_BUCKETS_COUNT - 1));
 }
 
-static inline bool bch2_bucket_is_open(struct bch_fs *c, unsigned dev, u64 bucket)
+static inline struct open_bucket *bch2_bucket_is_open(struct bch_fs *c, unsigned dev, u64 bucket)
 {
 	open_bucket_idx_t slot = *open_bucket_hashslot(c, dev, bucket);
 
@@ -246,12 +246,12 @@ static inline bool bch2_bucket_is_open(struct bch_fs *c, unsigned dev, u64 bucke
 		struct open_bucket *ob = &c->allocator.open_buckets[slot];
 
 		if (ob->dev == dev && ob->bucket == bucket)
-			return true;
+			return ob;
 
 		slot = ob->hash;
 	}
 
-	return false;
+	return NULL;
 }
 
 static inline bool bch2_bucket_is_open_safe(struct bch_fs *c, unsigned dev, u64 bucket)
@@ -261,6 +261,20 @@ static inline bool bch2_bucket_is_open_safe(struct bch_fs *c, unsigned dev, u64 
 
 	guard(spinlock)(&c->allocator.freelist_lock);
 	return bch2_bucket_is_open(c, dev, bucket);
+}
+
+static inline bool bch2_bucket_set_discard_fast(struct bch_fs *c, unsigned dev, u64 bucket)
+{
+	struct open_bucket *ob = bch2_bucket_is_open(c, dev, bucket);
+	if (ob) {
+		guard(spinlock)(&ob->lock);
+		if (ob->dev == dev && ob->bucket == bucket) {
+			ob->do_discards_fast = true;
+			return true;
+		}
+	}
+
+	return false;
 }
 
 enum bch_write_flags;
