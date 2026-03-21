@@ -109,7 +109,7 @@ static struct reconcile_scan reconcile_scan_decode(struct bch_fs *c, u64 v)
 	if (v == RECONCILE_SCAN_COOKIE_fs)
 		return (struct reconcile_scan) { .type = RECONCILE_SCAN_fs};
 
-	bch_err(c, "unknown realance scan cookie %llu", v);
+	bch_err(c, "unknown reconcile scan cookie %llu", v);
 	return (struct reconcile_scan) { .type = RECONCILE_SCAN_fs};
 }
 
