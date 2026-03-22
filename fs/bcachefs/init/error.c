@@ -539,9 +539,14 @@ int __bch2_fsck_err(struct bch_fs *c,
 	} else if (!test_bit(BCH_FS_in_fsck, &c->flags)) {
 		if (c->opts.errors != BCH_ON_ERROR_continue ||
 		    !(flags & (FSCK_CAN_FIX|FSCK_CAN_IGNORE))) {
-			prt_str(out, ", shutting down\n"
-					 "error not marked as autofix and not in fsck\n"
-					 "run fsck, and forward to devs so error can be marked for self-healing");
+			if (flags & (FSCK_CAN_FIX|FSCK_CAN_IGNORE))
+				prt_str(out, ", shutting down\n"
+						 "error is autofix, but errors=ro prevents self-healing\n"
+						 "run fsck or set errors=fix_safe to allow self-healing");
+			else
+				prt_str(out, ", shutting down\n"
+						 "error not marked as autofix and not in fsck\n"
+						 "run fsck, and forward to devs so error can be marked for self-healing");
 			inconsistent = true;
 			print = true;
 			ret = bch_err_throw(c, fsck_errors_not_fixed);
