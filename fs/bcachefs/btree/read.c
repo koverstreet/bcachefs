@@ -878,8 +878,9 @@ static void btree_node_read_work(struct work_struct *work)
 	struct bch_dev *ca	= rb->have_ioref ? bch2_dev_have_ref(c, rb->pick.ptr.dev) : NULL;
 	struct btree *b		= rb->b;
 	struct bio *bio		= &rb->bio;
-	struct bch_io_failures failed = { .nr = 0 };
 	int ret = 0;
+
+	CLASS(bch_io_failures, failed)();
 
 	CLASS(printbuf, buf)();
 	bch2_log_msg_start(c, &buf);

@@ -380,6 +380,16 @@ out:									\
 
 /* utility code common to all keys with pointers: */
 
+static inline void bch2_io_failures_exit(struct bch_io_failures *f)
+{
+	printbuf_exit(&f->ec_msg);
+}
+
+DEFINE_CLASS(bch_io_failures, struct bch_io_failures,
+	     bch2_io_failures_exit(&_T),
+	     ((struct bch_io_failures) { .ec_msg = PRINTBUF }),
+	     void)
+
 void bch2_io_failures_to_text(struct printbuf *, struct bch_fs *,
 			      struct bch_io_failures *);
 struct bch_dev_io_failures *bch2_dev_io_failures(struct bch_io_failures *, unsigned);

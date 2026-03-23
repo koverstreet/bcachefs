@@ -659,7 +659,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 		.inum	= rbio->read_pos.inode,
 	};
 	struct bpos read_pos = rbio->read_pos;
-	struct bch_io_failures failed = { .nr = 0 };
+	CLASS(bch_io_failures, failed)();
 
 	flags &= ~BCH_READ_hard_require_read_device;
 
@@ -714,13 +714,6 @@ static void bch2_rbio_retry(struct work_struct *work)
 				: bch2_ratelimit(c);
 
 			bch2_read_err_msg_trans(trans, &msg.m, rbio, read_pos);
-
-			if (!ret) {
-				prt_str(&msg.m, "successful retry");
-				if (rbio->self_healing)
-					prt_str(&msg.m, ", self healing");
-			} else
-				prt_printf(&msg.m, "error %s", bch2_err_str(ret));
 			prt_newline(&msg.m);
 
 			if (!bkey_deleted(&sk.k->k)) {
@@ -729,6 +722,13 @@ static void bch2_rbio_retry(struct work_struct *work)
 			}
 
 			bch2_io_failures_to_text(&msg.m, c, &failed);
+
+			if (!ret) {
+				prt_str(&msg.m, "successful retry");
+				if (rbio->self_healing)
+					prt_str(&msg.m, ", self healing");
+			} else
+				prt_printf(&msg.m, "error %s", bch2_err_str(ret));
 		}
 
 		/* drop trans before calling rbio_done() */
