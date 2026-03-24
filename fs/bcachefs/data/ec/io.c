@@ -21,6 +21,13 @@
 #include <linux/raid/pq.h>
 #include <linux/raid/xor.h>
 
+static unsigned __maybe_unused bch2_ec_read_corrupt_ratio;
+
+#ifdef CONFIG_BCACHEFS_DEBUG
+module_param_named(ec_read_corrupt_ratio, bch2_ec_read_corrupt_ratio, uint, 0644);
+MODULE_PARM_DESC(ec_read_corrupt_ratio, "");
+#endif
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(7,1,0)
 /*
  * 7.1 replaced xor_blocks() with xor_gen(), which handles MAX_XOR_BLOCKS
@@ -327,6 +334,16 @@ static void stripe_buf_errs_to_text(struct printbuf *out, struct bch_fs *c,
 static int bch2_stripe_buf_validate(struct bch_fs *c, struct ec_stripe_buf *buf, bool is_open)
 {
 	closure_sync(&buf->io);
+
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) &&
+	    bch2_ec_read_corrupt_ratio &&
+	    !get_random_u32_below(bch2_ec_read_corrupt_ratio)) {
+		unsigned block = get_random_u32_below(buf->key.v.nr_blocks);
+
+		size_t offset = get_random_u32_below(buf->size << 6);
+
+		((u64 *) buf->data[block])[offset] ^= get_random_u64();
+	}
 
 	bch2_ec_validate_checksums(c, buf, false, STRIPE_BUF_PRE_RECOV);
 	if (!ec_nr_failed(buf, STRIPE_BUF_PRE_RECOV))
