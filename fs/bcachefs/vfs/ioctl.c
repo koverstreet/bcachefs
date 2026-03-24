@@ -19,6 +19,7 @@
 #include "init/chardev.h"
 #include "init/fs.h"
 
+#include "vfs/direct.h"
 #include "vfs/fs.h"
 #include "vfs/ioctl.h"
 
@@ -865,6 +866,42 @@ static long bch2_ioc_propagate_reflink_p_opts(struct bch_fs *c,
 	}));
 }
 
+static long bch2_ioc_pread_raw(struct file *file,
+			       struct bch_inode_info *inode,
+			       struct bch_ioctl_pread_raw __user *uarg)
+{
+	struct bch_ioctl_pread_raw arg;
+
+	if (copy_from_user(&arg, uarg, sizeof(arg)))
+		return -EFAULT;
+	if (arg.flags & ~BCH_PREAD_RAW_no_poison_check)
+		return -EINVAL;
+	if (!arg.len)
+		return 0;
+	if (!(file->f_flags & O_DIRECT))
+		return -EINVAL;
+	if (!inode_owner_or_capable(file_mnt_idmap(file), &inode->v))
+		return -EPERM;
+
+	loff_t pos = arg.offset;
+	int ret = rw_verify_area(READ, file, &pos, arg.len);
+	if (ret)
+		return ret;
+
+	struct iov_iter iter;
+	import_ubuf(ITER_DEST, (void __user *)(unsigned long)arg.buf, arg.len, &iter);
+
+	struct kiocb kiocb;
+	init_sync_kiocb(&kiocb, file);
+	kiocb.ki_pos = arg.offset;
+
+	enum bch_read_flags read_flags = 0;
+	if (arg.flags & BCH_PREAD_RAW_no_poison_check)
+		read_flags |= BCH_READ_no_poison_check;
+
+	return bch2_direct_IO_read(&kiocb, &iter, read_flags);
+}
+
 static int bch2_unpoison_extent(struct btree_trans *trans, struct btree_iter *iter,
 			       struct bkey_s_c k)
 {
@@ -1019,6 +1056,11 @@ long bch2_fs_file_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 	case BCH_IOCTL_SNAPSHOT_TREE:
 		ret = bch2_ioctl_snapshot_tree(c, file,
 				(struct bch_ioctl_snapshot_tree_query __user *) arg);
+		break;
+
+	case BCHFS_IOC_PREAD_RAW:
+		ret = bch2_ioc_pread_raw(file, inode,
+				(struct bch_ioctl_pread_raw __user *) arg);
 		break;
 
 	case BCHFS_IOC_UNPOISON:

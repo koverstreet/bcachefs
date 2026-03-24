@@ -79,7 +79,8 @@
 #define BCHFS_IOC_REINHERIT_ATTRS	_IOR(0xbc, 64, const char __user *)
 #define BCHFS_IOC_SET_REFLINK_P_MAY_UPDATE_OPTS	_IO(0xbc, 65)
 #define BCHFS_IOC_PROPAGATE_REFLINK_P_OPTS	_IO(0xbc, 66)
-#define BCHFS_IOC_UNPOISON			_IOW(0xbc, 68, struct bch_ioctl_unpoison)
+#define BCHFS_IOC_PREAD_RAW		_IOWR(0xbc, 67, struct bch_ioctl_pread_raw)
+#define BCHFS_IOC_UNPOISON		_IOW(0xbc, 68, struct bch_ioctl_unpoison)
 
 struct bch_ioctl_err_msg {
 	__u64			msg_ptr;
@@ -596,6 +597,30 @@ struct bch_ioctl_snapshot_tree_query {
 	__u32			total;		/* out: total nodes */
 	__u32			pad;
 	struct bch_ioctl_snapshot_node nodes[];
+};
+
+/*
+ * BCHFS_IOC_PREAD_RAW: O_DIRECT read with extended error reporting.
+ *
+ * Like pread(), but with flags to control error handling and detailed
+ * error reporting via the errors bitmask and embedded err_msg.
+ *
+ * With no flags set, behaves like a normal O_DIRECT read but with
+ * better error information.  BCH_PREAD_RAW_no_poison_check bypasses
+ * extent poisoning so corrupted data can be recovered.
+ */
+#define BCH_PREAD_RAW_no_poison_check		(1U << 0)
+
+#define BCH_PREAD_RAW_ERR_checksum		(1U << 0)
+#define BCH_PREAD_RAW_ERR_io			(1U << 1)
+#define BCH_PREAD_RAW_ERR_ec_reconstruct	(1U << 2)
+struct bch_ioctl_pread_raw {
+	__u64				offset;
+	__u64				len;
+	__u64				buf;		/* userspace data buffer */
+	__u32				flags;		/* BCH_PREAD_RAW_* input flags */
+	__u32				errors;		/* output: BCH_PREAD_RAW_ERR_* */
+	struct bch_ioctl_err_msg	err;
 };
 
 /*
