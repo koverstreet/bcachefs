@@ -79,6 +79,7 @@
 #define BCHFS_IOC_REINHERIT_ATTRS	_IOR(0xbc, 64, const char __user *)
 #define BCHFS_IOC_SET_REFLINK_P_MAY_UPDATE_OPTS	_IO(0xbc, 65)
 #define BCHFS_IOC_PROPAGATE_REFLINK_P_OPTS	_IO(0xbc, 66)
+#define BCHFS_IOC_UNPOISON			_IOW(0xbc, 68, struct bch_ioctl_unpoison)
 
 struct bch_ioctl_err_msg {
 	__u64			msg_ptr;
@@ -595,6 +596,20 @@ struct bch_ioctl_snapshot_tree_query {
 	__u32			total;		/* out: total nodes */
 	__u32			pad;
 	struct bch_ioctl_snapshot_node nodes[];
+};
+
+/*
+ * BCHFS_IOC_UNPOISON: clear the poison flag on extents in a file range.
+ *
+ * After a checksum error, extents are marked poisoned so subsequent reads
+ * return errors without re-reading from disk.  This ioctl clears the
+ * poison flag, allowing the data to be read again normally.
+ */
+struct bch_ioctl_unpoison {
+	__u64				offset;
+	__u64				len;
+	__u32				flags;		/* reserved, must be 0 */
+	__u32				pad;
 };
 
 #endif /* _BCACHEFS_IOCTL_H */

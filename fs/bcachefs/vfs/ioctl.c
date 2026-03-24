@@ -865,6 +865,71 @@ static long bch2_ioc_propagate_reflink_p_opts(struct bch_fs *c,
 	}));
 }
 
+static int bch2_unpoison_extent(struct btree_trans *trans, struct btree_iter *iter,
+			       struct bkey_s_c k)
+{
+	u64 flags = bch2_bkey_extent_flags(k);
+	if (!(flags & BIT_ULL(BCH_EXTENT_FLAG_poisoned)))
+		return 0;
+
+	struct bkey_i *new = errptr_try(bch2_trans_kmalloc(trans,
+					bkey_bytes(k.k) + sizeof(struct bch_extent_flags)));
+
+	bkey_reassemble(new, k);
+	try(bch2_bkey_extent_flags_set(trans->c, new,
+				       flags & ~BIT_ULL(BCH_EXTENT_FLAG_poisoned)));
+	try(bch2_trans_update(trans, iter, new, 0));
+	return 0;
+}
+
+static int bch2_unpoison_reflink(struct btree_trans *trans,
+				 struct bkey_s_c_reflink_p p)
+{
+	u64 idx = REFLINK_P_IDX(p.v);
+	u64 end = idx + p.k->size;
+
+	struct bkey_s_c k;
+	int ret;
+	for_each_btree_key_norestart(trans, iter, BTREE_ID_reflink,
+			POS(0, idx), BTREE_ITER_intent, k, ret) {
+		if (bpos_ge(bkey_start_pos(k.k), POS(0, end)))
+			break;
+		try(bch2_unpoison_extent(trans, &iter, k));
+	}
+	return ret;
+}
+
+static long bch2_ioc_unpoison(struct bch_fs *c, struct file *file,
+			      struct bch_inode_info *inode,
+			      struct bch_ioctl_unpoison __user *uarg)
+{
+	struct bch_ioctl_unpoison arg;
+
+	if (copy_from_user(&arg, uarg, sizeof(arg)))
+		return -EFAULT;
+	if (arg.flags || arg.pad)
+		return -EINVAL;
+	if (!arg.len)
+		return 0;
+
+	if (!inode_owner_or_capable(file_mnt_idmap(file), &inode->v))
+		return -EPERM;
+
+	subvol_inum inum = inode_inum(inode);
+	struct bpos start = POS(inum.inum, arg.offset >> 9);
+	struct bpos end   = POS(inum.inum, (arg.offset + arg.len) >> 9);
+
+	CLASS(btree_trans, trans)(c);
+
+	return for_each_btree_key_in_subvolume_max(trans, iter, BTREE_ID_extents,
+			start, end, inum.subvol, BTREE_ITER_intent, k, ({
+		(k.k->type == KEY_TYPE_reflink_p
+			? bch2_unpoison_reflink(trans, bkey_s_c_to_reflink_p(k))
+			: bch2_unpoison_extent(trans, &iter, k)) ?:
+		bch2_trans_commit(trans, NULL, NULL, 0);
+	}));
+}
+
 long bch2_fs_file_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
 	struct bch_inode_info *inode = file_bch_inode(file);
@@ -954,6 +1019,11 @@ long bch2_fs_file_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 	case BCH_IOCTL_SNAPSHOT_TREE:
 		ret = bch2_ioctl_snapshot_tree(c, file,
 				(struct bch_ioctl_snapshot_tree_query __user *) arg);
+		break;
+
+	case BCHFS_IOC_UNPOISON:
+		ret = bch2_ioc_unpoison(c, file, inode,
+				(struct bch_ioctl_unpoison __user *) arg);
 		break;
 
 	default:
