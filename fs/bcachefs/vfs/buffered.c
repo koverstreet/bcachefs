@@ -258,7 +258,7 @@ static void bchfs_read(struct btree_trans *trans,
 		 * below. That restore needs to come before checking for
 		 * errors.
 		 *
-		 * But unlike __bch2_read(), we use the rbio bvec iter, not one
+		 * But unlike bch2_read(), we use the rbio bvec iter, not one
 		 * on the stack, so we can't do the restore right after the
 		 * bch2_read_extent() call: we don't own that iterator anymore
 		 * if BCH_READ_last_fragment is set, since we may have submitted

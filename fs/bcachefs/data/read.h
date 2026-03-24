@@ -133,23 +133,9 @@ static inline void bch2_read_extent(struct btree_trans *trans,
 	WARN(ret, "unhandled error from __bch2_read_extent(): %s", bch2_err_str(ret));
 }
 
-int __bch2_read(struct btree_trans *, struct bch_read_bio *, struct bvec_iter,
-		subvol_inum,
-		struct bch_io_failures *, struct bkey_buf *, enum bch_read_flags);
-
-static inline void bch2_read(struct bch_fs *c, struct bch_read_bio *rbio,
-			     subvol_inum inum)
-{
-	BUG_ON(rbio->_state);
-
-	rbio->subvol = inum.subvol;
-
-	CLASS(btree_trans, trans)(c);
-	__bch2_read(trans, rbio, rbio->bio.bi_iter, inum, NULL, NULL,
-		    BCH_READ_retry_if_stale|
-		    BCH_READ_may_promote|
-		    BCH_READ_user_mapped);
-}
+int bch2_read(struct btree_trans *, struct bch_read_bio *, struct bvec_iter,
+	      subvol_inum,
+	      struct bch_io_failures *, struct bkey_buf *, enum bch_read_flags);
 
 static inline struct bch_read_bio *rbio_init_fragment(struct bio *bio,
 						      struct bch_read_bio *orig)

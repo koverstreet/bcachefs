@@ -62,14 +62,14 @@ static void bch2_direct_IO_read_split_endio(struct bio *bio)
 	bio_check_or_release(bio, should_dirty);
 }
 
-static int bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter)
+static int __bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter,
+				enum bch_read_flags flags)
 {
 	struct file *file = req->ki_filp;
 	struct bch_inode_info *inode = file_bch_inode(file);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct dio_read *dio;
 	struct bio *bio;
-	struct blk_plug plug;
 	loff_t offset = req->ki_pos;
 	bool sync = is_sync_kiocb(req);
 	bool split = false;
@@ -127,8 +127,6 @@ static int bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter)
 	 */
 	dio->should_dirty = user_backed_iter(iter);
 
-	blk_start_plug(&plug);
-
 	goto start;
 	while (iter->count) {
 		split = true;
@@ -167,10 +165,17 @@ start:
 				  ? bch2_direct_IO_read_split_endio
 				  : bch2_direct_IO_read_endio);
 
-		bch2_read(c, rbio, inode_inum(inode));
-	}
+		BUG_ON(rbio->_state);
+		rbio->subvol = inode_inum(inode).subvol;
 
-	blk_finish_plug(&plug);
+		CLASS(btree_trans, trans)(c);
+		bch2_read(trans, rbio, rbio->bio.bi_iter, inode_inum(inode),
+			  NULL, NULL,
+			  BCH_READ_retry_if_stale|
+			  BCH_READ_may_promote|
+			  BCH_READ_user_mapped|
+			  flags);
+	}
 
 	iter->count += shorten;
 
@@ -185,41 +190,47 @@ start:
 	}
 }
 
+int bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter,
+			enum bch_read_flags flags)
+{
+	struct file *file = req->ki_filp;
+	struct address_space *mapping = file->f_mapping;
+
+	if (unlikely(mapping->nrpages)) {
+		ssize_t ret = filemap_write_and_wait_range(mapping,
+					req->ki_pos,
+					req->ki_pos + iov_iter_count(iter) - 1);
+		if (ret < 0)
+			return ret;
+	}
+
+	file_accessed(file);
+
+	struct blk_plug plug;
+	blk_start_plug(&plug);
+	ssize_t ret = __bch2_direct_IO_read(req, iter, flags);
+	blk_finish_plug(&plug);
+
+	if (ret >= 0)
+		req->ki_pos += ret;
+	return ret;
+}
+
 ssize_t bch2_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 {
 	struct file *file = iocb->ki_filp;
-	struct bch_inode_info *inode = file_bch_inode(file);
-	struct address_space *mapping = file->f_mapping;
-	size_t count = iov_iter_count(iter);
 	ssize_t ret = 0;
 
-	if (!count)
+	if (!iov_iter_count(iter))
 		return 0; /* skip atime */
 
 	if (iocb->ki_flags & IOCB_DIRECT) {
-		struct blk_plug plug;
-
-		if (unlikely(mapping->nrpages)) {
-			ret = filemap_write_and_wait_range(mapping,
-						iocb->ki_pos,
-						iocb->ki_pos + count - 1);
-			if (ret < 0)
-				goto out;
-		}
-
-		file_accessed(file);
-
-		blk_start_plug(&plug);
-		ret = bch2_direct_IO_read(iocb, iter);
-		blk_finish_plug(&plug);
-
-		if (ret >= 0)
-			iocb->ki_pos += ret;
+		ret = bch2_direct_IO_read(iocb, iter, 0);
 	} else {
-		guard(bch2_pagecache_add)(inode);
+		guard(bch2_pagecache_add)(file_bch_inode(file));
 		ret = filemap_read(iocb, iter, ret);
 	}
-out:
+
 	return bch2_err_class(ret);
 }
 

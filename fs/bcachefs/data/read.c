@@ -695,7 +695,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 
 		int ret = rbio->data_update
 			? bch2_read_retry_nodecode(trans, rbio, iter, &failed, flags)
-			: __bch2_read(trans, rbio, iter, inum, &failed, &sk, flags);
+			: bch2_read(trans, rbio, iter, inum, &failed, &sk, flags);
 
 		if (ret)
 			rbio->ret = ret;
@@ -1514,7 +1514,7 @@ out:
 	}
 }
 
-int __bch2_read(struct btree_trans *trans, struct bch_read_bio *rbio,
+int bch2_read(struct btree_trans *trans, struct bch_read_bio *rbio,
 		struct bvec_iter bvec_iter, subvol_inum inum,
 		struct bch_io_failures *failed,
 		struct bkey_buf *prev_read,
