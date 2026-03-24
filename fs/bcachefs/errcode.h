@@ -500,7 +500,9 @@
 	x(BCH_ERR_stripe_read,		stripe_read_ptr_stale)			\
 	x(BCH_ERR_stripe_read,		stripe_read_csum_err)			\
 	x(BCH_ERR_stripe_read,		stripe_reconstruct)			\
+	x(BCH_ERR_stripe_read,		stripe_reconstruct_enomem)		\
 	x(BCH_ERR_stripe_read,		stripe_reconstruct_insufficient_blocks)	\
+	x(BCH_ERR_stripe_read,		stripe_reconstruct_stale_race)		\
 	x(EIO,				key_type_error)				\
 	x(EIO,				extent_poisoned)			\
 	x(EIO,				missing_indirect_extent)		\

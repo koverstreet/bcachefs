@@ -504,7 +504,7 @@ static int __ec_stripe_create(struct ec_stripe_new *s)
 		/* XXX: we might end up blocking here on reading the old stripe,
 		 * do we need to make this async? */
 
-		try(bch2_stripe_buf_validate(c, &s->old_stripe, true));
+		try(bch2_stripe_buf_validate_msg(c, &s->old_stripe, true));
 
 		for (unsigned i = 0; i < s->old_blocks_nr; i++)
 			swap(s->new_stripe.data[i],
@@ -528,7 +528,7 @@ static int __ec_stripe_create(struct ec_stripe_new *s)
 		bch2_ec_block_io(c, &s->new_stripe, REQ_OP_WRITE, i);
 	closure_sync(&s->new_stripe.io);
 
-	if (ec_nr_failed(&s->new_stripe)) {
+	if (ec_nr_failed(&s->new_stripe, STRIPE_BUF_PRE_RECOV)) {
 		bch_err(c, "error creating stripe: error writing redundancy buckets");
 		return bch_err_throw(c, ec_block_write);
 	}

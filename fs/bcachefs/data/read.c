@@ -705,7 +705,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 		     bch2_err_matches(ret, BCH_ERR_data_read_ptr_stale_race)))
 			ret = 0;
 
-		if (failed.nr || ret) {
+		if (failed.nr || failed.ec_msg.pos || ret) {
 			CLASS(bch_log_msg, msg)(c);
 
 			/* Separate ratelimit_states for hard and soft errors */
@@ -1480,7 +1480,7 @@ int __bch2_read_extent(struct btree_trans *trans,
 		}
 
 		/* Attempting reconstruct read: */
-		ret = bch2_ec_read_extent(trans, rbio, k);
+		ret = bch2_ec_read_extent(trans, rbio, k, &failed->ec_msg);
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
 			bch2_rbio_free(rbio);
 			return ret;
