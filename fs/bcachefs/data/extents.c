@@ -1797,10 +1797,12 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 					 c, ptr_cached_and_erasure_coded,
 					 "cached, erasure coded ptr");
 
-			if (!entry->ptr.unwritten)
-				have_written = true;
-			else
-				have_unwritten = true;
+			if (entry->ptr.dev != BCH_SB_MEMBER_INVALID) {
+				if (!entry->ptr.unwritten)
+					have_written = true;
+				else
+					have_unwritten = true;
+			}
 
 			if (entry->ptr.dev != BCH_SB_MEMBER_INVALID || have_ec) {
 				if (!entry->ptr.cached)
