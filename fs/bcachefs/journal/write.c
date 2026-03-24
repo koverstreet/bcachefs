@@ -692,12 +692,16 @@ static int bch2_journal_write_pick_flush(struct journal *j, struct journal_buf *
 
 		j->nr_noflush_writes++;
 	} else {
+		struct jset *jset = w->data;
+
 		w->must_flush = true;
 		j->last_flush_write = jiffies;
 		j->nr_flush_writes++;
 		clear_bit(JOURNAL_need_flush_write, &j->flags);
 
-		struct jset *jset = w->data;
+		if (!c->opts.journal_rewind_discard_buffer_percent)
+			j->rewind_seq = le64_to_cpu(jset->seq) + 1;
+
 		struct jset_entry *end = vstruct_last(jset);
 		struct jset_entry_rewind_limit *r =
 			container_of(jset_entry_init(&end, sizeof(*r)),
