@@ -68,7 +68,7 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 	}
 
 	if (new_replicas)
-		sectors = res.r.sectors / new_replicas;
+		sectors = div_u64(res.r.sectors, new_replicas);
 
 	bch2_bkey_buf_reassemble(&old, k);
 
