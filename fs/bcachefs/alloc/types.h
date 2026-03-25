@@ -191,7 +191,9 @@ struct discard_release {
 	u64		reserve;
 	u64		buffer_clamped;
 	s64		release;
+	u64		new_rewind_seq;
 	bool		flush_journal;
+	bool		flush_wb;
 };
 
 struct discard_state {
@@ -203,15 +205,13 @@ struct discard_state {
 	u64			bad_data_type;
 	u64			discarded;
 	u64			committed;
-	struct bpos		last_pos;
+	struct bpos		pos;
 	struct discard_release	r;
 };
 
 struct bch_fs_discards {
 	struct work_struct		work;
-	struct bpos			pos;
 	struct bio_set			bioset;
-
 
 	DARRAY(discard_in_flight)	in_flight;
 	spinlock_t			lock;
