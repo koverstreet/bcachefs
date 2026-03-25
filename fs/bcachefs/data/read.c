@@ -647,6 +647,24 @@ static void propagate_io_error_to_data_update(struct bch_fs *c,
 	}
 }
 
+static u32 bch2_io_failures_to_err_mask(struct bch_io_failures *failed)
+{
+	u32 errors = 0;
+	for (unsigned i = 0; i < failed->nr; i++) {
+		struct bch_dev_io_failures *f = &failed->data[i];
+
+		if (f->csum_nr)
+			errors |= BCH_READ_ERR_checksum;
+		if (f->ec_errcode)
+			errors |= BCH_READ_ERR_ec_reconstruct;
+		if (bch2_err_matches(f->errcode, BCH_ERR_decompress))
+			errors |= BCH_READ_ERR_decompression;
+		else if (f->errcode)
+			errors |= BCH_READ_ERR_io;
+	}
+	return errors;
+}
+
 static void bch2_rbio_retry(struct work_struct *work)
 {
 	struct bch_read_bio *rbio =
@@ -706,29 +724,39 @@ static void bch2_rbio_retry(struct work_struct *work)
 			ret = 0;
 
 		if (failed.nr || failed.ec_msg.pos || ret) {
+			struct printbuf *out;
 			CLASS(bch_log_msg, msg)(c);
 
-			/* Separate ratelimit_states for hard and soft errors */
-			msg.m.suppress = !ret
-				? bch2_ratelimit(c)
-				: bch2_ratelimit(c);
-
-			bch2_read_err_msg_trans(trans, &msg.m, rbio, read_pos);
-			prt_newline(&msg.m);
-
-			if (!bkey_deleted(&sk.k->k)) {
-				bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(sk.k));
-				prt_newline(&msg.m);
+			if (rbio->err_report) {
+				mutex_lock(&rbio->err_report->lock);
+				out = &rbio->err_report->msg;
+				rbio->err_report->errors |= bch2_io_failures_to_err_mask(&failed);
+			} else {
+				out = &msg.m;
+				msg.m.suppress = !ret
+					? bch2_ratelimit(c)
+					: bch2_ratelimit(c);
 			}
 
-			bch2_io_failures_to_text(&msg.m, c, &failed);
+			bch2_read_err_msg_trans(trans, out, rbio, read_pos);
+			prt_newline(out);
+
+			if (!bkey_deleted(&sk.k->k)) {
+				bch2_bkey_val_to_text(out, c, bkey_i_to_s_c(sk.k));
+				prt_newline(out);
+			}
+
+			bch2_io_failures_to_text(out, c, &failed);
 
 			if (!ret) {
-				prt_str(&msg.m, "successful retry");
+				prt_str(out, "successful retry");
 				if (rbio->self_healing)
-					prt_str(&msg.m, ", self healing");
+					prt_str(out, ", self healing");
 			} else
-				prt_printf(&msg.m, "error %s", bch2_err_str(ret));
+				prt_printf(out, "error %s", bch2_err_str(ret));
+
+			if (rbio->err_report)
+				mutex_unlock(&rbio->err_report->lock);
 		}
 
 		/* drop trans before calling rbio_done() */
@@ -877,9 +905,6 @@ static int __bch2_read_endio_work(struct bch_read_bio *rbio)
 
 	bch2_account_io_completion(ca, BCH_MEMBER_ERROR_checksum, 0, csum_good);
 
-	if (!csum_good)
-		return bch_err_throw(c, data_read_retry_csum_err);
-
 	/*
 	 * XXX
 	 * We need to rework the narrow_crcs path to deliver the read completion
@@ -887,7 +912,7 @@ static int __bch2_read_endio_work(struct bch_read_bio *rbio)
 	 * holding up reads while doing btree updates which is bad for memory
 	 * reclaim.
 	 */
-	if (unlikely(rbio->narrow_crcs))
+	if (unlikely(rbio->narrow_crcs) && csum_good)
 		bch2_rbio_narrow_crcs(rbio);
 
 	if (likely(!parent->data_update)) {
@@ -950,6 +975,9 @@ static int __bch2_read_endio_work(struct bch_read_bio *rbio)
 			bio_copy_data_iter(dst, &dst_iter, src, &src_iter);
 		}
 	}
+
+	if (!csum_good)
+		return bch_err_throw(c, data_read_retry_csum_err);
 
 	if (rbio->promote) {
 		/*
@@ -1352,8 +1380,15 @@ int __bch2_read_extent(struct btree_trans *trans,
 		return read_extent_inline(c, orig, iter, k, offset_into_extent, flags);
 
 	if (unlikely((bch2_bkey_extent_flags(k) & BIT_ULL(BCH_EXTENT_FLAG_poisoned))) &&
-	    !orig->data_update)
-		return read_extent_done(orig, flags, bch_err_throw(c, extent_poisoned));
+	    !orig->data_update) {
+		if (!(flags & BCH_READ_no_poison_check))
+			return read_extent_done(orig, flags, bch_err_throw(c, extent_poisoned));
+		if (orig->err_report) {
+			mutex_lock(&orig->err_report->lock);
+			orig->err_report->errors |= BCH_READ_ERR_checksum;
+			mutex_unlock(&orig->err_report->lock);
+		}
+	}
 
 	ret = bch2_bkey_pick_read_device(c, k, failed, &pick, dev, flags);
 
