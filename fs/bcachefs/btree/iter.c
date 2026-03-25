@@ -665,7 +665,8 @@ void bch2_btree_path_level_init(struct btree_trans *trans,
 	EBUG_ON(!btree_path_pos_in_node(path, b));
 
 	path->l[b->c.level].lock_seq = six_lock_seq(&b->c.lock);
-	path->l[b->c.level].b = b;
+	/* deadlock detector reads unlocked */
+	WRITE_ONCE(path->l[b->c.level].b, b);
 	__btree_path_level_init(trans, path, b->c.level);
 }
 
@@ -1322,15 +1323,26 @@ out:
 static inline void btree_path_copy(struct btree_trans *trans, struct btree_path *dst,
 			    struct btree_path *src)
 {
-	unsigned i, offset = offsetof(struct btree_path, pos);
+	unsigned start_offset	= offsetof(struct btree_path, pos);
+	unsigned end_offset	= offsetof(struct btree_path, l[0]);
 
-	memcpy((void *) dst + offset,
-	       (void *) src + offset,
-	       sizeof(struct btree_path) - offset);
+	memcpy((void *) dst + start_offset,
+	       (void *) src + start_offset,
+	       end_offset - start_offset);
 
-	for (i = 0; i < BTREE_MAX_DEPTH; i++) {
+	/* do not use memcpy for path->l; we cannot have torn writes to path->l[0].b,
+	 * and we're guaranteed them since the memcpy starts misaligned */
+
+	for (unsigned i = 0; i < BTREE_MAX_DEPTH; i++) {
+		WRITE_ONCE(dst->l[i].b,   src->l[i].b);
+		dst->l[i].iter		= src->l[i].iter;
+		dst->l[i].lock_seq	= src->l[i].lock_seq;
+
+#ifdef CONFIG_BCACHEFS_LOCK_TIME_STATS
+		dst->l[i].lock_taken_time = src->l[i].lock_taken_time;
+#endif
+
 		unsigned t = btree_node_locked_type(dst, i);
-
 		if (t != BTREE_NODE_UNLOCKED)
 			six_lock_increment(&dst->l[i].b->c.lock, t);
 	}
