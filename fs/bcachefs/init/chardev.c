@@ -85,13 +85,12 @@ static long bch2_ioctl_query_uuid(struct bch_fs *c,
 
 int bch2_copy_ioctl_err_msg(struct bch_ioctl_err_msg *dst, struct printbuf *src, int ret)
 {
-	if (ret) {
+	if (ret)
 		prt_printf(src, "error=%s", bch2_err_str(ret));
+	if (src->pos)
 		ret = copy_to_user_errcode((void __user *)(ulong)dst->msg_ptr,
 					   src->buf,
 					   min(src->pos, dst->msg_len)) ?: ret;
-	}
-
 	return ret;
 }
 
