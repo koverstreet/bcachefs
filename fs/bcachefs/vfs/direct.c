@@ -63,7 +63,8 @@ static void bch2_direct_IO_read_split_endio(struct bio *bio)
 }
 
 static int __bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter,
-				enum bch_read_flags flags)
+				enum bch_read_flags flags,
+				struct bch_read_err_report *err_report)
 {
 	struct file *file = req->ki_filp;
 	struct bch_inode_info *inode = file_bch_inode(file);
@@ -166,6 +167,7 @@ start:
 				  : bch2_direct_IO_read_endio);
 
 		BUG_ON(rbio->_state);
+		rbio->err_report = err_report;
 		rbio->subvol = inode_inum(inode).subvol;
 
 		CLASS(btree_trans, trans)(c);
@@ -191,7 +193,8 @@ start:
 }
 
 int bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter,
-			enum bch_read_flags flags)
+			enum bch_read_flags flags,
+			struct bch_read_err_report *err_report)
 {
 	struct file *file = req->ki_filp;
 	struct address_space *mapping = file->f_mapping;
@@ -208,7 +211,7 @@ int bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter,
 
 	struct blk_plug plug;
 	blk_start_plug(&plug);
-	ssize_t ret = __bch2_direct_IO_read(req, iter, flags);
+	ssize_t ret = __bch2_direct_IO_read(req, iter, flags, err_report);
 	blk_finish_plug(&plug);
 
 	if (ret >= 0)
@@ -225,7 +228,7 @@ ssize_t bch2_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 		return 0; /* skip atime */
 
 	if (iocb->ki_flags & IOCB_DIRECT) {
-		ret = bch2_direct_IO_read(iocb, iter, 0);
+		ret = bch2_direct_IO_read(iocb, iter, 0, NULL);
 	} else {
 		guard(bch2_pagecache_add)(file_bch_inode(file));
 		ret = filemap_read(iocb, iter, ret);

@@ -876,6 +876,8 @@ static long bch2_ioc_pread_raw(struct file *file,
 		return -EFAULT;
 	if (arg.flags & ~BCH_PREAD_RAW_no_poison_check)
 		return -EINVAL;
+	if (arg.err.pad)
+		return -EINVAL;
 	if (!arg.len)
 		return 0;
 	if (!(file->f_flags & O_DIRECT))
@@ -899,7 +901,22 @@ static long bch2_ioc_pread_raw(struct file *file,
 	if (arg.flags & BCH_PREAD_RAW_no_poison_check)
 		read_flags |= BCH_READ_no_poison_check;
 
-	return bch2_direct_IO_read(&kiocb, &iter, read_flags);
+	struct bch_read_err_report err_report;
+	mutex_init(&err_report.lock);
+	err_report.errors = 0;
+	err_report.msg = (struct printbuf) PRINTBUF;
+
+	ret = bch2_direct_IO_read(&kiocb, &iter, read_flags, &err_report);
+
+	if (copy_to_user(&uarg->errors, &err_report.errors, sizeof(err_report.errors)))
+		ret = -EFAULT;
+
+	int err = bch2_copy_ioctl_err_msg(&arg.err, &err_report.msg, ret < 0 ? ret : 0);
+	if (err && !ret)
+		ret = err;
+
+	printbuf_exit(&err_report.msg);
+	return ret;
 }
 
 static int bch2_unpoison_extent(struct btree_trans *trans, struct btree_iter *iter,

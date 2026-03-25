@@ -613,7 +613,8 @@ struct bch_ioctl_snapshot_tree_query {
 
 #define BCH_PREAD_RAW_ERR_checksum		(1U << 0)
 #define BCH_PREAD_RAW_ERR_io			(1U << 1)
-#define BCH_PREAD_RAW_ERR_ec_reconstruct	(1U << 2)
+#define BCH_PREAD_RAW_ERR_decompression		(1U << 2)
+#define BCH_PREAD_RAW_ERR_ec_reconstruct	(1U << 3)
 struct bch_ioctl_pread_raw {
 	__u64				offset;
 	__u64				len;

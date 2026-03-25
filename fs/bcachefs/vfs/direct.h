@@ -35,7 +35,8 @@ struct dio_write {
 	struct bch_write_op		op;
 };
 
-int bch2_direct_IO_read(struct kiocb *, struct iov_iter *, enum bch_read_flags);
+int bch2_direct_IO_read(struct kiocb *, struct iov_iter *, enum bch_read_flags,
+			struct bch_read_err_report *);
 ssize_t bch2_direct_write(struct kiocb *, struct iov_iter *);
 ssize_t bch2_read_iter(struct kiocb *, struct iov_iter *);
 #endif
