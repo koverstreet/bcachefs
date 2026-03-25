@@ -1721,6 +1721,8 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_r
 
 		bch2_printbuf_make_room(&buf, 4096);
 
+		u64 free = 0, need_discard = 0, reserve = 0;
+
 		scoped_guard(rcu) {
 			guard(printbuf_atomic)(&buf);
 			prt_printf(&buf, "Devices elligible for allocation\n");
@@ -1732,6 +1734,21 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_r
 			for_each_member_device_rcu(c, ca, NULL)
 				if (!dev_may_alloc(c, ca, req))
 					dev_alloc_debug_header(&buf, ca);
+
+			for_each_member_device_rcu(c, ca, NULL) {
+				struct bch_dev_usage u	= bch2_dev_usage_read(ca);
+				u64 sectors	= ca->mi.bucket_size;
+
+				need_discard	+= sectors * u.buckets[BCH_DATA_need_discard];
+				free		+= sectors * u.buckets[BCH_DATA_free];
+				reserve		+= sectors * bch2_dev_buckets_reserved(ca, BCH_WATERMARK_stripe);
+			}
+		}
+
+		if (need_discard > max(0, (s64) (free - reserve * 4))) {
+			prt_printf(&buf, "Discard debug:\n");
+			guard(printbuf_indent)(&buf);
+			bch2_discards_to_text(&buf, c, &c->discards.s);
 		}
 
 		prt_printf(&buf, "Copygc debug:\n");

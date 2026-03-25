@@ -383,7 +383,7 @@ SHOW(bch2_fs)
 		bch2_open_buckets_partial_to_text(out, c);
 
 	if (attr == &sysfs_discards)
-		bch2_discards_to_text(out, c);
+		bch2_discards_to_text(out, c, &c->discards.s);
 
 	if (attr == &sysfs_compression_stats)
 		bch2_compression_stats_to_text(out, c);
