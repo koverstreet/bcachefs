@@ -1114,7 +1114,9 @@ static void init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
 	memset(s->blocks_gotten, 0, sizeof(s->blocks_gotten));
 	memset(s->blocks_allocated, 0, sizeof(s->blocks_allocated));
 
-	for (unsigned i = 0; i < old_v->nr_blocks; i++) {
+	unsigned nr_data = old_v->nr_blocks - old_v->nr_redundant;
+
+	for (unsigned i = 0; i < nr_data; i++) {
 		if (stripe_blockcount_get(old_v, i)) {
 			if (!bch2_dev_bad_or_evacuating(c, old_v->ptrs[i].dev))
 				__set_bit(s->old_blocks_nr, s->blocks_gotten);
