@@ -205,6 +205,7 @@ enum bch_fsck_flags {
 	x(stripe_csum_granularity_bad,				290,	0)		\
 	x(stripe_sectors_zero,					340,	0)		\
 	x(stripe_sector_count_wrong,				169,	0)		\
+	x(stripe_parity_block_sector_count_wrong,		360,	0)		\
 	x(stripe_to_missing_bucket_ref,				346,	FSCK_AUTOFIX)	\
 	x(bucket_stripe_ref_to_missing_stripe,			347,	FSCK_AUTOFIX)	\
 	x(bucket_stripe_ref_to_incorrect_stripe,		348,	FSCK_AUTOFIX)	\

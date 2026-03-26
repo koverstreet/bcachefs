@@ -960,7 +960,10 @@ static int bch2_gc_write_stripes_key(struct btree_trans *trans,
 	const struct bch_stripe *s = bkey_s_c_to_stripe(k).v;
 	struct gc_stripe *m = genradix_ptr(&c->ec.gc_stripes, k.k->p.offset);
 
+	unsigned nr_data = s->nr_blocks - s->nr_redundant;
+
 	bool bad = false;
+	bool parity_bad = false;
 	for (unsigned i = 0; i < s->nr_blocks; i++) {
 		u32 old = stripe_blockcount_get(s, i);
 		u32 new = (m ? m->block_sectors[i] : 0);
@@ -970,12 +973,18 @@ static int bch2_gc_write_stripes_key(struct btree_trans *trans,
 				   i, old, new);
 			bad = true;
 		}
+
+		parity_bad |= i >= nr_data && old;
 	}
 
-	if (bad)
+	if (bad || parity_bad)
 		bch2_bkey_val_to_text(&buf, c, k);
 
-	if (ret_fsck_err_on(bad,
+	if (ret_fsck_err_on(parity_bad,
+			trans, stripe_parity_block_sector_count_wrong,
+			"stripe parity block with nonzero sector count\n%s",
+			buf.buf) ||
+	    ret_fsck_err_on(bad,
 			trans, stripe_sector_count_wrong,
 			"%s", buf.buf)) {
 		struct bkey_i_stripe *new =
@@ -984,7 +993,8 @@ static int bch2_gc_write_stripes_key(struct btree_trans *trans,
 		bkey_reassemble(&new->k_i, k);
 
 		for (unsigned i = 0; i < new->v.nr_blocks; i++)
-			stripe_blockcount_set(&new->v, i, m ? m->block_sectors[i] : 0);
+			stripe_blockcount_set(&new->v, i,
+				i < nr_data ? (m ? m->block_sectors[i] : 0) : 0);
 
 		try(bch2_trans_update(trans, iter, &new->k_i, 0));
 	}
