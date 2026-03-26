@@ -534,6 +534,7 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 	if (static_branch_unlikely(&bch2_btree_shrinker_disabled))
 		return SHRINK_STOP;
 
+	u64 start_time = local_clock();
 	mutex_lock(&bc->lock);
 	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 
@@ -617,6 +618,7 @@ out_rotate:
 out:
 	mutex_unlock(&bc->lock);
 out_nounlock:
+	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_cache_scan], start_time);
 	ret = freed;
 
 	event_inc_trace(c, btree_cache_scan, buf,

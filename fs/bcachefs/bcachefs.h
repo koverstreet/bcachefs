@@ -328,6 +328,10 @@ BCH_DEBUG_PARAMS_ALL()
 	  "Total time for topology-changing btree updates, "		\
 	  "including background transaction phase after "		\
 	  "new nodes are written")					\
+	x(btree_node_cache_scan,					\
+	  "scan btree node cache for eviction")				\
+	x(btree_key_cache_scan,						\
+	  "scan btree key cache for eviction")				\
 	x(btree_write_buffer_flush,					\
 	  "Flush btree write buffer to btree")				\
 	x(btree_gc,							\

@@ -663,6 +663,7 @@ static unsigned long bch2_btree_key_cache_scan(struct shrinker *shrink,
 	unsigned iter, start;
 	int srcu_idx;
 
+	u64 start_time = local_clock();
 	srcu_idx = srcu_read_lock(&c->btree.trans.barrier);
 	rcu_read_lock();
 
@@ -727,6 +728,7 @@ out:
 
 	rcu_read_unlock();
 	srcu_read_unlock(&c->btree.trans.barrier, srcu_idx);
+	bch2_time_stats_update(&c->times[BCH_TIME_btree_key_cache_scan], start_time);
 
 	return freed;
 }
