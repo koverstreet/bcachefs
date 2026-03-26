@@ -148,6 +148,18 @@ static unsigned bkey_ptr_conflicts_mask(struct bch_fs *c, struct bkey_s_c k1, st
 	return ptrs_conflict;
 }
 
+/* Same, but skip cached pointers in k2 — a durable write doesn't conflict
+ * with a cached pointer on the same device */
+static unsigned bkey_ptr_noncached_conflicts_mask(struct bch_fs *c, struct bkey_s_c k1, struct bkey_s_c k2)
+{
+	unsigned ptrs_conflict = 0;
+
+	bkey_for_each_ptr(bch2_bkey_ptrs_c(k2), ptr)
+		if (!ptr->cached)
+			ptrs_conflict |= bkey_has_device_mask(c, k1, ptr->dev);
+	return ptrs_conflict;
+}
+
 static void data_update_key_to_text(struct printbuf *out,
 				    struct data_update *u,
 				    struct bkey_s_c new,
@@ -279,9 +291,12 @@ static int data_update_index_update_key(struct btree_trans *trans,
 
 
 		/* Any conflicts that are left over were useless writes -
-		 * perhaps due to a copygc race:
+		 * perhaps due to a copygc race.
+		 *
+		 * But a new durable pointer doesn't conflict with a cached
+		 * pointer on the same device — it replaces it:
 		 */
-		ptrs_conflict = bkey_ptr_conflicts_mask(c, bkey_i_to_s_c(&new->k_i), bkey_i_to_s_c(insert));
+		ptrs_conflict = bkey_ptr_noncached_conflicts_mask(c, bkey_i_to_s_c(&new->k_i), bkey_i_to_s_c(insert));
 		if (ptrs_conflict) {
 			event_add_trace(c, data_update_useless_write_fail,
 					k.k->size * hweight32(ptrs_conflict), buf, ({
@@ -302,23 +317,22 @@ static int data_update_index_update_key(struct btree_trans *trans,
 				return 0;
 			}
 		}
-	} else {
-		/*
-		 * Drop all conflicts from the existing extent, not the newly
-		 * written replicas:
-		 *
-		 * When converting an extent to erasure coding, we don't
-		 * disallow the write from allocating on the extent's existing
-		 * devices: we just want a new replica that will have a stripe
-		 * pointer added asynchronously by erasure coding, and it can
-		 * overwrite whichever device it happens to land on
-		 *
-		 * XXX: make sure drop_extra_replicas does not drop the new
-		 * replica
-		 */
-		unsigned ptrs_conflict = bkey_ptr_conflicts_mask(c, bkey_i_to_s_c(insert), bkey_i_to_s_c(&new->k_i));
-		bch2_bkey_drop_ptrs_mask(c, insert, ptrs_conflict);
 	}
+
+	/*
+	 * Drop all conflicts from the existing extent, not the newly written
+	 * replicas:
+	 *
+	 * When converting an extent to erasure coding, we don't disallow the
+	 * write from allocating on the extent's existing devices: we just want
+	 * a new replica that will have a stripe pointer added asynchronously by
+	 * erasure coding, and it can overwrite whichever device it happens to
+	 * land on
+	 *
+	 * XXX: make sure drop_extra_replicas does not drop the new replica
+	 */
+	unsigned ptrs_conflict = bkey_ptr_conflicts_mask(c, bkey_i_to_s_c(insert), bkey_i_to_s_c(&new->k_i));
+	bch2_bkey_drop_ptrs_mask(c, insert, ptrs_conflict);
 
 	/* Now, merge newly written replicas:
 	 * Since these are appended to the end of @insert, they don't invalidate
