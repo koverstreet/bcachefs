@@ -716,14 +716,114 @@ void bch2_corrupt_bio(struct bio *bio)
 }
 #endif
 
+#define REQUEST_OPS()			\
+	x(REQ_OP_READ)			\
+	x(REQ_OP_WRITE)			\
+	x(REQ_OP_FLUSH)			\
+	x(REQ_OP_DISCARD)		\
+	x(REQ_OP_SECURE_ERASE)		\
+	x(REQ_OP_ZONE_APPEND)		\
+	x(REQ_OP_WRITE_ZEROES)		\
+	x(REQ_OP_ZONE_OPEN)		\
+	x(REQ_OP_ZONE_CLOSE)		\
+	x(REQ_OP_ZONE_FINISH)		\
+	x(REQ_OP_ZONE_RESET)		\
+	x(REQ_OP_ZONE_RESET_ALL)	\
+	x(REQ_OP_DRV_IN)		\
+	x(REQ_OP_DRV_OUT)		\
+
+#define REQUEST_FLAGS()			\
+	x(REQ_FAILFAST_DEV)		\
+	x(REQ_FAILFAST_TRANSPORT)	\
+	x(REQ_FAILFAST_DRIVER)		\
+	x(REQ_SYNC)			\
+	x(REQ_META)			\
+	x(REQ_PRIO)			\
+	x(REQ_NOMERGE)			\
+	x(REQ_IDLE)			\
+	x(REQ_INTEGRITY)		\
+	x(REQ_FUA)			\
+	x(REQ_PREFLUSH)			\
+	x(REQ_RAHEAD)			\
+	x(REQ_BACKGROUND)		\
+	x(REQ_NOWAIT)			\
+	x(REQ_POLLED)			\
+	x(REQ_ALLOC_CACHE)		\
+	x(REQ_SWAP)			\
+	x(REQ_DRV)			\
+	x(REQ_FS_PRIVATE)		\
+	x(REQ_ATOMIC)			\
+	x(REQ_P2PDMA)			\
+	x(REQ_NOUNMAP)			\
+
+#define BIO_FLAGS()			\
+	x(BIO_PAGE_PINNED)		\
+	x(BIO_CLONED)			\
+	x(BIO_QUIET)			\
+	x(BIO_CHAIN)			\
+	x(BIO_REFFED)			\
+	x(BIO_BPS_THROTTLED)		\
+	x(BIO_TRACE_COMPLETION)		\
+	x(BIO_CGROUP_ACCT)		\
+	x(BIO_QOS_THROTTLED)		\
+	x(BIO_QOS_MERGED)		\
+	x(BIO_REMAPPED)			\
+	x(BIO_ZONE_WRITE_PLUGGING)	\
+	x(BIO_EMULATES_ZONE_APPEND)	\
+
+static const char * const bch2_request_op_strs[] = {
+#define x(n) [n]	= #n,
+	REQUEST_OPS()
+#undef x
+	NULL
+};
+
+static const char * const bch2_request_flag_strs[] = {
+#define x(n) #n,
+	REQUEST_FLAGS()
+#undef x
+	NULL
+};
+
+static const char * const bch2_bio_flag_strs[] = {
+#define x(n) #n,
+	BIO_FLAGS()
+#undef x
+	NULL
+};
+
 void bch2_bio_to_text(struct printbuf *out, struct bio *bio)
 {
-	prt_printf(out, "bi_remaining:\t%u\n",
-		   atomic_read(&bio->__bi_remaining));
-	prt_printf(out, "bi_end_io:\t%ps\n",
-		   bio->bi_end_io);
-	prt_printf(out, "bi_status:\t%u\n",
-		   bio->bi_status);
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 24);
+
+	prt_printf(out, "bi_bdev:\t");
+	if (bio->bi_bdev)
+		prt_bdevname(out, bio->bi_bdev);
+	else
+		prt_str(out, "(null|");
+	prt_newline(out);
+
+	prt_printf(out, "bi_opf:\t%s ", bch2_request_op_strs[bio_op(bio)]);
+	prt_bitflags(out, bch2_request_flag_strs, bio->bi_opf >> REQ_OP_BITS);
+	prt_newline(out);
+
+	prt_str(out, "bi_flags:\t");
+	prt_bitflags(out, bch2_bio_flag_strs, bio->bi_flags);
+	prt_newline(out);
+
+	prt_printf(out, "bi_status:\t%u\n", bio->bi_status);
+
+	prt_printf(out, "bi_iter.bi_sector\t%llu\n",	(u64) bio->bi_iter.bi_sector);
+	prt_printf(out, "bi_iter.bi_size\t%u\n",	bio->bi_iter.bi_size);
+	prt_printf(out, "bi_iter.bi_idx\t%u\n",		bio->bi_iter.bi_idx);
+	prt_printf(out, "bi_iter.bi_bvec_done\t%u\n",	bio->bi_iter.bi_bvec_done);
+
+	prt_printf(out, "bi_remaining:\t%u\n",		atomic_read(&bio->__bi_remaining));
+	prt_printf(out, "bi_end_io:\t%ps\n",		bio->bi_end_io);
+
+	prt_printf(out, "bi_vcnt\t%u\n",		bio->bi_vcnt);
+	prt_printf(out, "bi_max_vecs\t%u\n",		bio->bi_max_vecs);
 }
 
 #if 0
