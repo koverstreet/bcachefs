@@ -950,7 +950,7 @@ static unsigned durability_available_on_target(struct bch_fs *c,
 					       bool *need_copygc)
 {
 	if (trace) {
-		prt_str(trace, "available to write on ");
+		prt_str(trace, "available to write on target=");
 		bch2_target_to_text(trace, c, target);
 		prt_newline(trace);
 		printbuf_indent_add(trace, 2);
@@ -981,7 +981,8 @@ static unsigned durability_available_on_target(struct bch_fs *c,
 		}
 
 		if (trace)
-			prt_printf(trace, "%s: %llu\n", ca->name, free);
+			prt_printf(trace, "%s: durability %u free %llu \n",
+				   ca->name, ca->mi.durability, free);
 	}
 
 	if (trace) {
@@ -1114,7 +1115,7 @@ int bch2_can_do_data_update(struct btree_trans *trans,
 				return d;
 
 			durability_keeping += d;
-			if (!data_opts->no_devs_have)
+			if (!data_opts->no_devs_have && !p.ptr.cached)
 				devs_have.data[devs_have.nr++] = p.ptr.dev;
 		}
 
@@ -1258,7 +1259,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 			}
 
 			durability_keeping += d;
-			if (!m->opts.no_devs_have)
+			if (!m->opts.no_devs_have && !p.ptr.cached)
 				bch2_dev_list_add_dev(&m->op.devs_have, p.ptr.dev);
 		}
 
