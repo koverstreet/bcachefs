@@ -364,6 +364,7 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 			/* Don't let online durability go below data_replicas */
 
 			/* Drop entire pointers? */
+			ptr_bit = 1;
 			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 				int d = bch2_extent_ptr_durability(trans, &p);
 				if (d < 0)
