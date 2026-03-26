@@ -90,6 +90,7 @@ struct bch_read_bio {
 
 	struct bch_inode_opts	opts;
 
+	struct bch_io_failures	*failed;
 	struct bch_read_err_report *err_report;
 
 	struct work_struct	work;
@@ -151,7 +152,8 @@ int bch2_read(struct btree_trans *, struct bch_read_bio *, struct bvec_iter,
 	      struct bch_io_failures *, struct bkey_buf *, enum bch_read_flags);
 
 static inline struct bch_read_bio *rbio_init_fragment(struct bio *bio,
-						      struct bch_read_bio *orig)
+						      struct bch_read_bio *orig,
+						      struct bch_io_failures *failed)
 {
 	struct bch_read_bio *rbio = to_rbio(bio);
 
@@ -162,6 +164,7 @@ static inline struct bch_read_bio *rbio_init_fragment(struct bio *bio,
 	rbio->split		= true;
 	rbio->parent		= orig;
 	rbio->opts		= orig->opts;
+	rbio->failed		= failed;
 	rbio->err_report	= orig->err_report;
 #ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
 	rbio->list_idx	= 0;
@@ -181,6 +184,7 @@ static inline struct bch_read_bio *rbio_init(struct bio *bio,
 	rbio->_state		= 0;
 	rbio->flags		= 0;
 	rbio->ret		= 0;
+	rbio->failed		= NULL;
 	rbio->err_report	= NULL;
 	rbio->opts		= opts;
 	rbio->bio.bi_end_io	= end_io;

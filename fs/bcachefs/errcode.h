@@ -542,7 +542,7 @@
 	x(BCH_ERR_data_read_retry_avoid,data_read_decrypt_err)			\
 	x(BCH_ERR_data_read,		data_read_ptr_stale_race)		\
 	x(BCH_ERR_data_read_retry,	data_read_ptr_stale_retry)		\
-	x(BCH_ERR_data_read_retry,	data_read_ptr_stale_dirty)		\
+	x(BCH_ERR_data_read_retry_avoid,data_read_ptr_stale_dirty)		\
 	x(BCH_ERR_data_read,		data_read_no_encryption_key)		\
 	x(BCH_ERR_data_read,		data_read_buffer_too_small)		\
 	x(BCH_ERR_data_read,		data_read_key_overwritten)		\
