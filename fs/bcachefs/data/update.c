@@ -1161,13 +1161,14 @@ static void checksummed_and_non_checksummed_handling(struct data_update *u, stru
 		return;
 
 	bool rewrite_found = false;
-	unsigned ptr_bit = 1;
 
-	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-		if (ptr_bit & u->opts.ptrs_kill) {
+	unsigned ptr_bit = 1;
+	bkey_for_each_ptr(ptrs, ptr) {
+		if ((ptr_bit & u->opts.ptrs_kill) &&
+		    !ptr->cached) {
 			if (!rewrite_found) {
 				rewrite_found = true;
-				u->opts.read_dev = p.ptr.dev;
+				u->opts.read_dev = ptr->dev;
 			} else {
 				u->opts.ptrs_kill &= ~ptr_bit;
 			}
