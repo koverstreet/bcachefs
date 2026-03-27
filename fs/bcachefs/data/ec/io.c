@@ -364,7 +364,8 @@ int bch2_stripe_buf_validate_msg(struct bch_fs *c, struct ec_stripe_buf *buf, bo
 static void ec_block_endio(struct bio *bio)
 {
 	struct ec_bio *ec_bio = container_of(bio, struct ec_bio, bio);
-	struct bch_extent_ptr *ptr = &ec_bio->buf->key.v.ptrs[ec_bio->idx];
+	struct ec_stripe_buf *buf = ec_bio->buf;
+	struct bch_extent_ptr *ptr = &buf->key.v.ptrs[ec_bio->idx];
 	struct bch_dev *ca = ec_bio->ca;
 	int rw = ec_bio->rw;
 	unsigned ref = rw == READ
@@ -375,13 +376,13 @@ static void ec_block_endio(struct bio *bio)
 				   ec_bio->submit_time, !bio->bi_status);
 
 	if (bio->bi_status)
-		ec_bio->buf->err[STRIPE_BUF_PRE_RECOV][ec_bio->idx] = -blk_status_to_bch_err(bio->bi_status);
+		buf->err[STRIPE_BUF_PRE_RECOV][ec_bio->idx] = -blk_status_to_bch_err(bio->bi_status);
 	else if (dev_ptr_stale(ca, ptr))
-		ec_bio->buf->err[STRIPE_BUF_PRE_RECOV][ec_bio->idx] = bch_err_throw(ca->fs, stripe_read_ptr_stale);
+		buf->err[STRIPE_BUF_PRE_RECOV][ec_bio->idx] = bch_err_throw(ca->fs, stripe_read_ptr_stale);
 
 	bio_put(&ec_bio->bio);
 	enumerated_ref_put(&ca->io_ref[rw], ref);
-	closure_put(&ec_bio->buf->io);
+	closure_put(&buf->io);
 }
 
 void bch2_ec_block_io(struct bch_fs *c, struct ec_stripe_buf *buf,
