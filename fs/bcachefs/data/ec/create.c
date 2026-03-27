@@ -1044,11 +1044,20 @@ static bool may_reuse_stripe(struct bch_fs *c,
 
 	struct bch_devs_mask devs_may_alloc = new->devs;
 	unsigned nr_data = old->nr_blocks - old->nr_redundant;
+	unsigned live_data = 0;
 
 	for (unsigned i = 0; i < nr_data; i++)
-		if (!bch2_dev_bad_or_evacuating(c, old->ptrs[i].dev) &&
-		    stripe_blockcount_get(old, i))
-			__clear_bit(old->ptrs[i].dev, devs_may_alloc.d);
+		if (stripe_blockcount_get(old, i)) {
+			if (!bch2_dev_bad_or_evacuating(c, old->ptrs[i].dev))
+				__clear_bit(old->ptrs[i].dev, devs_may_alloc.d);
+			live_data++;
+		}
+
+	pr_info("%px: live_data %u new->nr_data %u", new, live_data, new->nr_data);
+
+	/* live data blocks (including moving) must fit with room for at least one new block */
+	if (live_data + 1 > new->nr_data)
+		return false;
 
 	return dev_mask_nr(&devs_may_alloc) > new->nr_parity;
 }
@@ -1095,7 +1104,7 @@ static int get_old_stripe(struct btree_trans *trans,
 	return ret;
 }
 
-static void init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
+static void init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s, bool repair)
 {
 	struct bch_stripe *new_v = &s->new_stripe.key.v;
 	struct bch_stripe *old_v = &s->old_stripe.key.v;
@@ -1114,9 +1123,10 @@ static void init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
 	memset(s->blocks_gotten, 0, sizeof(s->blocks_gotten));
 	memset(s->blocks_allocated, 0, sizeof(s->blocks_allocated));
 
-	unsigned nr_data = old_v->nr_blocks - old_v->nr_redundant;
+	unsigned old_nr_data = old_v->nr_blocks - old_v->nr_redundant;
+	unsigned new_nr_data = new_v->nr_blocks - new_v->nr_redundant;
 
-	for (unsigned i = 0; i < nr_data; i++) {
+	for (unsigned i = 0; i < old_nr_data; i++) {
 		if (stripe_blockcount_get(old_v, i)) {
 			if (!bch2_dev_bad_or_evacuating(c, old_v->ptrs[i].dev))
 				__set_bit(s->old_blocks_nr, s->blocks_gotten);
@@ -1127,6 +1137,7 @@ static void init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
 			new_v->ptrs[s->old_blocks_nr] = old_v->ptrs[i];
 
 			s->old_block_map[s->old_blocks_nr++] = i;
+			BUG_ON(s->old_blocks_nr + !repair > new_nr_data);
 		}
 	}
 
@@ -1154,7 +1165,7 @@ static int stripe_reuse(struct btree_trans *trans, struct ec_stripe_new *s)
 	if (ret)
 		bch2_stripe_handle_put(c, &s->old_stripe_handle);
 
-	init_new_stripe_from_old(c, s);
+	init_new_stripe_from_old(c, s, false);
 	bch2_stripe_buf_read(c, &s->old_stripe);
 	return ret;
 
@@ -1591,7 +1602,7 @@ int bch2_stripe_repair(struct moving_context *ctxt,
 
 	unsigned nr_data = old_s->nr_blocks - old_s->nr_redundant;
 	unsigned nr_live_data_blocks = 0;
-	for (unsigned i = 0; i < old_s->nr_blocks; i++)
+	for (unsigned i = 0; i < nr_data; i++)
 		nr_live_data_blocks += stripe_blockcount_get(old_s, i) != 0;
 
 	if (!nr_live_data_blocks)
@@ -1640,7 +1651,7 @@ int bch2_stripe_repair(struct moving_context *ctxt,
 
 	bkey_reassemble(&new_s->old_stripe.key.k_i, s.s_c);
 
-	init_new_stripe_from_old(c, new_s);
+	init_new_stripe_from_old(c, new_s, true);
 
 	int ret = __bch2_ec_stripe_buf_init(c, &new_s->old_stripe, 0, le16_to_cpu(new_s->old_stripe.key.v.sectors)) ?:
 		  __bch2_ec_stripe_buf_init(c, &new_s->new_stripe, 0, le16_to_cpu(new_s->new_stripe.key.v.sectors)) ?:
