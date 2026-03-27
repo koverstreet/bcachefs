@@ -1739,9 +1739,11 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_r
 	if (err == -BCH_ERR_open_bucket_alloc_blocked)
 		bch2_fs_open_buckets_to_text(&buf, c);
 
-	prt_printf(&buf, "Journal debug:\n");
-	scoped_guard(printbuf_indent, &buf)
+	if (c->journal.watermark != BCH_WATERMARK_stripe) {
+		prt_printf(&buf, "Journal debug:\n");
+		guard(printbuf_indent)(&buf);
 		bch2_journal_debug_to_text(&buf, &c->journal);
+	}
 
 	bch2_print_str(c, KERN_ERR, buf.buf);
 }
