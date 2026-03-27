@@ -548,7 +548,7 @@ put_write_ref:
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_discard);
 }
 
-void bch2_do_discards(struct bch_fs *c)
+void bch2_do_discards_async(struct bch_fs *c)
 {
 	for_each_member_device(c, ca)
 		bch2_dev_do_discards(ca);

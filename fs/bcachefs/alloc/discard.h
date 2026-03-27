@@ -11,7 +11,7 @@ void bch2_discard_buckets_to_text(struct printbuf *, struct bch_dev *);
 
 void bch2_dev_do_discards(struct bch_dev *);
 void bch2_do_discards_going_ro(struct bch_fs *);
-void bch2_do_discards(struct bch_fs *);
+void bch2_do_discards_async(struct bch_fs *);
 
 void bch2_do_discards_work(struct work_struct *);
 void bch2_do_discards_fast_work(struct work_struct *);

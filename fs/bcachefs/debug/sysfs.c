@@ -465,7 +465,7 @@ STORE(bch2_fs)
 	}
 
 	if (attr == &sysfs_trigger_discards)
-		bch2_do_discards(c);
+		bch2_do_discards_async(c);
 
 	if (attr == &sysfs_trigger_invalidates)
 		bch2_do_invalidates(c);
