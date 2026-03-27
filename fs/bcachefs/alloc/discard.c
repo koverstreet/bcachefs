@@ -233,18 +233,27 @@ static bool discard_opt_enabled_idx(struct bch_fs *c, unsigned dev)
 	return ca && bch2_discard_opt_enabled(c, ca);
 }
 
+static u32 dev_bucket_size(struct bch_fs *c, unsigned dev)
+{
+	guard(rcu)();
+	struct bch_dev *ca = bch2_dev_rcu_noerror(c, dev);
+	return ca ? ca->mi.bucket_size : 0;
+}
+
 static int bch2_discard_one_bucket(struct btree_trans *trans,
 				   struct bpos bucket,
+				   u32 bucket_size,
 				   struct discard_state *s,
 				   bool fastpath)
 {
 	struct bch_fs *c = trans->c;
 
-	s->seen += !bpos_eq(s->last_pos, bucket);
+	if (!bpos_eq(s->last_pos, bucket))
+		s->seen += bucket_size;
 	s->last_pos = bucket;
 
 	if (bch2_bucket_is_open_safe(c, bucket.inode, bucket.offset)) {
-		s->open++;
+		s->open += bucket_size;
 		return 0;
 	}
 
@@ -254,18 +263,18 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 	struct bkey_i_alloc_v4 *a = errptr_try(bch2_alloc_to_v4_mut(trans, k));
 
 	if (a->v.journal_seq_empty > c->journal.flushed_seq_ondisk) {
-		s->need_journal_commit++;
+		s->need_journal_commit += bucket_size;
 		return 0;
 	}
 
 	if (a->v.journal_seq_empty >= c->journal.rewind_seq_ondisk) {
-		s->need_rewind_advance++;
+		s->need_rewind_advance += bucket_size;
 		return 0;
 	}
 
 	if (a->v.data_type != BCH_DATA_need_discard) {
 		/* expected race - btree write buffer */
-		s->bad_data_type++;
+		s->bad_data_type += bucket_size;
 		return 0;
 	}
 
@@ -289,7 +298,7 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 		if (ret == -EEXIST)
 			return 0;
 
-		s->eagain++;
+		s->eagain += bucket_size;
 		return s->eagain * 2 > s->seen
 			? bch_err_throw(c, max_discards_in_flight)
 			: 0;
@@ -361,6 +370,9 @@ static void bch2_do_discards(struct bch_fs *c)
 			ret = for_each_btree_key(trans, iter,
 					BTREE_ID_need_discard, c->discards.pos, 0, k, ({
 				u64 journal_seq = k.k->p.inode;
+				struct bpos bucket	= u64_to_bucket(k.k->p.offset);
+				u32 bucket_size		= dev_bucket_size(c, bucket.inode);
+
 				done_queuing = journal_seq >= c->journal.rewind_seq_ondisk;
 				if (done_queuing)
 					break;
@@ -368,8 +380,7 @@ static void bch2_do_discards(struct bch_fs *c)
 				if (!s->eagain)
 					c->discards.pos = iter.pos;
 
-				bch2_discard_one_bucket(trans,
-							u64_to_bucket(k.k->p.offset),
+				bch2_discard_one_bucket(trans, bucket, bucket_size,
 							s, false);
 			}));
 
@@ -488,7 +499,7 @@ void bch2_do_discards_fast_work(struct work_struct *work)
 		do {
 			ret = lockrestart_do(trans,
 				bch2_discard_one_bucket(trans, POS(ca->dev_idx, bucket),
-							&s, true));
+							ca->mi.bucket_size, &s, true));
 			if (ret == -BCH_ERR_max_discards_in_flight)
 				ret = bch2_discards_complete(trans, &s, true, false);
 		} while (ret == -BCH_ERR_max_discards_in_flight);
