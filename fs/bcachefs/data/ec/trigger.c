@@ -546,7 +546,8 @@ void bch2_stripe_new_buckets_del(struct bch_fs *c, struct ec_stripe_new *s)
 	guard(spinlock)(&c->ec.stripes_new_lock);
 
 	for (unsigned i = 0; i < s->new_stripe.key.v.nr_blocks; i++)
-		hlist_del_init(&s->buckets[i].hash);
+		if (!hlist_unhashed(&s->buckets[i].hash))
+			hlist_del_init(&s->buckets[i].hash);
 }
 
 static struct ec_stripe_handle *bch2_open_stripe_find(struct bch_fs *c, u64 idx)
