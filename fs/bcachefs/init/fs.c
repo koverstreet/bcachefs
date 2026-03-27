@@ -568,7 +568,9 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 	int ret = bch2_journal_reclaim_start(&c->journal) ?:
 		  bch2_btree_write_buffer_start(c) ?:
 		  bch2_copygc_start(c) ?:
-		  bch2_reconcile_start(c);
+		  (!c->opts.read_only
+		   ? bch2_reconcile_start(c)
+		   : 0);
 	if (ret) {
 		bch2_fs_read_only(c);
 		return ret;
