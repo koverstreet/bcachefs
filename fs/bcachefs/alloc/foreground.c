@@ -580,8 +580,8 @@ err:
 
 		event_inc_trace(c, bucket_alloc, buf,
 			bucket_alloc_to_text(&buf, c, req, ob));
-	} else if (ret == -BCH_ERR_open_buckets_empty ||
-		   ret == -BCH_ERR_open_bucket_alloc_blocked) {
+	} else if (bch2_err_matches(ret, BCH_ERR_open_buckets_empty) ||
+		   bch2_err_matches(ret, BCH_ERR_open_bucket_alloc_blocked)) {
 		event_inc_trace(c, open_bucket_alloc_fail, buf,
 			bch2_fs_open_buckets_to_text(&buf, c));
 	} else if (!bch2_err_matches(ret, BCH_ERR_transaction_restart) &&
@@ -1219,8 +1219,8 @@ retry:
 		ret = min(ret, 0); /* We return 1 earlier to terminate allocating */
 
 		if (ret &&
-		    ret != -BCH_ERR_freelist_empty &&
-		    ret != -BCH_ERR_insufficient_devices)
+		    !bch2_err_matches(ret, BCH_ERR_freelist_empty) &&
+		    !bch2_err_matches(ret, BCH_ERR_insufficient_devices))
 			goto err;
 
 		if (ret && req->will_retry_all_devices) {
@@ -1259,7 +1259,7 @@ retry:
 			continue;
 		}
 
-		if (ret == -BCH_ERR_insufficient_devices &&
+		if (bch2_err_matches(ret, BCH_ERR_insufficient_devices) &&
 		    req->nr_effective)
 			ret = 0;
 
@@ -1269,7 +1269,7 @@ retry:
 		 * don't have all the replicas we want (freelist_empty) - we
 		 * need another retry so that we can add ourself to the waitlist
 		 */
-		if (ret == -BCH_ERR_freelist_empty &&
+		if (bch2_err_matches(ret, BCH_ERR_freelist_empty) &&
 		    req->cl &&
 		    !(req->flags & BCH_WRITE_alloc_nowait))
 			continue;
@@ -1709,7 +1709,7 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_r
 		prt_newline(&buf);
 	}
 
-	if (err == -BCH_ERR_bucket_alloc_blocked) {
+	if (bch2_err_matches(err, BCH_ERR_bucket_alloc_blocked)) {
 		prt_printf(&buf, "Allocator debug:\n");
 		scoped_guard(printbuf_indent, &buf)
 			bch2_fs_alloc_debug_to_text(&buf, c);
@@ -1736,7 +1736,7 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_r
 		prt_newline(&buf);
 	}
 
-	if (err == -BCH_ERR_open_bucket_alloc_blocked)
+	if (bch2_err_matches(err, BCH_ERR_open_bucket_alloc_blocked))
 		bch2_fs_open_buckets_to_text(&buf, c);
 
 	if (c->journal.watermark != BCH_WATERMARK_stripe) {
