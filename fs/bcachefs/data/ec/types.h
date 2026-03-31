@@ -27,7 +27,8 @@ struct gc_stripe {
 };
 
 struct bch_fs_ec {
-	atomic_long_t		stripe_buf_bytes;
+	long			stripe_buf_bytes;
+	spinlock_t		stripe_buf_lock;
 	struct closure_waitlist	stripe_buf_wait;
 
 	struct hlist_head	stripes_new[32];

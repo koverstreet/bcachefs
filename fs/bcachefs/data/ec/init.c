@@ -211,6 +211,7 @@ void bch2_fs_ec_exit(struct bch_fs *c)
 void bch2_fs_ec_init_early(struct bch_fs *c)
 {
 	spin_lock_init(&c->ec.stripes_new_lock);
+	spin_lock_init(&c->ec.stripe_buf_lock);
 
 	INIT_LIST_HEAD(&c->ec.stripe_head_list);
 	mutex_init(&c->ec.stripe_head_lock);

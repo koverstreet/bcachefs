@@ -88,8 +88,18 @@ static void raid_rec(int nr, int *ir, int nd, int np, size_t size, void **v)
 
 #endif
 
-static void __bch2_ec_stripe_buf_exit(struct ec_stripe_buf *buf)
+void bch2_ec_stripe_buf_exit(struct ec_stripe_buf *buf)
 {
+	if (buf->c) {
+		struct bch_fs *c = buf->c;
+		buf->c = NULL;
+		scoped_guard(spinlock, &c->ec.stripe_buf_lock) {
+			size_t buf_bytes = ((unsigned long)buf->size << 9) * buf->key.v.nr_blocks;
+			c->ec.stripe_buf_bytes -= buf_bytes;
+			closure_wake_up(&c->ec.stripe_buf_wait);
+		}
+	}
+
 	if (buf->key.k.type == KEY_TYPE_stripe) {
 		for (unsigned i = 0; i < buf->key.v.nr_blocks; i++) {
 			kvfree(buf->data[i]);
@@ -101,23 +111,10 @@ static void __bch2_ec_stripe_buf_exit(struct ec_stripe_buf *buf)
 	closure_debug_destroy(&buf->io);
 }
 
-void bch2_ec_stripe_buf_exit(struct ec_stripe_buf *buf)
-{
-	if (buf->c) {
-		struct bch_fs *c = buf->c;
-		buf->c = NULL;
-		atomic_long_sub(((unsigned long)buf->size << 9) * buf->key.v.nr_blocks,
-				&c->ec.stripe_buf_bytes);
-		closure_wake_up(&c->ec.stripe_buf_wait);
-	}
-
-	__bch2_ec_stripe_buf_exit(buf);
-}
-
-/* XXX: this is a non-mempoolified memory allocation: */
-int __bch2_ec_stripe_buf_init(struct bch_fs *c,
-			      struct ec_stripe_buf *buf,
-			      unsigned offset, unsigned size)
+int bch2_ec_stripe_buf_init(struct bch_fs *c,
+			    struct ec_stripe_buf *buf,
+			    unsigned offset, unsigned size,
+			    struct closure *cl)
 {
 	unsigned csum_granularity = 1U << buf->key.v.csum_granularity_bits;
 	unsigned end = offset + size;
@@ -128,6 +125,22 @@ int __bch2_ec_stripe_buf_init(struct bch_fs *c,
 	end	= min_t(unsigned, le16_to_cpu(buf->key.v.sectors),
 			round_up(end, csum_granularity));
 
+	unsigned long buf_bytes = ((unsigned long)(end - offset) << 9) *
+		buf->key.v.nr_blocks;
+	unsigned long limit = (totalram_pages() << PAGE_SHIFT) / 100 *
+		c->opts.ec_stripe_buf_limit;
+
+	scoped_guard(spinlock, &c->ec.stripe_buf_lock) {
+		if (cl &&
+		    ((c->ec.stripe_buf_bytes && !get_random_u32_below(8)) ||
+		     c->ec.stripe_buf_bytes + buf_bytes > limit)) {
+			closure_wait(&c->ec.stripe_buf_wait, cl);
+			return bch_err_throw(c, stripe_buf_mem_blocked);
+		}
+
+		c->ec.stripe_buf_bytes += buf_bytes;
+	}
+
 	buf->c		= c;
 	buf->offset	= offset;
 	buf->size	= end - offset;
@@ -135,14 +148,11 @@ int __bch2_ec_stripe_buf_init(struct bch_fs *c,
 	for (unsigned i = 0; i < buf->key.v.nr_blocks; i++) {
 		buf->data[i] = kvmalloc(buf->size << 9, GFP_KERNEL);
 		if (!buf->data[i]) {
-			__bch2_ec_stripe_buf_exit(buf);
+			bch2_ec_stripe_buf_exit(buf);
 			buf->c = NULL;
 			return bch_err_throw(c, ENOMEM_stripe_buf);
 		}
 	}
-
-	atomic_long_add(((unsigned long)buf->size << 9) * buf->key.v.nr_blocks,
-			&c->ec.stripe_buf_bytes);
 
 	closure_init(&buf->io, NULL);
 
@@ -541,7 +551,7 @@ int bch2_ec_read_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 	/* Don't hold btree locks for stripe buffer allocations, or IO */
 	bch2_trans_unlock(trans);
 
-	ret = bch2_ec_stripe_buf_init(c, buf, offset, bio_sectors(&rbio->bio));
+	ret = bch2_ec_stripe_buf_init(c, buf, offset, bio_sectors(&rbio->bio), NULL);
 	if (ret) {
 		prt_printf(msg, "error allocating stripe data buffers\n");
 		bch2_bkey_val_to_text(msg, c, bkey_i_to_s_c(&buf->key.k_i));

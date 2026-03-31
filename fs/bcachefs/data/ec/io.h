@@ -48,15 +48,8 @@ static inline unsigned ec_nr_failed(struct ec_stripe_buf *buf,
 }
 
 void bch2_ec_stripe_buf_exit(struct ec_stripe_buf *);
-int __bch2_ec_stripe_buf_init(struct bch_fs *, struct ec_stripe_buf *, unsigned, unsigned);
-
-static inline int bch2_ec_stripe_buf_init(struct bch_fs *c,
-			      struct ec_stripe_buf *buf,
-			      unsigned offset, unsigned size)
-{
-	closure_init(&buf->io, NULL);
-	return __bch2_ec_stripe_buf_init(c, buf, offset, size);
-}
+int bch2_ec_stripe_buf_init(struct bch_fs *, struct ec_stripe_buf *, unsigned, unsigned,
+			    struct closure *);
 
 DEFINE_FREE(ec_stripe_buf_free, struct ec_stripe_buf *, bch2_ec_stripe_buf_exit(_T); kfree(_T));
 
