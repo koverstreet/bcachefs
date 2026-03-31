@@ -45,9 +45,13 @@ struct ec_stripe_new {
 	enum bch_watermark	watermark;
 	u8			nr_data;
 	u8			nr_parity;
-	bool			allocated;
-	bool			pending;
-	bool			have_old_stripe;
+
+	bool			have_old_stripe:1;
+
+	bool			allocated:1;
+	bool			mem_allocated:1;
+	bool			old_mem_allocated:1;
+	bool			pending:1;
 
 	unsigned long		blocks_gotten[BITS_TO_LONGS(BCH_BKEY_PTRS_MAX)];
 	unsigned long		blocks_allocated[BITS_TO_LONGS(BCH_BKEY_PTRS_MAX)];

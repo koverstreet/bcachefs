@@ -1161,12 +1161,7 @@ static int stripe_reuse(struct btree_trans *trans, struct ec_stripe_new *s)
 	if (ret <= 0)
 		return ret ?: bch_err_throw(c, stripe_alloc_blocked);
 
-	ret = __bch2_ec_stripe_buf_init(c, &s->old_stripe, 0, le16_to_cpu(s->old_stripe.key.v.sectors));
-	if (ret)
-		bch2_stripe_handle_put(c, &s->old_stripe_handle);
-
 	init_new_stripe_from_old(c, s, false);
-	bch2_stripe_buf_read(c, &s->old_stripe);
 	return ret;
 
 }
@@ -1267,8 +1262,6 @@ static int stripe_alloc_or_reuse(struct btree_trans *trans,
 		try(stripe_idx_alloc(trans, s));
 
 	try(__stripe_alloc_or_reuse(trans, req, dev_stripe, s, waiting));
-
-	try(__bch2_ec_stripe_buf_init(c, &s->new_stripe, 0, le16_to_cpu(s->new_stripe.key.v.sectors)));
 
 	if (!s->res.sectors)
 		bch2_disk_reservation_get(c, &s->res,
@@ -1556,6 +1549,24 @@ struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *trans,
 			}
 		}));
 	}
+
+	if (!s->old_mem_allocated && s->have_old_stripe) {
+		ret = __bch2_ec_stripe_buf_init(c, &s->old_stripe, 0,
+						le16_to_cpu(s->old_stripe.key.v.sectors));
+		if (ret)
+			goto err;
+		s->old_mem_allocated = true;
+		bch2_stripe_buf_read(c, &s->old_stripe);
+	}
+
+	if (!s->mem_allocated) {
+		ret = __bch2_ec_stripe_buf_init(c, &s->new_stripe, 0,
+						le16_to_cpu(s->new_stripe.key.v.sectors));
+		if (ret)
+			goto err;
+		s->mem_allocated = true;
+	}
+
 	BUG_ON(!s->new_stripe.data[0]);
 	BUG_ON(trans->restarted);
 	return h;
