@@ -1086,7 +1086,7 @@ int bch2_fs_initialize(struct bch_fs *c)
 				  &root_inode, &lostfound_inode,
 				  &lostfound,
 				  0, 0, S_IFDIR|0700, 0,
-				  NULL, NULL, (subvol_inum) { 0 }, 0));
+				  NULL, NULL, NULL, (subvol_inum) { 0 }, 0));
 	bch_err_msg(c, ret, "creating lost+found");
 	if (ret)
 		return ret;

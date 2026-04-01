@@ -8,7 +8,6 @@
 #include "fs/dirent.h"
 #include "fs/inode.h"
 #include "fs/namei.h"
-#include "fs/xattr.h"
 
 #include "init/fs.h"
 
@@ -37,6 +36,7 @@ int bch2_create_trans(struct btree_trans *trans,
 		      uid_t uid, gid_t gid, umode_t mode, dev_t rdev,
 		      struct posix_acl *default_acl,
 		      struct posix_acl *acl,
+		      struct bch_security_xattrs *sec_xattrs,
 		      subvol_inum snapshot_src,
 		      unsigned flags)
 {
@@ -128,6 +128,10 @@ int bch2_create_trans(struct btree_trans *trans,
 
 		if (acl)
 			try(bch2_set_acl_trans(trans, new_inum, new_inode, acl, ACL_TYPE_ACCESS));
+
+		if (sec_xattrs)
+			try(bch2_apply_security_xattrs_trans(*sec_xattrs,
+						c, trans, new_inum, new_inode));
 	}
 
 	if (!(flags & BCH_CREATE_TMPFILE)) {

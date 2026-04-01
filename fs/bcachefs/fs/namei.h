@@ -3,6 +3,7 @@
 #define _BCACHEFS_NAMEI_H
 
 #include "dirent.h"
+#include "fs/xattr.h"
 
 struct posix_acl;
 
@@ -18,6 +19,7 @@ int bch2_create_trans(struct btree_trans *, subvol_inum,
 		      uid_t, gid_t, umode_t, dev_t,
 		      struct posix_acl *,
 		      struct posix_acl *,
+		      struct bch_security_xattrs *,
 		      subvol_inum, unsigned);
 
 int bch2_link_trans(struct btree_trans *,

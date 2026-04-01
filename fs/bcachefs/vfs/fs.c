@@ -560,11 +560,12 @@ __bch2_create(struct mnt_idmap *idmap,
 	struct bch_inode_info *inode;
 	struct bch_inode_unpacked inode_u;
 	struct posix_acl *default_acl = NULL, *acl = NULL;
+	struct bch_security_xattrs sec_xattrs;
 	subvol_inum inum;
 	struct bch_subvolume subvol;
 	u64 journal_seq = 0;
-	kuid_t kuid;
-	kgid_t kgid;
+	kuid_t kuid = mapped_fsuid(idmap, i_user_ns(&dir->v));
+	kgid_t kgid = mapped_fsgid(idmap, i_user_ns(&dir->v));
 	int ret;
 
 	/*
@@ -584,6 +585,22 @@ __bch2_create(struct mnt_idmap *idmap,
 
 	bch2_inode_init_early(c, &inode_u);
 
+	/*
+	 * Prefill some field of inode so security modules will be able to read them.
+	 */
+	inode->v.i_uid = kuid;
+	inode->v.i_gid = kgid;
+	inode->v.i_mode = mode;
+	inode->v.i_rdev = rdev;
+	memset(&sec_xattrs, 0, sizeof(struct bch_security_xattrs));
+	ret = (flags & BCH_CREATE_SNAPSHOT) ? 0 :
+			bch2_init_security_xattrs(&sec_xattrs,
+				&inode->v, &dir->v,
+		  		&dentry->d_name);
+	if (ret)
+		goto err_lsm;
+
+
 	if (!(flags & BCH_CREATE_TMPFILE))
 		mutex_lock(&dir->ei_update_lock);
 	/*
@@ -594,8 +611,6 @@ __bch2_create(struct mnt_idmap *idmap,
 retry:
 	bch2_trans_begin(trans);
 
-	kuid = mapped_fsuid(idmap, i_user_ns(&dir->v));
-	kgid = mapped_fsgid(idmap, i_user_ns(&dir->v));
 	ret   = bch2_subvol_is_ro_trans(trans, dir->ei_inum.subvol) ?:
 		bch2_create_trans(trans,
 				  inode_inum(dir), &dir_u, &inode_u,
@@ -604,7 +619,7 @@ retry:
 				  from_kuid(i_user_ns(&dir->v), kuid),
 				  from_kgid(i_user_ns(&dir->v), kgid),
 				  mode, rdev,
-				  default_acl, acl, snapshot_src, flags) ?:
+				  default_acl, acl, &sec_xattrs, snapshot_src, flags) ?:
 		bch2_quota_acct(c, bch_qid(&inode_u), Q_INO, 1,
 				KEY_TYPE_QUOTA_PREALLOC);
 	if (unlikely(ret))
@@ -650,13 +665,14 @@ err_before_quota:
 	 */
 	inode = bch2_inode_hash_insert(c, NULL, inode);
 err:
+	bch2_free_security_xattrs(sec_xattrs);
 	posix_acl_release(default_acl);
 	posix_acl_release(acl);
 	return inode;
 err_trans:
 	if (!(flags & BCH_CREATE_TMPFILE))
 		mutex_unlock(&dir->ei_update_lock);
-
+err_lsm:
 	make_bad_inode(&inode->v);
 	iput(&inode->v);
 	inode = ERR_PTR(ret);
@@ -998,7 +1014,7 @@ retry:
 					from_kuid(i_user_ns(&src_dir->v), current_fsuid()),
 					from_kgid(i_user_ns(&src_dir->v), current_fsgid()),
 					S_IFCHR|WHITEOUT_MODE, 0,
-					NULL, NULL, (subvol_inum) { 0 }, 0) ?:
+					NULL, NULL, NULL, (subvol_inum) { 0 }, 0) ?:
 		      bch2_quota_acct(c, bch_qid(whiteout_inode_u), Q_INO, 1,
 				      KEY_TYPE_QUOTA_PREALLOC);
 		if (unlikely(ret))
