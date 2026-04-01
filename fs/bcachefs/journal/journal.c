@@ -233,9 +233,11 @@ journal_error_check_stuck(struct journal *j, int error, unsigned flags)
 	CLASS(bch_log_msg, msg)(c);
 	msg.m.suppress = true; /* only print once, when we go ERO */
 
-	prt_printf(&msg.m, "Journal stuck! Hava a pre-reservation but journal full (error %s)",
+	prt_printf(&msg.m, "Journal stuck! Have a pre-reservation but journal full (error %s)",
 		   bch2_err_str(error));
 	bch2_journal_debug_to_text(&msg.m, j);
+	if (test_bit(JOURNAL_low_on_wb, &j->flags))
+		bch2_btree_write_buffer_to_text(&msg.m, c);
 
 	prt_printf(&msg.m, "Journal pins:\n");
 	bch2_journal_pins_to_text(&msg.m, j);
@@ -790,6 +792,8 @@ int bch2_journal_res_get_slowpath(struct journal *j, struct journal_res *res,
 	CLASS(printbuf, buf)();
 	prt_printf(&buf, bch2_fmt(c, "Journal stuck? Waited for 10 seconds, err %s"), bch2_err_str(ret));
 	bch2_journal_debug_to_text(&buf, j);
+	if (test_bit(JOURNAL_low_on_wb, &j->flags))
+		bch2_btree_write_buffer_to_text(&buf, c);
 	bch2_print_str(c, KERN_ERR, buf.buf);
 
 	closure_wait_event(&j->async_wait,
