@@ -1849,10 +1849,12 @@ static int bch2_vfs_write_inode(struct inode *vinode,
 	return bch2_err_class(ret);
 }
 
+#if 0
 static bool verify_i_size_at_evict;
 
 module_param_named(verify_i_size_at_evict, verify_i_size_at_evict, bool, 0644);
 MODULE_PARM_DESC(verify_i_size_at_evict, "");
+#endif
 
 static void bch2_evict_inode(struct inode *vinode)
 {
@@ -1872,7 +1874,17 @@ static void bch2_evict_inode(struct inode *vinode)
 
 	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) && delete)
 		write_inode_now(&inode->v, true);
-
+	/*
+	 * Disabled: bch2_inode_find_by_inum() starts a new btree_trans, but
+	 * eviction can be called from inside an existing transaction — e.g.
+	 * discard_new_inode() from bch2_inode_hash_insert() during
+	 * bch2_lookup_trans(). The deadlock detector can't see locks held
+	 * by the outer transaction, so cycles involving both transactions
+	 * go undetected. Observed as a three-way deadlock between
+	 * btree_node_write_work, __bch2_unlink, and bch2_lookup (github
+	 * issue #1046).
+	 */
+#if 0
 	if (verify_i_size_at_evict) {
 		BUG_ON(inode_state_read_once(&inode->v) & I_DIRTY);
 
@@ -1903,7 +1915,7 @@ static void bch2_evict_inode(struct inode *vinode)
 			}
 		}
 	}
-
+#endif
 	truncate_inode_pages_final(&inode->v.i_data);
 
 	cancel_delayed_work_sync(&inode->ei_writeback_timer);
