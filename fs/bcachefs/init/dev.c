@@ -202,6 +202,8 @@
  * remaining devices automatically.
  */
 
+#include "alloc/buckets.h"
+#include "asm-generic/bug.h"
 #include "bcachefs.h"
 
 #include "alloc/accounting.h"
@@ -210,9 +212,15 @@
 #include "alloc/check.h"
 #include "alloc/discard.h"
 #include "alloc/replicas.h"
+#include "alloc/foreground.h"
 
+#include "bcachefs_format.h"
+#include "btree/bkey_types.h"
 #include "btree/interior.h"
 
+#include "btree/iter.h"
+#include "btree/types.h"
+#include "btree/write_buffer.h"
 #include "data/ec/init.h"
 #include "data/migrate.h"
 #include "data/reconcile/work.h"
@@ -225,7 +233,14 @@
 #include "init/dev.h"
 #include "init/fs.h"
 
+#include "linux/bitmap.h"
+#include "linux/byteorder/generic.h"
+#include "linux/sched.h"
+#include "linux/sched/signal.h"
+#include "sb/io.h"
 #include "sb/members.h"
+#include "sb/members_format.h"
+#include "util/util.h"
 
 #define x(n)		#n,
 const char * const bch2_dev_read_refs[] = {
@@ -874,7 +889,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 	 */
 	__bch2_dev_offline(c, ca);
 
-	ret = bch2_dev_remove_alloc(c, ca);
+	ret = bch2_dev_remove_alloc(c, ca, 0);
 	if (ret) {
 		prt_printf(err, "bch2_dev_remove_alloc() error: %s\n", bch2_err_str(ret));
 		goto err;
@@ -1227,40 +1242,56 @@ int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags, struct pri
 	return 0;
 }
 
-int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets, struct printbuf *err)
+int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err)
 {
 	u64 old_nbuckets;
-	int ret = 0;
 
-	guard(rwsem_write)(&c->state_lock);
 	old_nbuckets = ca->mi.nbuckets;
 
-	if (nbuckets < ca->mi.nbuckets) {
-		prt_printf(err, "Cannot shrink yet\n");
-		return bch_err_throw(c, EINVAL_dev_resize_shrink);
+	if (new_nbuckets > old_nbuckets) {
+		return bch2_dev_grow(c, ca, new_nbuckets, err);
+	} else if (new_nbuckets < old_nbuckets) {
+		return bch2_dev_shrink(c, ca, new_nbuckets, err);
+	} else {
+		return 0;
+	}
+}
+
+/* requires write state lock */
+int bch2_dev_grow(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err)
+{
+	guard(rwsem_write)(&c->state_lock);
+
+	int ret = 0;
+
+	u64 old_nbuckets = ca->mi.nbuckets;
+
+	if (new_nbuckets <= old_nbuckets) {
+		return 0;
 	}
 
-	bool wakeup_reconcile_pending = nbuckets > ca->mi.nbuckets;
+	/* we have more space -> wake up pending */
+	bool wakeup_reconcile_pending = new_nbuckets > old_nbuckets;
 	struct reconcile_scan s = { .type = RECONCILE_SCAN_pending };
 	if (wakeup_reconcile_pending)
 		try(bch2_set_reconcile_needs_scan(c, s, false));
 
-	if (nbuckets > BCH_MEMBER_NBUCKETS_MAX) {
+	if (new_nbuckets > BCH_MEMBER_NBUCKETS_MAX) {
 		prt_printf(err, "New device size too big (%llu greater than max %u)\n",
-			   nbuckets, BCH_MEMBER_NBUCKETS_MAX);
+			   new_nbuckets, BCH_MEMBER_NBUCKETS_MAX);
 		return bch_err_throw(c, device_size_too_big);
 	}
 
 	if (bch2_dev_is_online(ca) &&
 	    get_capacity(ca->disk_sb.bdev->bd_disk) <
-	    ca->mi.bucket_size * nbuckets) {
+	    ca->mi.bucket_size * new_nbuckets) {
 		prt_printf(err, "New size %llu larger than device size %llu\n",
-			   ca->mi.bucket_size * nbuckets,
+			   ca->mi.bucket_size * new_nbuckets,
 			   get_capacity(ca->disk_sb.bdev->bd_disk));
 		return bch_err_throw(c, device_size_too_small);
 	}
 
-	ret = bch2_dev_buckets_resize(c, ca, nbuckets);
+	ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
 	if (ret) {
 		prt_printf(err, "bch2_dev_buckets_resize() error: %s\n", bch2_err_str(ret));
 		return ret;
@@ -1275,13 +1306,13 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets, struct p
 	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 		guard(mutex)(&c->sb_lock);
 		struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
-		m->nbuckets = cpu_to_le64(nbuckets);
+		m->nbuckets = cpu_to_le64(new_nbuckets);
 
 		bch2_write_super(c);
 	}
 
 	if (ca->mi.freespace_initialized) {
-		ret = __bch2_dev_resize_alloc(ca, old_nbuckets, nbuckets);
+		ret = __bch2_dev_resize_alloc(ca, old_nbuckets, new_nbuckets);
 		if (ret) {
 			prt_printf(err, "__bch2_dev_resize_alloc() error: %s\n", bch2_err_str(ret));
 			return ret;
@@ -1295,12 +1326,232 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets, struct p
 	return 0;
 }
 
+static int drop_sbs_after_cutoff(struct bch_fs *c, struct bch_dev *ca, u64 cutoff) {
+	u64 cutoff_sector = bucket_to_sector(ca, cutoff);
+
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+	guard(mutex)(&c->sb_lock);
+
+	struct bch_sb_layout *layout = &ca->disk_sb.sb->layout;
+
+	u64 max_sectors = 1 << layout->sb_max_size_bits;
+
+	u8 i;
+	/* offsets are sorted in ascending order, see validate_sb_layout() overlapping checks for evidence */
+	for (i = 0; i < layout->nr_superblocks; i++) {
+		u64 offset = le64_to_cpu(layout->sb_offset[i]);
+		if (offset + max_sectors > cutoff_sector) {
+			break;
+		}
+	}
+
+	BUG_ON(i == 0);
+
+	layout->nr_superblocks = i;
+
+	return bch2_write_super(c);
+}
+
+// TODO: make sure everything is caught here. Maybe look at bch2_dev_has_data for this
+// Fore example journals and superblocks might need special handling
+static int tail_is_empty(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err, bool *empty) {
+	struct bpos bp_start = bucket_pos_to_bp_start(ca, POS(ca->dev_idx, new_nbuckets));
+	struct bpos bp_end = bucket_pos_to_bp_start(ca, POS(ca->dev_idx, ca->mi.nbuckets));
+
+	CLASS(btree_trans, trans)(c);
+	CLASS(backpointer_scan_iter, iter)(BTREE_ID_backpointers, bp_start, NULL);
+
+	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
+	wb_maybe_flush_init(&last_flushed);
+
+	struct bkey_s_c_backpointer bp = bch2_bp_scan_iter_peek(trans, &iter, bp_end, &last_flushed);
+
+	try(bkey_err(bp));
+
+	*empty = !bp.k;
+	return 0;
+}
+
+
+// TODO: resume shrink on startup
+int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err) {
+	u64 old_nbuckets = ca->mi.nbuckets;
+
+	int ret = 0;
+
+	scoped_guard(rwsem_write, &c->state_lock) {
+		/* validate shrink size */
+		if (new_nbuckets >= old_nbuckets) {
+			return 0;
+		}
+
+		u64 first_bucket = ca->mi.first_bucket;
+		if (new_nbuckets < first_bucket + BCH_MIN_NR_NBUCKETS) {
+			prt_printf(err, "New device size too small (%llu smaller than min %llu)\n",
+				   new_nbuckets, first_bucket + BCH_MIN_NR_NBUCKETS);
+			return bch_err_throw(c, device_size_too_small);
+		}
+
+		if (ca->mi.target_nbuckets) {
+			prt_printf(err, "Device already resizing (current target: %llu, new target: %llu\n", ca->mi.target_nbuckets, new_nbuckets);
+			return bch_err_throw(c, device_already_resizing);
+		}
+
+		/* write & commit target_nbuckets - also stops new allocations */
+		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+			guard(mutex)(&c->sb_lock);
+			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
+			m->target_nbuckets = cpu_to_le64(new_nbuckets);
+
+			try(bch2_write_super(c));
+		}
+
+		/* close open buckets in the to-be-shrunk region */
+		bch2_open_buckets_stop(c, ca, false, new_nbuckets);
+		bch2_reset_alloc_cursors(c); // avoid churn
+
+		/* trigger reconcile range scan -> should kick off evacuation from range */
+		struct reconcile_scan s = {
+			.type = RECONCILE_SCAN_device, // TODO(performance): make this range-based
+			.dev = ca->dev_idx,
+		};
+		ret = bch2_set_reconcile_needs_scan(c, s, true);
+		if (ret) {
+			prt_printf(err, "Failed to run device reconcile scan: %s\n", bch2_err_str(ret));
+			return ret;
+		}
+	};
+
+	/*  TODO:
+	 *  When we evacuate data, the original is left in place and marked as cached, just like when moving it for target/compression regions.
+	 *  We need to somehow handle this:
+	 *  - Maybe we can just not count it in tail_is_empty() and just shrink it away - but this would likely leave some metadata incorrect
+	 *  - We could just make it completely remove the data if it is evacuating, instead of marking it as cached
+	 *  - We could make passes that check for cached buckets in the tail, and close/remove those - we may actually need to handle buckets anyways
+	 */
+
+	/* wait for to-be-shrunk region to be empty */
+	while (true) {
+		bool empty = false;
+		try(tail_is_empty(c, ca, new_nbuckets, err, &empty));
+
+		/* do a definitive check */
+		if (empty) {
+			{
+				CLASS(btree_trans, trans)(c);
+				try(bch2_btree_write_buffer_flush_sync(trans));
+			}
+
+			try(tail_is_empty(c, ca, new_nbuckets, err, &empty));
+			if (empty) {
+				break;
+			}
+		}
+
+		/* make sure reconcile is actually running */
+		bch2_reconcile_wakeup(c);
+
+		if (signal_pending(current))
+			return -EINTR;
+
+		schedule_timeout_killable(HZ/2);
+	}
+
+
+	scoped_guard(rwsem_write, &c->state_lock) {
+		/* zero target_nbuckets */
+		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+			guard(mutex)(&c->sb_lock);
+			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
+			m->target_nbuckets = 0;
+
+			bch2_write_super(c);
+		}
+
+		/* flush interior updates - mirroring dev remove path */
+		bch2_btree_interior_updates_flush(c);
+
+		/* flush journal - mirroring dev remove path */
+		bch2_journal_flush_all_pins(&c->journal);
+
+		ret = bch2_journal_flush_device_pins(&c->journal, ca->dev_idx);
+		if (ret) {
+			prt_printf(err, "bch2_journal_flush_device_pins() error: %s\n", bch2_err_str(ret));
+			return ret;
+		}
+
+		ret = bch2_journal_flush(&c->journal);
+		if (ret) {
+			prt_printf(err, "bch2_journal_flush() error: %s\n", bch2_err_str(ret));
+			return ret;
+		}
+
+		/* re-check that tail is really empty */
+		bool empty = false;
+		try(tail_is_empty(c, ca, new_nbuckets, err, &empty));
+		if (!empty) {
+			prt_printf(err, "Shrink failed: still has data\n");
+			return -EBUSY;
+		}
+
+		/* drop references to now-truncated superblock copies */
+		ret = drop_sbs_after_cutoff(c, ca, new_nbuckets);
+		if (ret) {
+			prt_printf(err, "Error dropping superblocks after cutoff: %s\n", bch2_err_str(ret));
+			return ret;
+		}
+
+		/* write & commit new_nbuckets */
+		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+			guard(mutex)(&c->sb_lock);
+			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
+			m->nbuckets = cpu_to_le64(new_nbuckets);
+
+			try(bch2_write_super(c));
+		}
+
+
+		/* update accounting info - has to happen before truncating alloc info */
+		ret = bch2_dev_truncate_accounting(c, ca, old_nbuckets, new_nbuckets);
+		if (ret) {
+			prt_printf(err, "error updating accounting info: %s\n", bch2_err_str(ret));
+			return ret;
+		}
+
+		/* truncate alloc info */
+		ret = bch2_dev_remove_alloc(c, ca, new_nbuckets);
+		if (ret) {
+			prt_printf(err, "error truncating alloc info: %s\n", bch2_err_str(ret));
+			return ret;
+		}
+
+		/* resize buckets */
+		ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
+		if (ret) {
+			prt_printf(err, "bch2_dev_buckets_resize() error: %s\n", bch2_err_str(ret));
+			return ret;
+		}
+
+		// TODO: figure out what parts of this path still need doing
+		// if (ca->mi.freespace_initialized) {
+		// 	ret = __bch2_dev_resize_alloc(ca, old_nbuckets, new_nbuckets);
+		// 	if (ret) {
+		// 		prt_printf(err, "__bch2_dev_resize_alloc() error: %s\n", bch2_err_str(ret));
+		// 		return ret;
+		// 	}
+		// }
+
+		bch2_recalc_capacity(c);
+	}
+	return 0;
+}
+
 /* Resize on mount */
 
 int __bch2_dev_resize_alloc(struct bch_dev *ca, u64 old_nbuckets, u64 new_nbuckets)
 {
 	struct bch_fs *c = ca->fs;
-	u64 v[3] = { new_nbuckets - old_nbuckets, 0, 0 };
+	s64 v[3] = { (s64) new_nbuckets - (s64) old_nbuckets, 0, 0 };
 
 	return bch2_trans_commit_do(ca->fs, NULL, NULL, 0,
 			bch2_disk_accounting_mod2(trans, false, v, dev_data_type,

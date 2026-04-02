@@ -7,6 +7,7 @@ int bch2_invalidate_stripe_to_dev(struct btree_trans *, struct btree_iter *,
 				  unsigned, struct printbuf *);
 int bch2_dev_remove_stripes(struct bch_fs *, unsigned, unsigned, struct printbuf *);
 
+void bch2_ec_stop_dev_cutoff(struct bch_fs *, struct bch_dev *, u64);
 void bch2_ec_stop_dev(struct bch_fs *, struct bch_dev *);
 void bch2_fs_ec_stop(struct bch_fs *);
 void bch2_fs_ec_flush(struct bch_fs *);
@@ -22,4 +23,3 @@ int bch2_bucket_nr_stripes(struct btree_trans *, struct bpos);
 int bch2_check_stripe_refs(struct btree_trans *);
 
 #endif /* _BCACHEFS_DATA_EC_INIT_H */
-

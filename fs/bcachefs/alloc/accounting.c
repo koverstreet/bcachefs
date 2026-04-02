@@ -1,14 +1,21 @@
 // SPDX-License-Identifier: GPL-2.0
 
+#include "alloc/background.h"
+#include "alloc/format.h"
 #include "bcachefs.h"
+#include "bcachefs_format.h"
 #include "bcachefs_ioctl.h"
+#include "alloc/accounting_format.h"
 
 #include "alloc/accounting.h"
 #include "alloc/buckets.h"
 #include "alloc/replicas.h"
 
+#include "btree/bkey_types.h"
 #include "btree/cache.h"
+#include "btree/iter.h"
 #include "btree/journal_overlay.h"
+#include "btree/types.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
 
@@ -1172,6 +1179,54 @@ int bch2_accounting_read(struct bch_fs *c)
 	 * across it - the commit path takes mark_lock itself.
 	 */
 	return accounting_read_mem_fixups(trans);
+}
+
+int bch2_dev_truncate_accounting(struct bch_fs *c, struct bch_dev *ca, u64 old_nbuckets, u64 cutoff) {
+	struct bpos start = POS(ca->dev_idx, cutoff);
+	struct bpos end = POS(ca->dev_idx, old_nbuckets);
+
+	CLASS(btree_trans, trans)(c);
+
+	return commit_do(trans, NULL, NULL, 0, ({
+		s64 delta[BCH_DATA_NR][3] = {};
+		s64 keys = 0;
+		struct bkey_s_c k;
+		int ret = 0;
+
+		for_each_btree_key_max_norestart(trans, iter, BTREE_ID_alloc, start, end, BTREE_ITER_prefetch, k, ret) {
+			if (!k.k->type)
+				continue;
+
+			struct bch_alloc_v4 _alloc;
+			const struct bch_alloc_v4 *alloc = bch2_alloc_to_v4(k, &_alloc);
+
+			enum bch_data_type data_type = alloc->data_type;
+
+			delta[data_type][0] -= 1;
+			delta[data_type][1] -= bch2_bucket_sectors(*alloc);
+			delta[data_type][2] -= bch2_bucket_sectors_fragmented(ca, *alloc);
+
+			s64 unstriped = bch2_bucket_sectors_unstriped(*alloc);
+			if (unstriped) {
+				delta[BCH_DATA_unstriped][0] -= 1;
+				delta[BCH_DATA_unstriped][1] -= unstriped;
+			}
+
+			keys++;
+		}
+		if (!ret) {
+			delta[BCH_DATA_free][0] -= (old_nbuckets - cutoff) - keys;
+
+			for (unsigned type = 0; type < BCH_DATA_NR; type++) {
+				ret = bch2_disk_accounting_mod2(trans, false, delta[type], dev_data_type, .dev = ca->dev_idx, .data_type = type);
+
+				if (ret)
+					break;
+			}
+		}
+
+		ret;
+	}));
 }
 
 int bch2_dev_usage_remove(struct bch_fs *c, struct bch_dev *ca)

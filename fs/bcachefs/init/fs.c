@@ -321,7 +321,7 @@ static void __bch2_fs_read_only(struct bch_fs *c)
 
 	bch2_maybe_schedule_btree_bitmap_gc_stop(c);
 	bch2_fs_ec_stop(c);
-	bch2_open_buckets_stop(c, NULL, true);
+	bch2_open_buckets_stop(c, NULL, true, 0);
 	bch2_reconcile_stop(c);
 	bch2_copygc_stop(c);
 	bch2_btree_write_buffer_stop(c);

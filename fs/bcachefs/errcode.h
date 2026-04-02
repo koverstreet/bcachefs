@@ -126,7 +126,6 @@
 	x(ENOMEM,			ENOMEM_backpointer_mismatches_bitmap)	\
 	x(EIO,				compression_workspace_not_initialized)	\
 	x(ENOMEM,			ENOMEM_bucket_gens)			\
-	x(ENOMEM,			ENOMEM_buckets_nouse)			\
 	x(ENOMEM,			ENOMEM_usage_init)			\
 	x(ENOMEM,			ENOMEM_btree_node_read_all_replicas)	\
 	x(ENOMEM,			ENOMEM_btree_node_reclaim)		\
@@ -280,6 +279,7 @@
 	x(EINVAL,			bucket_size_too_small)			\
 	x(EINVAL,			device_size_too_small)			\
 	x(EINVAL,			device_size_too_big)			\
+	x(EINVAL,			device_already_resizing)		\
 	x(EINVAL,			device_not_a_member_of_filesystem)	\
 	x(EINVAL,			device_has_been_removed)		\
 	x(EINVAL,			device_splitbrain)			\
@@ -293,7 +293,6 @@
 	x(EINVAL,			opt_parse_error)			\
 	x(EINVAL,			remove_with_metadata_missing_unimplemented)\
 	x(EINVAL,			remove_would_lose_data)			\
-	x(EINVAL,			no_resize_with_buckets_nouse)		\
 	x(EINVAL,			inode_unpack_error)			\
 	x(EINVAL,			inode_not_unlinked)			\
 	x(EINVAL,			inode_has_child_snapshot)		\

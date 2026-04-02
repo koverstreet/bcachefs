@@ -1199,12 +1199,12 @@ bool bch2_bkey_in_target(struct bch_fs *c, struct bkey_s_c k, unsigned target)
 	return true;
 }
 
-bool bch2_bkey_has_dev_bad_or_evacuating(struct bch_fs *c, struct bkey_s_c k)
+bool bch2_bkey_has_ptr_bad_or_evacuating(struct bch_fs *c, struct bkey_s_c k)
 {
 	guard(rcu)();
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	bkey_for_each_ptr(ptrs, ptr)
-		if (bch2_dev_bad_or_evacuating_rcu(c, ptr->dev))
+		if (bch2_ptr_bad_or_evacuating_rcu(c, ptr))
 			return true;
 	return false;
 }
@@ -1349,6 +1349,8 @@ static bool maybe_drop_cached_ptr(struct bch_fs *c, struct bch_inode_opts *opts,
 			return drop_cached_pointer_trace(c, k, ptr, "pointer is stale");
 		if (!ca || ca->mi.state == BCH_MEMBER_STATE_evacuating)
 			return drop_cached_pointer_trace(c, k, ptr, "device bad or evacuating");
+		if (ca->mi.target_nbuckets && ca->mi.target_nbuckets <= sector_to_bucket(ca, ptr->offset))
+			return drop_cached_pointer_trace(c, k, ptr, "past shrink cutoff");
 
 		unsigned target = opts->promote_target ?: opts->foreground_target;
 		if (target && !bch2_dev_in_target_rcu(c, ptr->dev, target))

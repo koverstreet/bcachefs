@@ -1243,8 +1243,7 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 		if (is_empty_delta < 0 &&
 		    (new_a->data_type != BCH_DATA_sb &&
 		     new_a->data_type != BCH_DATA_journal) &&
-		    !bch2_bucket_is_open_safe(c, new.k->p.inode, new.k->p.offset) &&
-		    !bch2_bucket_nouse(ca, new.k->p.offset)) {
+		    !bch2_bucket_is_open_safe(c, new.k->p.inode, new.k->p.offset)) {
 			CLASS(printbuf, buf)();
 			log_fsck_err_on(true, trans,
 				alloc_key_bucket_nonempty_to_empty_not_open,
@@ -1399,9 +1398,9 @@ fsck_err:
 
 /* device removal */
 
-int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca)
+int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca, u64 cutoff)
 {
-	struct bpos start	= POS(ca->dev_idx, 0);
+	struct bpos start	= POS(ca->dev_idx, cutoff);
 	struct bpos end		= POS(ca->dev_idx, U64_MAX);
 	int ret;
 
@@ -1409,7 +1408,7 @@ int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca)
 	 * We clear the LRU and need_discard btrees first so that we don't race
 	 * with bch2_do_invalidates() and bch2_do_discards_async()
 	 */
-	ret =   bch2_dev_remove_lrus(c, ca) ?:
+	ret =   bch2_dev_remove_lrus(c, ca, cutoff) ?:
 		bch2_btree_delete_range(c, BTREE_ID_need_discard, start, end,
 					BTREE_TRIGGER_norun) ?:
 		bch2_btree_delete_range(c, BTREE_ID_freespace, start, end,
@@ -1420,7 +1419,7 @@ int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca)
 					BTREE_TRIGGER_norun) ?:
 		bch2_btree_delete_range(c, BTREE_ID_alloc, start, end,
 					BTREE_TRIGGER_norun) ?:
-		bch2_dev_usage_remove(c, ca);
+		((cutoff == 0) ? bch2_dev_usage_remove(c, ca) : 0);
 	bch_err_msg_dev(ca, ret, "removing dev alloc info");
 	return ret;
 }
@@ -1602,7 +1601,7 @@ void bch2_dev_allocator_remove(struct bch_fs *c, struct bch_dev *ca)
 	 */
 	bch2_recalc_capacity(c);
 
-	bch2_open_buckets_stop(c, ca, false);
+	bch2_open_buckets_stop(c, ca, false, 0);
 
 	/*
 	 * Wake up threads that were blocked on allocation, so they can notice
