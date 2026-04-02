@@ -1567,7 +1567,7 @@ void bch2_reconcile_stop(struct bch_fs *c)
 	c->reconcile.thread = NULL;
 
 	if (p) {
-		/* for sychronizing with bch2_reconcile_wakeup() */
+		/* for synchronizing with bch2_reconcile_wakeup() */
 		synchronize_rcu();
 
 		kthread_stop(p);

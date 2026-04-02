@@ -422,7 +422,7 @@ void bch2_prt_tab_rjust(struct printbuf *buf)
  * @str:	string to print
  * @count:	number of bytes to print
  *
- * The following contol characters are handled as so:
+ * The following control characters are handled as so:
  *   \n: prt_newline	newline that obeys current indent level
  *   \t: prt_tab	advance to next tabstop
  *   \r: prt_tab_rjust	advance to next tabstop, with right justification

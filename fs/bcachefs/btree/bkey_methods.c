@@ -90,7 +90,7 @@ void bch2_set_bkey_error(struct bch_fs *c, struct bkey_i *k, enum bch_key_type_e
 {
 	k->k.type = KEY_TYPE_error;
 
-	if (!bch2_request_incompat_feature(c, bcachefs_metadata_version_extented_key_type_error)) {
+	if (!bch2_request_incompat_feature(c, bcachefs_metadata_version_extended_key_type_error)) {
 		set_bkey_val_bytes(&k->k, sizeof(struct bch_error));
 
 		struct bkey_i_error *e = bkey_i_to_error(k);
@@ -390,7 +390,7 @@ bool bch2_bkey_merge(struct bch_fs *c, struct bkey_s l, struct bkey_s_c r)
 	const struct bkey_ops *ops = bch2_bkey_type_ops(l.k->type);
 
 	return ops->key_merge &&
-		bch2_bkey_maybe_mergable(l.k, r.k) &&
+		bch2_bkey_maybe_mergeable(l.k, r.k) &&
 		(u64) l.k->size + r.k->size <= KEY_SIZE_MAX &&
 		!static_branch_unlikely(&bch2_key_merging_disabled) &&
 		ops->key_merge(c, l, r);

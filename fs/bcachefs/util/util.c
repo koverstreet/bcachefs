@@ -513,7 +513,7 @@ void bch2_ratelimit_increment(struct bch_ratelimit *d, u64 done)
 /* pd controller: */
 
 /*
- * Updates pd_controller. Attempts to scale inputed values to units per second.
+ * Updates pd_controller. Attempts to scale inputted values to units per second.
  * @target: desired value
  * @actual: current value
  *
