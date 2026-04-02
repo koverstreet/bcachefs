@@ -58,6 +58,14 @@ struct journal_keys {
 	atomic_t		ref;
 	bool			initial_ref_held;
 
+	/*
+	 * Keys inserted before journal_keys_sort() (e.g. from
+	 * bch2_dev_usage_init during offline device add). These survive
+	 * the reset in journal_keys_sort and get merged into the main
+	 * array after sorting.
+	 */
+	DARRAY(struct journal_key) pre_sort;
+
 	struct mutex		overwrite_lock;
 	DARRAY(struct journal_key_range_overwritten) overwrites;
 };

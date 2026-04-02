@@ -282,6 +282,16 @@ int bch2_journal_key_insert_take(struct bch_fs *c, enum btree_id id,
 		.allocated_k	= k,
 	};
 	struct journal_keys *keys = &c->journal_keys;
+
+	/*
+	 * Before journal_keys_sort (btree not yet running), stash keys
+	 * in pre_sort so they survive the reset. They get merged into
+	 * the main array after sorting.
+	 */
+	if (!test_bit(BCH_FS_btree_running, &c->flags))
+		return darray_push(&keys->pre_sort, n)
+			? bch_err_throw(c, ENOMEM_journal_key_insert) : 0;
+
 	size_t idx = bch2_journal_key_search(keys, id, level, k->k.p);
 
 	BUG_ON(test_bit(BCH_FS_may_go_rw, &c->flags));
@@ -724,6 +734,9 @@ void bch2_journal_keys_put(struct bch_fs *c)
 	keys->data = NULL;
 	keys->nr = keys->gap = keys->size = 0;
 
+	darray_for_each(keys->pre_sort, i)
+		kfree(i->allocated_k);
+	darray_exit(&keys->pre_sort);
 	darray_exit(&keys->overwrites);
 
 	struct journal_replay **i;
@@ -861,6 +874,16 @@ int bch2_journal_keys_sort(struct bch_fs *c)
 			}
 		}
 	}
+
+	/*
+	 * Merge in any pre-sort keys (inserted before journal_keys_sort,
+	 * e.g. from dev_usage_init during offline device add). These
+	 * were saved by bch2_journal_keys_reset instead of being freed.
+	 * Ownership transfers to the main array.
+	 */
+	darray_for_each(keys->pre_sort, i)
+		darray_push(keys, *i);
+	keys->pre_sort.nr = 0;
 
 	__journal_keys_sort(keys);
 	keys->gap = keys->nr;
