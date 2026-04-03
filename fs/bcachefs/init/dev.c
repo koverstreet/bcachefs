@@ -686,6 +686,17 @@ static int __bch2_dev_attach_bdev(struct bch_fs *c, struct bch_dev *ca,
 	if (model.nr && model.data[model.nr - 1] == '\n')
 		model.data[--model.nr] = '\0';
 
+	CLASS(darray_char, serial)();
+	darray_make_room(&serial, 128);
+
+	CLASS(printbuf, serial_path)();
+	prt_printf(&serial_path, "/sys/block/%s/device/serial", name.buf);
+
+	read_file_str(serial_path.buf, &serial);
+
+	if (serial.nr && serial.data[serial.nr - 1] == '\n')
+		serial.data[--serial.nr] = '\0';
+
 	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 		guard(mutex)(&c->sb_lock);
 		struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
@@ -694,6 +705,9 @@ static int __bch2_dev_attach_bdev(struct bch_fs *c, struct bch_dev *ca,
 
 		if (model.nr)
 			strtomem_pad(m->device_model, model.data, '\0');
+
+		if (serial.nr)
+			strtomem_pad(m->device_serial, serial.data, '\0');
 	}
 
 	/* Commit: */

@@ -75,6 +75,7 @@ struct bch_member {
 	__u8			device_name[16] __nonstring;
 	__u8			device_model[64] __nonstring;
 	__le64			flush_errors;
+	__u8			device_serial[64] __nonstring;
 };
 
 /*
