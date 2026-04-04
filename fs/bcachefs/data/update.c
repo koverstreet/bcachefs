@@ -16,6 +16,7 @@
 #include "data/move.h"
 #include "data/nocow_locking.h"
 #include "data/reconcile/trigger.h"
+#include "data/reconcile/work.h"
 #include "data/update.h"
 #include "data/write.h"
 
@@ -580,6 +581,42 @@ static int data_update_index_update_nowrite(struct btree_trans *trans,
 
 		data_update_index_update_key_nowrite(trans, u, &iter, k, &msg.m);
 	}));
+}
+
+/*
+ * EC allocation failed — the write never happened, but the extent
+ * still needs erasure coding. Mark it pending so reconcile retries
+ * from the pending list instead of the main scan.
+ */
+static int __data_update_ec_alloc_failed(struct btree_trans *trans,
+					 struct data_update *u)
+{
+	struct bch_fs *c = trans->c;
+	struct bkey_s_c old = bkey_i_to_s_c(u->k.k);
+
+	return for_each_btree_key_commit(trans, iter, u->btree_id,
+			bkey_start_pos(old.k),
+			BTREE_ITER_slots|BTREE_ITER_intent,
+			k, NULL, NULL,
+			BCH_TRANS_COMMIT_no_check_rw|
+			BCH_TRANS_COMMIT_no_enospc, ({
+		if (bkey_le(old.k->p, bkey_start_pos(k.k)))
+			break;
+
+		if (!bch2_extents_match(c, k, old))
+			continue;
+
+		bch2_extent_reconcile_pending_mod(trans, &iter, 0, k, true);
+	}));
+}
+
+void bch2_data_update_ec_alloc_failed(struct data_update *u)
+{
+	struct bch_fs *c = u->op.c;
+	CLASS(btree_trans, trans)(c);
+	int ret = __data_update_ec_alloc_failed(trans, u);
+	if (ret)
+		bch_err_fn(c, ret);
 }
 
 void bch2_data_update_read_done(struct data_update *u)
