@@ -1053,8 +1053,6 @@ static bool may_reuse_stripe(struct bch_fs *c,
 			live_data++;
 		}
 
-	pr_info("%px: live_data %u new->nr_data %u", new, live_data, new->nr_data);
-
 	/* live data blocks (including moving) must fit with room for at least one new block */
 	if (live_data + 1 > new->nr_data)
 		return false;
