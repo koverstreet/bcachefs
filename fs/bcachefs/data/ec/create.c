@@ -1160,8 +1160,7 @@ static int stripe_reuse(struct btree_trans *trans, struct ec_stripe_new *s)
 		return ret ?: bch_err_throw(c, stripe_alloc_blocked);
 
 	init_new_stripe_from_old(c, s, false);
-	return ret;
-
+	return 0;
 }
 
 static int stripe_idx_alloc(struct btree_trans *trans, struct ec_stripe_new *s)
