@@ -296,6 +296,7 @@ static inline struct alloc_request *alloc_request_get(struct btree_trans *trans,
 	req->watermark		= watermark;
 	req->flags		= flags;
 	req->devs_have		= devs_have;
+	req->have_cache		= false;
 	req->trace.nr		= 0;
 	return req;
 }
