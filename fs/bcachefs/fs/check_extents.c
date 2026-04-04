@@ -172,7 +172,6 @@ static int overlapping_extents_found(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf)();
-	int ret = 0;
 
 	BUG_ON(bkey_le(pos1, bkey_start_pos(&pos2)));
 
@@ -217,22 +216,33 @@ static int overlapping_extents_found(struct btree_trans *trans,
 		return bch_err_throw(c, internal_fsck_err);
 	}
 
-	prt_printf(&buf, "\noverwriting %s extent",
-		   pos1.snapshot >= pos2.p.snapshot ? "first" : "second");
+	bool first = (k1.k->type == KEY_TYPE_extent_whiteout ||
+		      k2.k->type == KEY_TYPE_extent_whiteout)
+		? k1.k->type == KEY_TYPE_extent_whiteout
+		: pos1.snapshot >= pos2.p.snapshot;
 
-	if (fsck_err(trans, extent_overlapping, "%s", buf.buf)) {
+	prt_printf(&buf, "\noverwriting %s extent", first ? "first" : "second");
+
+	if (ret_fsck_err(trans, extent_overlapping, "%s", buf.buf)) {
 		struct btree_iter *old_iter = &iter1;
 
-		if (pos1.snapshot < pos2.p.snapshot) {
+		if (!first) {
 			old_iter = &iter2;
 			swap(k1, k2);
 		}
 
-		trans->extra_disk_res += bch2_bkey_sectors_compressed(c, k2);
+		if (k1.k->type == KEY_TYPE_extent_whiteout) {
+			struct bkey_i *n = errptr_try(bch2_bkey_make_mut(trans,
+								old_iter, &k1,
+								BTREE_UPDATE_internal_snapshot_node));
+			n->k.type = KEY_TYPE_whiteout;
+		} else {
+			trans->extra_disk_res += bch2_bkey_sectors_compressed(c, k2);
 
-		try(bch2_trans_update_extent_overwrite(trans, old_iter,
-					BTREE_UPDATE_internal_snapshot_node,
-					k1, k2));
+			try(bch2_trans_update_extent_overwrite(trans, old_iter,
+						BTREE_UPDATE_internal_snapshot_node,
+						k1, k2));
+		}
 		try(bch2_trans_commit(trans, res, NULL, BCH_TRANS_COMMIT_no_enospc));
 
 		*fixed = true;
@@ -247,17 +257,17 @@ static int overlapping_extents_found(struct btree_trans *trans,
 			/*
 			 * We overwrote the first extent in pos2's snapshot:
 			 */
-			ret = snapshots_seen_add_inorder(c, pos1_seen, pos2.p.snapshot);
+			try(snapshots_seen_add_inorder(c, pos1_seen, pos2.p.snapshot));
 		} else {
 			/*
 			 * We overwrote the second extent - restart
 			 * check_extent() from the top:
 			 */
-			ret = bch_err_throw(c, transaction_restart_nested);
+			return bch_err_throw(c, transaction_restart_nested);
 		}
 	}
-fsck_err:
-	return ret;
+
+	return 0;
 }
 
 static int check_overlapping_extents(struct btree_trans *trans,
