@@ -549,7 +549,7 @@ int bch2_ec_read_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 	}
 
 	/* Don't hold btree locks for stripe buffer allocations, or IO */
-	bch2_trans_unlock(trans);
+	bch2_trans_unlock_long(trans);
 
 	ret = bch2_ec_stripe_buf_init(c, buf, offset, bio_sectors(&rbio->bio), NULL);
 	if (ret) {
