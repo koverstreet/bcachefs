@@ -26,6 +26,7 @@
 #include "alloc/discard.h"
 #include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
+#include "alloc/zone.h"
 
 #include "btree/iter.h"
 #include "btree/update.h"
@@ -555,6 +556,22 @@ again:
 
 	if (waiting)
 		closure_wake_up(&c->allocator.freelist_wait);
+
+	/*
+	 * Zone-aware allocation for rotational devices:
+	 * Bias the allocation cursor toward the zone matching this data type.
+	 * The freelist scan will still wrap around if no buckets are found
+	 * in the preferred zone, so this is a soft preference, not a hard
+	 * constraint.
+	 */
+	if (ca->mi.rotational && !req->zone_cursor_set) {
+		enum bch_zone zone = bch2_select_write_zone(req->data_type,
+				req->data_type == BCH_DATA_user &&
+				req->watermark == BCH_WATERMARK_copygc);
+		bch2_set_alloc_cursor_zone(ca, zone, req->btree_bitmap);
+		req->zone_cursor_set = true;
+	}
+
 alloc:
 	ob = likely(freespace)
 		? bch2_bucket_alloc_freelist(trans, req)
@@ -973,6 +990,12 @@ void bch2_open_buckets_stop(struct bch_fs *c, struct bch_dev *ca,
 	bch2_writepoint_stop(c, ca, ec, &c->copygc.write_point);
 	bch2_writepoint_stop(c, ca, ec, &a->reconcile_write_point);
 	bch2_writepoint_stop(c, ca, ec, &a->btree_write_point);
+
+	/* Stop zone-segregated write points */
+	for (i = 0; i < BCH_ZONE_NR; i++) {
+		bch2_writepoint_stop(c, ca, ec, &a->zone_write_points[i]);
+		bch2_writepoint_stop(c, ca, ec, &c->copygc.zone_write_points[i]);
+	}
 
 	scoped_guard(mutex, &c->btree.reserve_cache.lock)
 		while (c->btree.reserve_cache.nr) {
@@ -1400,6 +1423,12 @@ void bch2_fs_allocator_foreground_init(struct bch_fs *c)
 	writepoint_init(&a->btree_write_point,		BCH_DATA_btree);
 	writepoint_init(&a->reconcile_write_point,	BCH_DATA_user);
 	writepoint_init(&c->copygc.write_point,		BCH_DATA_user);
+
+	/* Zone-segregated write points */
+	for (unsigned z = 0; z < BCH_ZONE_NR; z++) {
+		writepoint_init(&a->zone_write_points[z], BCH_DATA_user);
+		writepoint_init(&c->copygc.zone_write_points[z], BCH_DATA_user);
+	}
 
 	for (wp = a->write_points;
 	     wp < a->write_points + a->write_points_nr; wp++) {

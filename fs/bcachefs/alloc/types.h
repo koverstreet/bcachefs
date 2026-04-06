@@ -7,6 +7,8 @@
 
 #include "init/dev_types.h"
 
+#include "alloc/zone_types.h"
+
 #include "util/clock_types.h"
 #include "util/fifo.h"
 
@@ -173,6 +175,13 @@ struct bch_fs_allocator {
 
 	struct write_point	btree_write_point;
 	struct write_point	reconcile_write_point;
+
+	/*
+	 * Zone-segregated write points for HDD-optimized allocation.
+	 * Each zone gets its own write stream to prevent mixing data
+	 * of different temperatures in the same buckets.
+	 */
+	struct write_point	zone_write_points[BCH_ZONE_NR];
 
 	struct mutex		discard_lock;
 };

@@ -15,6 +15,7 @@
 #include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
 #include "alloc/replicas.h"
+#include "alloc/zone.h"
 
 #include "btree/cache.h"
 #include "btree/check.h"
@@ -224,6 +225,7 @@ BCH_PERSISTENT_COUNTERS()
 rw_attribute(label);
 
 read_attribute(copy_gc_wait);
+read_attribute(zone_stats);
 
 read_attribute(reconcile_status);
 read_attribute(reconcile_scan_pending);
@@ -343,6 +345,9 @@ SHOW(bch2_fs)
 
 	if (attr == &sysfs_copy_gc_wait)
 		bch2_copygc_wait_to_text(out, c);
+
+	if (attr == &sysfs_zone_stats)
+		bch2_fs_zone_stats_to_text(out, c);
 
 	if (attr == &sysfs_reconcile_status)
 		bch2_reconcile_status_to_text(out, c);
@@ -661,6 +666,7 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_gc_gens_pos,
 
 	&sysfs_copy_gc_wait,
+	&sysfs_zone_stats,
 
 	&sysfs_moving_ctxts,
 	&sysfs_recent_counters,

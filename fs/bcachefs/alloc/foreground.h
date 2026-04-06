@@ -36,6 +36,7 @@ struct alloc_request {
 	bool			will_retry_all_devices:1;
 	bool			will_retry_target_devices:1;
 	bool			will_retry_set_devices:1;
+	bool			zone_cursor_set:1;
 	enum bch_watermark	watermark;
 	enum bch_write_flags	flags;
 	enum bch_data_type	data_type;
