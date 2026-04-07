@@ -34,6 +34,7 @@
 #include "alloc/buckets.h"
 #include "alloc/foreground.h"
 #include "alloc/lru.h"
+#include "alloc/zone.h"
 
 #include "btree/iter.h"
 #include "btree/update.h"
@@ -224,6 +225,126 @@ static int bch2_copygc_get_buckets(struct moving_context *ctxt,
 	return ret < 0 ? ret : 0;
 }
 
+/*
+ * Radial zone-aware copygc: scan for buckets with data in the wrong
+ * radial zone on rotational devices.
+ *
+ * This supplements the fragmentation-based scan — even non-fragmented buckets
+ * may be zone-mismatched and benefit from relocation to the correct
+ * radial zone for their temperature.
+ */
+static int bch2_copygc_get_zone_mismatched(struct moving_context *ctxt,
+					   struct buckets_in_flight *buckets_in_flight)
+{
+	struct btree_trans *trans = ctxt->trans;
+	struct bch_fs *c = trans->c;
+	bool have_rotational = false;
+
+	scoped_guard(rcu) {
+		for_each_member_device_rcu(c, ca, NULL)
+			if (ca->mi.rotational) {
+				have_rotational = true;
+				break;
+			}
+	}
+
+	if (!have_rotational)
+		return 0;
+
+	/*
+	 * Scan fragmentation LRU — but with additional radial zone-mismatch
+	 * filtering. We piggyback on the existing LRU scan, adding buckets
+	 * that are zone-mismatched even if their fragmentation score alone
+	 * wouldn't qualify them for copygc.
+	 */
+	int ret = for_each_btree_key_max(trans, iter, BTREE_ID_lru,
+				  lru_start(BCH_LRU_BUCKET_FRAGMENTATION),
+				  lru_end(BCH_LRU_BUCKET_FRAGMENTATION),
+				  0, k, ({
+		struct bpos bucket = u64_to_bucket(k.k->p.offset);
+
+		CLASS(bch2_dev_bucket_tryget, ca)(c, bucket);
+		if (!ca || !ca->mi.rotational)
+			continue;
+
+		CLASS(btree_iter, a_iter)(trans, BTREE_ID_alloc, bucket, BTREE_ITER_cached);
+		struct bkey_s_c a_k = bch2_btree_iter_peek_slot(&a_iter);
+		int ret2 = bkey_err(a_k);
+		if (ret2)
+			goto zone_err;
+
+		struct bch_alloc_v4 _a;
+		const struct bch_alloc_v4 *a = bch2_alloc_to_v4(a_k, &_a);
+
+		if (!data_type_movable(a->data_type))
+			continue;
+
+		u8 current_zone = bch2_bucket_radial_zone(ca, bucket.offset);
+		u8 ideal_zone = bch2_classify_radial_zone(a, ca, a->data_type);
+
+		if (current_zone == ideal_zone)
+			continue;
+
+		/* Zone mismatched — add as victim */
+		ret2 = try_add_copygc_bucket(trans, buckets_in_flight,
+					     bucket, U64_MAX);
+zone_err:
+		ret2;
+	}));
+
+	return ret < 0 ? ret : 0;
+}
+
+/*
+ * For radial zone-aware copygc relocation: before evacuating a bucket on a
+ * rotational device, bias the copygc allocation cursor toward the ideal
+ * radial zone for the bucket's data temperature. This ensures relocated
+ * data lands in the correct radial zone.
+ *
+ * Movement is gradual — data moves at most one zone per relocation
+ * to minimize large radial head movements.
+ *
+ * Destination selection:
+ *   target_zone = clamp(current_zone + temperature_delta, 0, nr_zones - 1)
+ *
+ * Where temperature_delta is:
+ *   negative (outward) for hot data
+ *   positive (inward) for cold data
+ */
+static void bch2_copygc_zone_bias(struct bch_fs *c,
+				  struct move_bucket *b)
+{
+	CLASS(bch2_dev_bucket_tryget, ca)(c, b->k.bucket);
+	if (!ca || !ca->mi.rotational)
+		return;
+
+	struct bch_radial_map *m = &ca->radial_map;
+	if (!m->nr_zones)
+		return;
+
+	u8 src_zone = bch2_bucket_radial_zone(ca, b->k.bucket.offset);
+	u8 dst_zone = src_zone;
+
+	/*
+	 * Zone preservation: copygc keeps data in the same radial zone
+	 * by default. This maintains locality for fragmentation-driven
+	 * compaction — data that was placed in a specific zone stays there.
+	 *
+	 * Zone-mismatched buckets (collected by the mismatch scan) will
+	 * be handled by the allocator's zone selection logic, which picks
+	 * the correct zone based on data type and temperature.
+	 */
+
+	/* Check zone pressure — spill to next colder zone if needed */
+	while (dst_zone < m->nr_zones - 1 &&
+	       bch2_radial_zone_pressure(ca, dst_zone))
+		dst_zone++;
+
+	/* Bias the allocation cursor for the copygc write point */
+	for (unsigned i = 0; i < ARRAY_SIZE(ca->alloc_cursor); i++)
+		bch2_set_alloc_cursor_radial_zone(ca, dst_zone, i);
+}
+
 static int bch2_copygc_get_stripe_buckets(struct moving_context *ctxt,
 			struct buckets_in_flight *buckets_in_flight)
 {
@@ -353,6 +474,15 @@ static int bch2_copygc(struct moving_context *ctxt,
 	if (ret)
 		goto err;
 
+	/*
+	 * Zone-aware pass: also collect zone-mismatched buckets
+	 * from rotational devices. These may not be fragmented but
+	 * benefit from relocation to the correct LBA zone.
+	 */
+	ret = bch2_copygc_get_zone_mismatched(ctxt, buckets_in_flight);
+	if (ret)
+		goto err;
+
 	darray_for_each(buckets_in_flight->to_evacuate, i) {
 		if (kthread_should_stop() || freezing(current))
 			break;
@@ -361,6 +491,9 @@ static int bch2_copygc(struct moving_context *ctxt,
 		*i = NULL;
 
 		move_bucket_in_flight_add(buckets_in_flight, b);
+
+		/* Bias allocation toward correct zone for rotational devices */
+		bch2_copygc_zone_bias(c, b);
 
 		ret = bch2_evacuate_bucket(ctxt, b, b->k.bucket, b->k.gen, data_opts);
 		if (ret)

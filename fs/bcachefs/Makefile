@@ -17,6 +17,7 @@ bcachefs-y		:=			\
 	alloc/foreground.o			\
 	alloc/lru.o				\
 	alloc/replicas.o			\
+	alloc/zone.o				\
 	btree/bkey.o				\
 	btree/bkey_methods.o			\
 	btree/bset.o				\

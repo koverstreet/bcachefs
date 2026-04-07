@@ -36,6 +36,8 @@ struct alloc_request {
 	bool			will_retry_all_devices:1;
 	bool			will_retry_target_devices:1;
 	bool			will_retry_set_devices:1;
+	bool			zone_cursor_set:1;
+	u8			radial_zone;	/* target radial zone for this allocation */
 	enum bch_watermark	watermark;
 	enum bch_write_flags	flags;
 	enum bch_data_type	data_type;
@@ -297,6 +299,8 @@ static inline struct alloc_request *alloc_request_get(struct btree_trans *trans,
 	req->flags		= flags;
 	req->devs_have		= devs_have;
 	req->have_cache		= false;
+	req->zone_cursor_set	= false;
+	req->radial_zone	= 0;
 	req->trace.nr		= 0;
 	return req;
 }

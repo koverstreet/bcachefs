@@ -74,6 +74,7 @@
 #include "alloc/disk_groups_types.h"
 #include "alloc/replicas_types.h"
 #include "alloc/types.h"
+#include "alloc/zone_types.h"
 
 #include "btree/check_types.h"
 #include "btree/journal_overlay_types.h"
@@ -516,6 +517,9 @@ struct bch_dev {
 
 	/* Allocator: */
 	u64			alloc_cursor[3];
+
+	/* Radial temperature zoning (HDD optimization): */
+	struct bch_radial_map	radial_map;
 
 	unsigned		nr_open_buckets;
 	unsigned		nr_partial_buckets;

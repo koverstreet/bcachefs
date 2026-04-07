@@ -7,6 +7,8 @@
 
 #include "init/dev_types.h"
 
+#include "alloc/zone_types.h"
+
 #include "util/clock_types.h"
 #include "util/fifo.h"
 
@@ -173,6 +175,14 @@ struct bch_fs_allocator {
 
 	struct write_point	btree_write_point;
 	struct write_point	reconcile_write_point;
+
+	/*
+	 * Radial zone write points for HDD-optimized allocation.
+	 * Each radial zone gets its own write stream to prevent mixing data
+	 * of different temperatures in the same buckets.
+	 * Only the first radial_map.nr_zones entries are used per device.
+	 */
+	struct write_point	radial_write_points[BCH_RADIAL_ZONE_MAX];
 
 	struct mutex		discard_lock;
 };
