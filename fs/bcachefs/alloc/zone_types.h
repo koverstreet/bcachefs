@@ -7,48 +7,28 @@
 #include <linux/types.h>
 
 /*
- * LBA-based zone layout for HDD-optimized allocation.
+ * Radial temperature zoning for HDD-optimized allocation.
  *
  * Lower LBAs correspond to outer tracks on spinning disks, which have higher
- * sequential throughput. We partition each device into four zones based on LBA
- * position, then steer data to the appropriate zone based on its access pattern
- * and temperature.
+ * sequential throughput. We partition each rotational device into N radial
+ * zones based on LBA position:
  *
- * Default boundaries (as percentage of device LBA range):
- *   0% – 10%   HOT_READ   - frequently read, stable data (outer tracks)
- *   10% – 15%  HOT_WRITE  - new writes, high churn (write buffer)
- *   15% – 65%  WARM       - actively used data, transition layer
- *   65% – 100% COLD       - cold/archival data (inner tracks)
+ *   Zone 0   → outermost (fastest, hottest)
+ *   Zone N-1 → innermost (slowest, coldest)
+ *
+ * Zone count scales with device size:
+ *   zones = clamp(device_size_bytes >> 40, 2, 255)
+ *
+ * Data movement is temperature-driven:
+ *   - Getting hotter → move outward (lower zone number)
+ *   - Cooling        → move inward  (higher zone number)
+ *
+ * Movement occurs via promote, CopyGC relocation, and aging —
+ * not via heavy per-write scoring logic.
  */
 
-#define BCH_ZONES()			\
-	x(hot_read,	0)		\
-	x(hot_write,	1)		\
-	x(warm,		2)		\
-	x(cold,		3)
-
-enum bch_zone {
-#define x(name, val)	BCH_ZONE_##name = val,
-	BCH_ZONES()
-#undef x
-	BCH_ZONE_NR,
-};
-
-static inline const char *bch2_zone_name(enum bch_zone z)
-{
-	static const char * const names[] = {
-#define x(name, val) [val] = #name,
-		BCH_ZONES()
-#undef x
-	};
-	return z < BCH_ZONE_NR ? names[z] : "unknown";
-}
-
-/* Default zone boundary percentages (0-100 scale) */
-#define BCH_ZONE_HOT_READ_END_PCT	10
-#define BCH_ZONE_HOT_WRITE_END_PCT	15
-#define BCH_ZONE_WARM_END_PCT		65
-/* COLD runs from WARM_END to 100% */
+#define BCH_RADIAL_ZONE_MIN		2
+#define BCH_RADIAL_ZONE_MAX		255
 
 /*
  * Tuning weights for extent heat calculation.
@@ -61,9 +41,8 @@ static inline const char *bch2_zone_name(enum bch_zone z)
 /* Threshold for considering an extent "shared" (dedup) */
 #define BCH_SHARED_REFCOUNT_THRESHOLD	2
 
-/* Heat thresholds for classification (fixed point, 8-bit frac) */
-#define BCH_HEAT_HOT_THRESHOLD		512	/* above = hot */
-#define BCH_HEAT_WARM_THRESHOLD		128	/* above = warm, below = cold */
+/* Maximum heat value for normalization (fixed point, 8-bit frac) */
+#define BCH_HEAT_MAX			1024
 
 /* Minimum interval between relocations of the same extent (seconds) */
 #define BCH_ZONE_RELOCATION_COOLDOWN	300
@@ -76,30 +55,52 @@ static inline const char *bch2_zone_name(enum bch_zone z)
 #define BCH_COPYGC_W_AGE		64	/* age weight */
 
 /*
- * Per-device zone boundary cache, computed at mount or calibration time.
- * Stored as bucket numbers for fast lookup.
+ * Default tunable values for radial migration control.
  */
-struct bch_dev_zones {
-	u64			boundary[BCH_ZONE_NR]; /* first bucket of each zone */
-	u64			boundary_sector[BCH_ZONE_NR]; /* first sector */
+#define BCH_RADIAL_MIGRATION_RATE_DEFAULT	64	/* max migrations per copygc pass */
+#define BCH_RADIAL_HEAT_DECAY_DEFAULT		4	/* heat decay shift per aging cycle */
+#define BCH_RADIAL_PROMOTE_BIAS_DEFAULT		1	/* zones to jump on promote */
+#define BCH_RADIAL_SEQ_HEAT_BOOST_DEFAULT	256	/* heat boost for sequential I/O */
 
-	/* Runtime stats (atomic for lock-free updates) */
-	atomic64_t		bytes[BCH_ZONE_NR];
-	atomic64_t		extents[BCH_ZONE_NR];
-	atomic64_t		shared_extents[BCH_ZONE_NR];
-	atomic64_t		copygc_moved_in[BCH_ZONE_NR];
-	atomic64_t		copygc_moved_out[BCH_ZONE_NR];
-	atomic64_t		fragmented[BCH_ZONE_NR];
+/*
+ * Per-radial-zone description.
+ * Computed at mount time, never persisted.
+ */
+struct bch_radial_zone {
+	u64			start_bucket;	/* first bucket in this zone */
+	u64			end_bucket;	/* first bucket of next zone (exclusive) */
+	u64			start_sector;	/* LBA start */
+	u64			end_sector;	/* LBA end */
+	u8			temperature;	/* 0 = hottest, nr_zones-1 = coldest */
 };
 
 /*
- * Per-extent tracking fields added to the in-memory alloc_v4.
- * These are approximations — not fully persisted, but re-estimable.
+ * Per-device radial zone map, computed at mount time.
+ *
+ * Contains the geometry plus per-zone runtime statistics.
+ * All runtime-generated — no persistence required.
  */
-struct bch_extent_heat_state {
-	u16			read_frequency;		/* decaying counter */
-	u16			rewrite_rate;		/* copygc/overwrite counter */
-	u32			last_move_time;		/* jiffies of last relocation */
+struct bch_radial_map {
+	u8			nr_zones;
+	u64			zone_size_buckets;	/* buckets per zone */
+	u64			zone_size_sectors;	/* sectors per zone */
+
+	struct bch_radial_zone	zones[BCH_RADIAL_ZONE_MAX];
+
+	/* Per-zone runtime statistics (atomic for lock-free updates) */
+	atomic64_t		zone_allocs[BCH_RADIAL_ZONE_MAX];
+	atomic64_t		zone_promotions[BCH_RADIAL_ZONE_MAX];
+	atomic64_t		zone_demotions[BCH_RADIAL_ZONE_MAX];
+	atomic64_t		zone_bytes[BCH_RADIAL_ZONE_MAX];
+
+	/* Zone pressure control: max fill percentage per zone */
+	u8			max_fill_pct[BCH_RADIAL_ZONE_MAX];
+
+	/* Tunables */
+	unsigned		migration_rate;
+	unsigned		heat_decay;
+	unsigned		promote_bias;
+	unsigned		seq_heat_boost;
 };
 
 #endif /* _BCACHEFS_ALLOC_ZONE_TYPES_H */

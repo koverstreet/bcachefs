@@ -518,8 +518,8 @@ struct bch_dev {
 	/* Allocator: */
 	u64			alloc_cursor[3];
 
-	/* Zone-aware allocation (HDD optimization): */
-	struct bch_dev_zones	zones;
+	/* Radial temperature zoning (HDD optimization): */
+	struct bch_radial_map	radial_map;
 
 	unsigned		nr_open_buckets;
 	unsigned		nr_partial_buckets;

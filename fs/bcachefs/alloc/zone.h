@@ -10,131 +10,162 @@ struct bch_fs;
 struct bch_dev;
 struct bch_alloc_v4;
 
-/* ── Zone boundary computation ────────────────────────────── */
+/* ── Radial zone geometry ─────────────────────────────────── */
 
 /*
- * Compute zone boundaries for a device based on its bucket count.
- * Called at mount time and after runtime calibration.
+ * Compute radial zone geometry for a device.
+ * Called at mount time. Divides the LBA space into N radial zones
+ * where zone 0 is outermost (hottest) and zone N-1 is innermost (coldest).
  */
-void bch2_dev_zones_init(struct bch_dev *ca);
+void bch2_dev_radial_zones_init(struct bch_dev *ca);
 
 /*
- * Return the zone a bucket belongs to, based on its bucket number.
+ * Return the radial zone a bucket belongs to.
+ * Zone 0 = outermost (lowest LBA), zone N-1 = innermost.
  */
-static inline enum bch_zone bch2_bucket_zone(const struct bch_dev *ca, u64 bucket)
+static inline u8 bch2_bucket_radial_zone(const struct bch_dev *ca, u64 bucket)
 {
-	if (bucket < ca->zones.boundary[BCH_ZONE_hot_write])
-		return BCH_ZONE_hot_read;
-	if (bucket < ca->zones.boundary[BCH_ZONE_warm])
-		return BCH_ZONE_hot_write;
-	if (bucket < ca->zones.boundary[BCH_ZONE_cold])
-		return BCH_ZONE_warm;
-	return BCH_ZONE_cold;
+	const struct bch_radial_map *m = &ca->radial_map;
+
+	if (!m->nr_zones || !m->zone_size_buckets)
+		return 0;
+
+	u64 offset = bucket - ca->mi.first_bucket;
+	u8 zone = div_u64(offset, m->zone_size_buckets);
+
+	return min_t(u8, zone, m->nr_zones - 1);
 }
 
 /*
- * Return the zone a sector address belongs to.
+ * Return the radial zone a sector address belongs to.
  */
-static inline enum bch_zone bch2_sector_zone(const struct bch_dev *ca, u64 sector)
+static inline u8 bch2_sector_radial_zone(const struct bch_dev *ca, u64 sector)
 {
-	if (sector < ca->zones.boundary_sector[BCH_ZONE_hot_write])
-		return BCH_ZONE_hot_read;
-	if (sector < ca->zones.boundary_sector[BCH_ZONE_warm])
-		return BCH_ZONE_hot_write;
-	if (sector < ca->zones.boundary_sector[BCH_ZONE_cold])
-		return BCH_ZONE_warm;
-	return BCH_ZONE_cold;
+	const struct bch_radial_map *m = &ca->radial_map;
+
+	if (!m->nr_zones || !m->zone_size_sectors)
+		return 0;
+
+	u8 zone = div_u64(sector, m->zone_size_sectors);
+
+	return min_t(u8, zone, m->nr_zones - 1);
 }
 
-/* ── Extent heat + classification ─────────────────────────── */
+/* ── Extent heat + radial classification ──────────────────── */
 
 /*
  * Compute a heat score for data at a given bucket.
  * Uses io_time[] from alloc_v4 as a rough proxy for read frequency.
+ * Returns a value in fixed-point (8 fractional bits), clamped to BCH_HEAT_MAX.
  */
 unsigned bch2_extent_heat(const struct bch_alloc_v4 *a,
 			  const struct bch_dev *ca);
 
 /*
- * Classify an extent into the zone it *should* be in, based on
- * its heat, refcount, and data type.
+ * Map a heat score to a target radial zone.
+ * Higher heat → lower zone number (outermost).
+ * Metadata always maps to zone 0 (outermost).
  */
-enum bch_zone bch2_classify_extent(const struct bch_alloc_v4 *a,
-				   const struct bch_dev *ca,
-				   enum bch_data_type data_type);
+u8 bch2_heat_to_radial_zone(const struct bch_dev *ca, unsigned heat,
+			     enum bch_data_type data_type);
 
 /*
- * Select the zone for a new write, based on data type (metadata vs user vs copygc).
+ * Classify a bucket's data into its ideal radial zone.
  */
-enum bch_zone bch2_select_write_zone(enum bch_data_type data_type,
-				     bool is_copygc);
+u8 bch2_classify_radial_zone(const struct bch_alloc_v4 *a,
+			     const struct bch_dev *ca,
+			     enum bch_data_type data_type);
+
+/*
+ * Select the radial zone for a new write, based on data type.
+ */
+u8 bch2_select_write_radial_zone(const struct bch_dev *ca,
+				 enum bch_data_type data_type,
+				 bool is_copygc);
 
 /* ── Zone-mismatch scoring for copygc ─────────────────────── */
 
 /*
- * Returns nonzero if a bucket's data is in the wrong zone.
- * Used as a victim selection signal for copygc.
+ * Full copygc victim score with radial zone awareness.
  */
-unsigned bch2_zone_mismatch_score(const struct bch_alloc_v4 *a,
-				  const struct bch_dev *ca);
-
-/*
- * Full copygc victim score incorporating fragmentation, zone mismatch, and age.
- */
-u64 bch2_zone_copygc_score(const struct bch_alloc_v4 *a,
-			   const struct bch_dev *ca,
-			   u64 now);
-
-/*
- * Full score with explicit bucket number (preferred variant).
- */
-u64 bch2_zone_copygc_bucket_score(const struct bch_alloc_v4 *a,
-				  const struct bch_dev *ca,
-				  u64 bucket, u64 now);
+u64 bch2_radial_copygc_bucket_score(const struct bch_alloc_v4 *a,
+				    const struct bch_dev *ca,
+				    u64 bucket, u64 now);
 
 /*
  * Check if an extent was recently relocated (within cooldown period).
  */
 static inline bool bch2_recently_moved(const struct bch_alloc_v4 *a, u64 now)
 {
-	/*
-	 * Use io_time[WRITE] as the last-move timestamp proxy.
-	 * If the write was less than BCH_ZONE_RELOCATION_COOLDOWN ago,
-	 * suppress re-relocation.
-	 */
 	return (now - a->io_time[1]) < BCH_ZONE_RELOCATION_COOLDOWN;
 }
 
 /* ── Bucket range helpers ─────────────────────────────────── */
 
 /*
- * Return the first and last+1 bucket of a zone on a given device.
+ * Return the first and last+1 bucket of a radial zone on a given device.
  */
-static inline void bch2_zone_bucket_range(const struct bch_dev *ca,
-					  enum bch_zone zone,
-					  u64 *start, u64 *end)
+static inline void bch2_radial_zone_bucket_range(const struct bch_dev *ca,
+						 u8 zone,
+						 u64 *start, u64 *end)
 {
-	*start = ca->zones.boundary[zone];
-	*end = (zone + 1 < BCH_ZONE_NR)
-		? ca->zones.boundary[zone + 1]
-		: ca->mi.nbuckets;
+	const struct bch_radial_map *m = &ca->radial_map;
+
+	if (zone >= m->nr_zones) {
+		*start = *end = ca->mi.nbuckets;
+		return;
+	}
+
+	*start = m->zones[zone].start_bucket;
+	*end = m->zones[zone].end_bucket;
 }
 
 /* ── Zone-aware allocation cursor ─────────────────────────── */
 
 /*
- * Set the allocation cursor to prefer buckets within a specific zone.
+ * Set the allocation cursor to prefer buckets within a specific radial zone.
  * Returns true if the cursor was adjusted.
  */
-bool bch2_set_alloc_cursor_zone(struct bch_dev *ca,
-				enum bch_zone zone,
-				unsigned btree_bitmap);
+bool bch2_set_alloc_cursor_radial_zone(struct bch_dev *ca,
+				       u8 zone,
+				       unsigned btree_bitmap);
+
+/* ── Zone pressure ────────────────────────────────────────── */
+
+/*
+ * Check if a radial zone is over its fill pressure limit.
+ * Returns true if the zone should spill to the next colder zone.
+ */
+bool bch2_radial_zone_pressure(const struct bch_dev *ca, u8 zone);
+
+/* ── Sequential heat boost ────────────────────────────────── */
+
+/*
+ * Apply a temporary heat increase for sequential I/O patterns.
+ * Called from readahead/sequential write paths. Returns the
+ * boosted heat score.
+ *
+ * Sequential workloads naturally migrate outward when this
+ * boost is applied. The heat decays over time.
+ */
+static inline unsigned bch2_radial_seq_heat_boost(const struct bch_dev *ca,
+						  unsigned base_heat)
+{
+	return min_t(unsigned, base_heat + ca->radial_map.seq_heat_boost,
+		     BCH_HEAT_MAX);
+}
+
+/*
+ * Select radial zone for a sequential write pattern.
+ * Applies heat boost to push sequential data toward outer zones.
+ */
+u8 bch2_select_seq_write_radial_zone(const struct bch_dev *ca);
 
 /* ── Stats ─────────────────────────────────────────────────── */
 
-void bch2_dev_zone_stats_to_text(struct printbuf *out,
-				 const struct bch_dev *ca);
-void bch2_fs_zone_stats_to_text(struct printbuf *out,
-				struct bch_fs *c);
+void bch2_dev_radial_stats_to_text(struct printbuf *out,
+				   const struct bch_dev *ca);
+void bch2_fs_radial_stats_to_text(struct printbuf *out,
+				  struct bch_fs *c);
 
 #endif /* _BCACHEFS_ALLOC_ZONE_H */

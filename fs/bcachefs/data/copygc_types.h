@@ -9,11 +9,11 @@ struct bch_fs_copygc {
 	struct write_point	write_point;
 
 	/*
-	 * Zone-segregated write points for copygc relocation.
-	 * Each zone gets its own write stream to prevent mixing
+	 * Radial zone write points for copygc relocation.
+	 * Each radial zone gets its own write stream to prevent mixing
 	 * data of different temperatures in the same buckets.
 	 */
-	struct write_point	zone_write_points[BCH_ZONE_NR];
+	struct write_point	radial_write_points[BCH_RADIAL_ZONE_MAX];
 
 	s64			wait_at;
 	s64			wait;

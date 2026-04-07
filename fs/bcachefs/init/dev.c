@@ -574,8 +574,8 @@ static struct bch_dev *__bch2_dev_alloc(struct bch_fs *c,
 	    !(ca->io_done	= alloc_percpu(*ca->io_done)))
 		goto err;
 
-	/* Initialize zone boundaries for HDD-aware allocation */
-	bch2_dev_zones_init(ca);
+	/* Initialize radial temperature zones for HDD-aware allocation */
+	bch2_dev_radial_zones_init(ca);
 
 	return ca;
 err:

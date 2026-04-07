@@ -28,6 +28,7 @@
 #include "alloc/buckets.h"
 #include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
+#include "alloc/zone.h"
 
 #include "btree/update.h"
 
@@ -337,6 +338,30 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 	op->write.rbio.bounce	= true;
 	op->write.rbio.promote	= true;
 	op->write.op.end_io = promote_done;
+
+	/*
+	 * Radial zone-aware promotion for rotational devices:
+	 * When data is being promoted (getting hotter), bias the
+	 * write to one zone outward from the current location.
+	 * Movement is incremental — at most one zone per promote.
+	 */
+	if (!have_io_error(failed)) {
+		struct bkey_ptrs_c ptrs_c = bch2_bkey_ptrs_c(k);
+		bkey_for_each_ptr(ptrs_c, ptr) {
+			CLASS(bch2_dev_bkey_tryget, ca)(c, k, ptr->dev);
+			if (!ca || !ca->mi.rotational)
+				continue;
+
+			u8 cur_zone = bch2_sector_radial_zone(ca, ptr->offset);
+			u8 target_zone = cur_zone > 0 ? cur_zone - 1 : 0;
+
+			for (unsigned i = 0; i < ARRAY_SIZE(ca->alloc_cursor); i++)
+				bch2_set_alloc_cursor_radial_zone(ca, target_zone, i);
+
+			atomic64_inc(&ca->radial_map.zone_promotions[target_zone]);
+			break;
+		}
+	}
 
 	return &op->write.rbio;
 err_remove_list:

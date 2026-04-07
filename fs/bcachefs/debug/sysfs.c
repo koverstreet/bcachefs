@@ -225,7 +225,12 @@ BCH_PERSISTENT_COUNTERS()
 rw_attribute(label);
 
 read_attribute(copy_gc_wait);
-read_attribute(zone_stats);
+read_attribute(radial_stats);
+
+rw_attribute(radial_migration_rate);
+rw_attribute(radial_heat_decay);
+rw_attribute(radial_promote_bias);
+rw_attribute(radial_seq_heat_boost);
 
 read_attribute(reconcile_status);
 read_attribute(reconcile_scan_pending);
@@ -346,8 +351,8 @@ SHOW(bch2_fs)
 	if (attr == &sysfs_copy_gc_wait)
 		bch2_copygc_wait_to_text(out, c);
 
-	if (attr == &sysfs_zone_stats)
-		bch2_fs_zone_stats_to_text(out, c);
+	if (attr == &sysfs_radial_stats)
+		bch2_fs_radial_stats_to_text(out, c);
 
 	if (attr == &sysfs_reconcile_status)
 		bch2_reconcile_status_to_text(out, c);
@@ -666,7 +671,7 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_gc_gens_pos,
 
 	&sysfs_copy_gc_wait,
-	&sysfs_zone_stats,
+	&sysfs_radial_stats,
 
 	&sysfs_moving_ctxts,
 	&sysfs_recent_counters,
@@ -1046,6 +1051,14 @@ SHOW(bch2_dev)
 	if (attr == &sysfs_write_refs)
 		enumerated_ref_to_text(out, &ca->io_ref[WRITE], bch2_dev_write_refs);
 
+	if (attr == &sysfs_radial_stats)
+		bch2_dev_radial_stats_to_text(out, ca);
+
+	sysfs_print(radial_migration_rate,	ca->radial_map.migration_rate);
+	sysfs_print(radial_heat_decay,		ca->radial_map.heat_decay);
+	sysfs_print(radial_promote_bias,	ca->radial_map.promote_bias);
+	sysfs_print(radial_seq_heat_boost,	ca->radial_map.seq_heat_boost);
+
 	return 0;
 }
 
@@ -1064,6 +1077,27 @@ STORE(bch2_dev)
 
 	if (attr == &sysfs_io_errors_reset)
 		bch2_dev_errors_reset(ca);
+
+	if (attr == &sysfs_radial_migration_rate) {
+		unsigned v;
+		if (!kstrtouint(buf, 10, &v))
+			ca->radial_map.migration_rate = v;
+	}
+	if (attr == &sysfs_radial_heat_decay) {
+		unsigned v;
+		if (!kstrtouint(buf, 10, &v))
+			ca->radial_map.heat_decay = v;
+	}
+	if (attr == &sysfs_radial_promote_bias) {
+		unsigned v;
+		if (!kstrtouint(buf, 10, &v))
+			ca->radial_map.promote_bias = v;
+	}
+	if (attr == &sysfs_radial_seq_heat_boost) {
+		unsigned v;
+		if (!kstrtouint(buf, 10, &v))
+			ca->radial_map.seq_heat_boost = min(v, (unsigned)BCH_HEAT_MAX);
+	}
 
 	int opt_id = bch2_opt_lookup(attr->name);
 	if (opt_id >= 0)
@@ -1103,5 +1137,12 @@ struct attribute *bch2_dev_files[] = {
 
 	&sysfs_read_refs,
 	&sysfs_write_refs,
+
+	/* radial temperature zoning: */
+	&sysfs_radial_stats,
+	&sysfs_radial_migration_rate,
+	&sysfs_radial_heat_decay,
+	&sysfs_radial_promote_bias,
+	&sysfs_radial_seq_heat_boost,
 	NULL
 };
