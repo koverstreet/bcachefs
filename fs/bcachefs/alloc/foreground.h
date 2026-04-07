@@ -299,6 +299,8 @@ static inline struct alloc_request *alloc_request_get(struct btree_trans *trans,
 	req->flags		= flags;
 	req->devs_have		= devs_have;
 	req->have_cache		= false;
+	req->zone_cursor_set	= false;
+	req->radial_zone	= 0;
 	req->trace.nr		= 0;
 	return req;
 }

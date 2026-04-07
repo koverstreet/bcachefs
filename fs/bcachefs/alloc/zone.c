@@ -73,6 +73,11 @@ void bch2_dev_radial_zones_init(struct bch_dev *ca)
 		z->start_sector = bucket_to_sector(ca, z->start_bucket);
 		z->end_sector = bucket_to_sector(ca, z->end_bucket);
 		z->temperature = i; /* zone 0 = hottest (outermost) */
+
+		/* Per-zone allocation cursor starts at zone beginning */
+		atomic64_set(&z->alloc_cursor, z->start_bucket);
+		atomic64_set(&z->nr_free, z->end_bucket - z->start_bucket);
+		atomic64_set(&z->nr_used, 0);
 	}
 
 	/* Initialize zone pressure limits */
@@ -263,14 +268,27 @@ bool bch2_set_alloc_cursor_radial_zone(struct bch_dev *ca,
 				       u8 zone,
 				       unsigned btree_bitmap)
 {
-	u64 start, end;
+	struct bch_radial_map *m = &ca->radial_map;
 
-	bch2_radial_zone_bucket_range(ca, zone, &start, &end);
-
-	if (start >= end)
+	if (zone >= m->nr_zones)
 		return false;
 
-	ca->alloc_cursor[btree_bitmap] = start;
+	struct bch_radial_zone *z = &m->zones[zone];
+
+	if (z->start_bucket >= z->end_bucket)
+		return false;
+
+	/*
+	 * Use the per-zone atomic cursor for sequential allocation.
+	 * Advance the cursor and wrap within zone bounds.
+	 */
+	u64 cursor = (u64)atomic64_fetch_add(1, &z->alloc_cursor);
+	if (cursor >= z->end_bucket) {
+		atomic64_set(&z->alloc_cursor, z->start_bucket);
+		cursor = z->start_bucket;
+	}
+
+	ca->alloc_cursor[btree_bitmap] = cursor;
 	return true;
 }
 
@@ -283,17 +301,19 @@ bool bch2_radial_zone_pressure(const struct bch_dev *ca, u8 zone)
 	if (zone >= m->nr_zones)
 		return false;
 
+	const struct bch_radial_zone *z = &m->zones[zone];
+
 	/*
 	 * Check if this zone has exceeded its fill limit.
-	 * Use zone_bytes as an approximation of fill level.
+	 * Use per-zone nr_used/total ratio for fill level.
 	 */
-	u64 zone_capacity = m->zone_size_sectors << 9;
-	u64 zone_used = atomic64_read(&m->zone_bytes[zone]) << 9;
+	u64 zone_total = z->end_bucket - z->start_bucket;
+	u64 zone_used = (u64)atomic64_read(&z->nr_used);
 
-	if (!zone_capacity)
+	if (!zone_total)
 		return false;
 
-	u64 fill_pct = div_u64(zone_used * 100, zone_capacity);
+	u64 fill_pct = div_u64(zone_used * 100, zone_total);
 
 	return fill_pct >= m->max_fill_pct[zone];
 }
@@ -316,9 +336,12 @@ void bch2_dev_radial_stats_to_text(struct printbuf *out,
 	printbuf_tabstop_push(out, 12);
 	printbuf_tabstop_push(out, 12);
 	printbuf_tabstop_push(out, 12);
+	printbuf_tabstop_push(out, 12);
+	printbuf_tabstop_push(out, 12);
+	printbuf_tabstop_push(out, 16);
 	printbuf_tabstop_push(out, 8);
 
-	prt_printf(out, "zone\tstart\tend\tallocs\tpromote\tdemote\tfill%%\n");
+	prt_printf(out, "zone\tstart\tend\tallocs\tpromote\tdemote\tfree\tused\tcursor\tfill%%\n");
 
 	for (unsigned i = 0; i < m->nr_zones; i++) {
 		const struct bch_radial_zone *z = &m->zones[i];
@@ -328,6 +351,9 @@ void bch2_dev_radial_stats_to_text(struct printbuf *out,
 		prt_printf(out, "%llu\t", atomic64_read(&m->zone_allocs[i]));
 		prt_printf(out, "%llu\t", atomic64_read(&m->zone_promotions[i]));
 		prt_printf(out, "%llu\t", atomic64_read(&m->zone_demotions[i]));
+		prt_printf(out, "%lld\t", atomic64_read(&z->nr_free));
+		prt_printf(out, "%lld\t", atomic64_read(&z->nr_used));
+		prt_printf(out, "%lld\t", atomic64_read(&z->alloc_cursor));
 		prt_printf(out, "%u%%\n", m->max_fill_pct[i]);
 	}
 }

@@ -326,22 +326,14 @@ static void bch2_copygc_zone_bias(struct bch_fs *c,
 	u8 dst_zone = src_zone;
 
 	/*
-	 * Gradual movement: move at most one zone toward ideal.
-	 * This preserves locality and minimizes head movement.
+	 * Zone preservation: copygc keeps data in the same radial zone
+	 * by default. This maintains locality for fragmentation-driven
+	 * compaction — data that was placed in a specific zone stays there.
 	 *
-	 * For buckets being evacuated by copygc, we default to
-	 * staying in the same zone (fragmentation-driven copygc)
-	 * or drifting one zone inward (cooling).
-	 *
-	 * If this bucket was selected due to zone mismatch, the
-	 * ideal zone may differ — but we still limit movement to
-	 * one zone step.
+	 * Zone-mismatched buckets (collected by the mismatch scan) will
+	 * be handled by the allocator's zone selection logic, which picks
+	 * the correct zone based on data type and temperature.
 	 */
-	if (src_zone < m->nr_zones - 1) {
-		/* Default: cool data drifts inward by one zone */
-		dst_zone = src_zone + 1;
-		atomic64_inc(&m->zone_demotions[dst_zone]);
-	}
 
 	/* Check zone pressure — spill to next colder zone if needed */
 	while (dst_zone < m->nr_zones - 1 &&

@@ -72,6 +72,10 @@ struct bch_radial_zone {
 	u64			start_sector;	/* LBA start */
 	u64			end_sector;	/* LBA end */
 	u8			temperature;	/* 0 = hottest, nr_zones-1 = coldest */
+
+	atomic64_t		alloc_cursor;	/* sequential allocation within zone */
+	atomic64_t		nr_free;	/* free buckets in zone */
+	atomic64_t		nr_used;	/* used buckets in zone */
 };
 
 /*

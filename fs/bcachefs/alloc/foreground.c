@@ -396,11 +396,26 @@ static struct open_bucket *bch2_bucket_alloc_freelist(struct btree_trans *trans,
 	u64 *dev_alloc_cursor = &ca->alloc_cursor[req->btree_bitmap];
 	u64 alloc_start = max_t(u64, ca->mi.first_bucket, READ_ONCE(*dev_alloc_cursor));
 	u64 alloc_cursor = alloc_start;
+	u64 alloc_max = U64_MAX;
 	int ret;
+
+	/*
+	 * Zone-bounded allocation: if a radial zone is selected,
+	 * first try to allocate only within that zone's bucket range.
+	 * Fall back to full device scan if the zone is exhausted.
+	 */
+	if (req->zone_cursor_set && ca->mi.rotational &&
+	    req->radial_zone < ca->radial_map.nr_zones) {
+		struct bch_radial_zone *z = &ca->radial_map.zones[req->radial_zone];
+
+		alloc_max = z->end_bucket;
+		alloc_start = max_t(u64, alloc_start, z->start_bucket);
+		alloc_cursor = alloc_start;
+	}
 again:
 	for_each_btree_key_max_norestart(trans, iter, BTREE_ID_freespace,
 					 POS(ca->dev_idx, alloc_cursor),
-					 POS(ca->dev_idx, U64_MAX),
+					 POS(ca->dev_idx, alloc_max),
 					 0, k, ret) {
 		/*
 		 * peek normally dosen't trim extents - they can span iter.pos,
@@ -431,8 +446,20 @@ again:
 
 			ob = try_alloc_bucket(trans, req, &iter);
 			if (ob) {
-				if (!IS_ERR(ob))
+				if (!IS_ERR(ob)) {
 					*dev_alloc_cursor = iter.pos.offset;
+
+					/* Update zone free/used counters */
+					if (req->zone_cursor_set &&
+					    req->radial_zone < ca->radial_map.nr_zones) {
+						struct bch_radial_zone *z =
+							&ca->radial_map.zones[req->radial_zone];
+						atomic64_dec_if_positive(&z->nr_free);
+						atomic64_inc(&z->nr_used);
+						atomic64_add(ca->mi.bucket_size,
+							     &ca->radial_map.zone_bytes[req->radial_zone]);
+					}
+				}
 				bch2_set_btree_iter_dontneed(&iter);
 				break;
 			}
@@ -453,6 +480,11 @@ fail:
 
 	if (!ob && alloc_start > ca->mi.first_bucket) {
 		alloc_cursor = alloc_start = ca->mi.first_bucket;
+		/*
+		 * If zone-bounded scan failed, fall back to full device.
+		 * This ensures allocation never fails due to zone pressure alone.
+		 */
+		alloc_max = U64_MAX;
 		goto again;
 	}
 
@@ -1220,6 +1252,35 @@ retry:
 	req->nr_effective		= 0;
 	req->have_cache			= req->flags & BCH_WRITE_move;
 	write_points_nr			= a->write_points_nr;
+
+	/*
+	 * For user data writes, check if we have rotational targets
+	 * that could benefit from per-zone write points. This ensures
+	 * data from different temperature zones doesn't mix in the
+	 * same open buckets.
+	 */
+	if (write_point.v & 1UL) {
+		bool have_rotational = false;
+		u8 zone = 0;
+
+		scoped_guard(rcu) {
+			struct bch_devs_mask target_devs =
+				target_rw_devs(c, BCH_DATA_user, req->target);
+
+			for_each_set_bit(i, target_devs.d, BCH_SB_MEMBERS_MAX) {
+				struct bch_dev *ca = bch2_dev_rcu(c, i);
+				if (ca && ca->mi.rotational && ca->radial_map.nr_zones) {
+					have_rotational = true;
+					zone = bch2_select_write_radial_zone(ca,
+						BCH_DATA_user, false);
+					break;
+				}
+			}
+		}
+
+		if (have_rotational && zone < BCH_RADIAL_ZONE_MAX)
+			write_point = writepoint_ptr(&a->radial_write_points[zone]);
+	}
 
 	*wp_ret = req->wp = writepoint_find(trans, write_point.v);
 
