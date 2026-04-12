@@ -1367,6 +1367,87 @@ static int drop_sbs_after_cutoff(struct bch_fs *c, struct bch_dev *ca, u64 cutof
 	return bch2_write_super(c);
 }
 
+static int move_journal_past_cutoff(struct bch_fs *c, struct bch_dev *ca,
+				    u64 cutoff, struct printbuf *err)
+{
+	bool grew = false;
+
+	while (true) {
+		u64 bucket_to_delete = 0;
+		unsigned nr = 0, nr_past_cutoff = 0;
+		bool cur_bucket_past_cutoff = false;
+		int ret;
+
+		scoped_guard(spinlock, &c->journal.lock) {
+			struct journal_device *ja = &ca->journal;
+
+			nr = ja->nr;
+			if (!nr)
+				break;
+
+			cur_bucket_past_cutoff = ja->buckets[ja->cur_idx] >= cutoff;
+
+			for (unsigned i = 0; i < ja->nr; i++) {
+				if (ja->buckets[i] < cutoff)
+					continue;
+
+				nr_past_cutoff++;
+				if (i != ja->cur_idx && !bucket_to_delete)
+					bucket_to_delete = ja->buckets[i];
+			}
+		}
+
+		if (!nr_past_cutoff)
+			return 0;
+
+		if (!grew) {
+			ret = bch2_set_nr_journal_buckets(c, ca, nr + nr_past_cutoff);
+			if (ret) {
+				prt_printf(err, "Failed to relocate journal buckets: %s\n",
+					   bch2_err_str(ret));
+				return ret;
+			}
+			grew = true;
+			continue;
+		}
+
+		if (!bucket_to_delete && cur_bucket_past_cutoff) {
+			scoped_guard(spinlock, &c->journal.lock) {
+				struct journal_device *ja = &ca->journal;
+
+				if (ja->nr &&
+				    ja->buckets[ja->cur_idx] >= cutoff)
+					ja->sectors_free = 0;
+			}
+
+			scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+				guard(mutex)(&c->sb_lock);
+				ret = bch2_write_super(c);
+			}
+			if (ret) {
+				prt_printf(err, "Failed to advance journal off shrink tail: %s\n",
+					   bch2_err_str(ret));
+				return ret;
+			}
+
+			ret = bch2_journal_flush(&c->journal);
+			if (ret) {
+				prt_printf(err, "Failed to flush relocated journal: %s\n",
+					   bch2_err_str(ret));
+				return ret;
+			}
+			continue;
+		}
+
+		ret = bch2_dev_journal_bucket_delete(ca, bucket_to_delete);
+		if (ret) {
+			prt_printf(err, "Failed to drop journal bucket %llu from shrink tail: %s\n",
+				   bucket_to_delete, bch2_err_str(ret));
+			return ret;
+		}
+	}
+}
+
 // TODO: make sure everything is caught here. Maybe look at bch2_dev_has_data for this
 // Fore example journals and superblocks might need special handling
 static int tail_is_empty(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err, bool *empty) {
@@ -1437,6 +1518,15 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 		}
 	};
 
+	/*
+	 * Move journal buckets out of the tail up front: otherwise the journal
+	 * can keep reintroducing metadata references in the region we're trying
+	 * to evacuate while reconcile is draining backpointers from it.
+	 */
+	ret = move_journal_past_cutoff(c, ca, new_nbuckets, err);
+	if (ret)
+		return ret;
+
 	/*  TODO:
 	 *  When we evacuate data, the original is left in place and marked as cached, just like when moving it for target/compression regions.
 	 *  We need to somehow handle this:
@@ -1472,17 +1562,17 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 		schedule_timeout_killable(HZ/2);
 	}
 
+	/*
+	 * Re-run journal relocation as a final fence before we commit the new
+	 * size: the current journal bucket may have advanced while we were
+	 * waiting for the tail to drain, and we must not expose the smaller
+	 * nbuckets while journal state can still reference the truncated tail.
+	 */
+	ret = move_journal_past_cutoff(c, ca, new_nbuckets, err);
+	if (ret)
+		return ret;
 
 	scoped_guard(rwsem_write, &c->state_lock) {
-		/* zero target_nbuckets */
-		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
-			guard(mutex)(&c->sb_lock);
-			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
-			m->target_nbuckets = 0;
-
-			bch2_write_super(c);
-		}
-
 		/* flush interior updates - mirroring dev remove path */
 		bch2_btree_interior_updates_flush(c);
 
@@ -1509,22 +1599,24 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			return -EBUSY;
 		}
 
+		/*
+		 * Buckets in the truncated tail may still be in NEED_DISCARD
+		 * state. Clear that bookkeeping before we drop the alloc range so
+		 * accounting/fsck do not retain tail-only metadata after shrink.
+		 */
+		ret = bch2_dev_clear_need_discard(c, ca, new_nbuckets);
+		if (ret) {
+			prt_printf(err, "error clearing need_discard state: %s\n",
+				   bch2_err_str(ret));
+			return ret;
+		}
+
 		/* drop references to now-truncated superblock copies */
 		ret = drop_sbs_after_cutoff(c, ca, new_nbuckets);
 		if (ret) {
 			prt_printf(err, "Error dropping superblocks after cutoff: %s\n", bch2_err_str(ret));
 			return ret;
 		}
-
-		/* write & commit new_nbuckets */
-		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
-			guard(mutex)(&c->sb_lock);
-			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
-			m->nbuckets = cpu_to_le64(new_nbuckets);
-
-			try(bch2_write_super(c));
-		}
-
 
 		/* update accounting info - has to happen before truncating alloc info */
 		ret = bch2_dev_truncate_accounting(c, ca, old_nbuckets, new_nbuckets);
@@ -1538,6 +1630,20 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 		if (ret) {
 			prt_printf(err, "error truncating alloc info: %s\n", bch2_err_str(ret));
 			return ret;
+		}
+
+		/*
+		 * Commit the shrink only after the truncated tail has been
+		 * removed from alloc metadata, so later transactions can't see
+		 * stale tail buckets after the new size is visible.
+		 */
+		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+			guard(mutex)(&c->sb_lock);
+			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
+			m->target_nbuckets = 0;
+			m->nbuckets = cpu_to_le64(new_nbuckets);
+
+			try(bch2_write_super(c));
 		}
 
 		/* resize buckets */

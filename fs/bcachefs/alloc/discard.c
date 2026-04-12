@@ -148,6 +148,63 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 	return ret;
 }
 
+int bch2_dev_clear_need_discard(struct bch_fs *c, struct bch_dev *ca, u64 cutoff)
+{
+	struct bpos pos = POS_MIN;
+
+	while (1) {
+		struct bpos next = POS_MAX;
+		bool done = false;
+		int ret = bch2_trans_commit_do(c, NULL, NULL,
+				BCH_WATERMARK_reclaim|
+				BCH_TRANS_COMMIT_no_check_rw|
+				BCH_TRANS_COMMIT_no_enospc, ({
+			int __ret = 0;
+			CLASS(btree_iter, iter)(trans, BTREE_ID_need_discard, pos, 0);
+			struct bkey_s_c k = bch2_btree_iter_peek(&iter);
+			int _ret = bkey_err(k);
+
+			if (_ret) {
+				__ret = _ret;
+			} else if (!k.k) {
+				done = true;
+			} else {
+				struct bpos bucket = u64_to_bucket(k.k->p.offset);
+
+				next = bpos_successor(k.k->p);
+
+				if (bucket.inode == ca->dev_idx &&
+				    bucket.offset >= cutoff) {
+					CLASS(btree_iter, alloc_iter)(trans, BTREE_ID_alloc,
+								      bucket, BTREE_ITER_cached);
+					struct bkey_s_c alloc_k =
+						bch2_btree_iter_peek_slot(&alloc_iter);
+					struct bkey_i_alloc_v4 *a;
+
+					_ret = bkey_err(alloc_k);
+					if (_ret) {
+						__ret = _ret;
+					} else {
+						a = errptr_try(bch2_alloc_to_v4_mut(trans, alloc_k));
+						if (a->v.data_type == BCH_DATA_need_discard) {
+							SET_BCH_ALLOC_V4_NEED_DISCARD(&a->v, false);
+							alloc_data_type_set(&a->v, a->v.data_type);
+							__ret = bch2_trans_update(trans, &alloc_iter,
+										  &a->k_i, 0);
+						}
+					}
+				}
+			}
+			__ret;
+		}));
+		if (ret)
+			return ret;
+		if (done)
+			return 0;
+		pos = next;
+	}
+}
+
 static void calculate_discard_sectors_to_release(struct btree_trans *trans)
 {
 	struct bch_fs *c = trans->c;

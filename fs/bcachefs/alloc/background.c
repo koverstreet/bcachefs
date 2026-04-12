@@ -1465,8 +1465,6 @@ fsck_err:
 
 /* device removal */
 
-<<<<<<< conflict 1 of 2
-+++++++ tkspqttk 8507ca39 "bcachefs: shrink: mark superblock buckets as metadata" (rebase destination)
 static int bch2_dev_remove_need_discard(struct bch_fs *c, struct bch_dev *ca)
 {
 	CLASS(btree_trans, trans)(c);
@@ -1496,8 +1494,7 @@ int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca, u64 cutoff)
 	 */
 	ret =   bch2_dev_remove_lrus(c, ca, cutoff) ?:
 		(cutoff
-		 ? bch2_btree_delete_range(c, BTREE_ID_need_discard, start, end,
-					   BTREE_TRIGGER_norun)
+		 ? bch2_dev_clear_need_discard(c, ca, cutoff)
 		 : bch2_dev_remove_need_discard(c, ca)) ?:
 		bch2_btree_delete_range(c, BTREE_ID_freespace, start, end,
 					BTREE_TRIGGER_norun) ?:
