@@ -714,6 +714,13 @@ static inline bool should_trace_update_err(struct data_update *u, int ret)
 	     (bch2_err_matches(ret, BCH_ERR_data_update_fail_no_rw_devs) ||
 	      bch2_err_matches(ret, BCH_ERR_insufficient_devices) ||
 	      /*
+	       * The allocator reports a fully-exhausted retry sequence as
+	       * BCH_ERR_freelist_empty/no_buckets_found. Reconcile demotes
+	       * that to pending work just like ENOSPC, so don't count it as a
+	       * hard data-update failure.
+	       */
+	      bch2_err_matches(ret, BCH_ERR_freelist_empty) ||
+	      /*
 	       * Reconcile promotes ENOSPC-class write failures to pending work
 	       * and retries after space/stripe availability changes, so don't
 	       * count those transient allocation misses as data update failures.

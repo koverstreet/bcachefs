@@ -512,10 +512,17 @@ static int check_reconcile_pending_err(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 
-	 if (!bch2_err_matches(err, BCH_ERR_data_update_fail_no_rw_devs) &&
-	     !bch2_err_matches(err, BCH_ERR_insufficient_devices) &&
-	     !bch2_err_matches(err, ENOSPC))
-		 return err;
+	/*
+	 * Reconcile can park transient allocation failures on the pending list
+	 * and retry after space becomes available. The allocator's internal
+	 * no_buckets_found code is the same class of "try again later" failure
+	 * as ENOSPC, but it bypasses the errno-based match.
+	 */
+	if (!bch2_err_matches(err, BCH_ERR_data_update_fail_no_rw_devs) &&
+	    !bch2_err_matches(err, BCH_ERR_insufficient_devices) &&
+	    !bch2_err_matches(err, BCH_ERR_freelist_empty) &&
+	    !bch2_err_matches(err, ENOSPC))
+		return err;
 
 	event_add_trace(c, reconcile_set_pending, k.k->size, buf, ({
 		prt_printf(&buf, "%s\n", bch2_err_str(err));

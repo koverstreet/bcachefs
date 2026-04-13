@@ -48,6 +48,32 @@ static const char * const bch2_btree_update_modes[] = {
 	NULL
 };
 
+static unsigned btree_alloc_target(struct bch_fs *c, unsigned target)
+{
+	target = target ?: c->opts.metadata_target ?: c->opts.foreground_target;
+	if (!target)
+		return 0;
+
+	struct bch_devs_mask devs = target_rw_devs(c, BCH_DATA_btree, target);
+
+	/*
+	 * Shrink needs to keep rewriting btree nodes even when metadata is
+	 * normally pinned to the device being reduced. If every rw member of
+	 * the preferred target is currently shrinking, spill metadata anywhere
+	 * so the shrink can update its own bookkeeping.
+	 */
+	guard(rcu)();
+	unsigned i;
+	for_each_set_bit(i, devs.d, BCH_SB_MEMBERS_MAX) {
+		struct bch_dev *ca = bch2_dev_rcu_noerror(c, i);
+
+		if (ca && !ca->mi.target_nbuckets)
+			return target;
+	}
+
+	return 0;
+}
+
 static void bch2_btree_update_to_text(struct printbuf *, struct btree_update *);
 
 static int bch2_btree_insert_node(struct btree_update *, struct btree_trans *,
@@ -1312,10 +1338,9 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 		goto err;
 
 	struct bch_devs_list devs_have = (struct bch_devs_list) { 0 };
+	unsigned alloc_target = btree_alloc_target(c, target);
 	struct alloc_request *req = alloc_request_get(trans,
-				      target ?:
-				      c->opts.metadata_target ?:
-				      c->opts.foreground_target,
+				      alloc_target,
 				      false,
 				      &devs_have,
 				      as->disk_res.nr_replicas,

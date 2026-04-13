@@ -22,8 +22,35 @@
 
 #include "sb/clean.h"
 #include "sb/counters.h"
+#include "sb/members.h"
 
 #include <linux/ioprio.h>
+
+static unsigned journal_alloc_target(struct bch_fs *c)
+{
+	unsigned target = c->opts.metadata_target ?: c->opts.foreground_target;
+	if (!target)
+		return 0;
+
+	struct bch_devs_mask devs = target_rw_devs(c, BCH_DATA_journal, target);
+
+	/*
+	 * Shrink can temporarily make the preferred metadata target unusable
+	 * for new journal buckets. If every rw member of that target is
+	 * shrinking, allocate from the full filesystem until the shrink
+	 * finishes so journal progress doesn't deadlock on target preference.
+	 */
+	guard(rcu)();
+	unsigned i;
+	for_each_set_bit(i, devs.d, BCH_SB_MEMBERS_MAX) {
+		struct bch_dev *ca = bch2_dev_rcu_noerror(c, i);
+
+		if (ca && !ca->mi.target_nbuckets)
+			return target;
+	}
+
+	return 0;
+}
 
 static void journal_advance_devs_to_next_bucket(struct journal *j,
 						struct dev_alloc_list *devs,
@@ -111,8 +138,7 @@ static int journal_write_alloc(struct journal *j, struct journal_buf *w,
 	struct bch_devs_mask devs;
 	struct dev_alloc_list devs_sorted;
 	unsigned sectors = vstruct_sectors(w->data, c->block_bits);
-	unsigned target = c->opts.metadata_target ?:
-		c->opts.foreground_target;
+	unsigned target = journal_alloc_target(c);
 	unsigned replicas_want = READ_ONCE(c->opts.metadata_replicas);
 	bool advance_done = false;
 
