@@ -708,13 +708,17 @@ static int do_reconcile_extent(struct moving_context *ctxt,
 	struct bch_fs *c = trans->c;
 	struct bbpos data_pos = rb_work_to_data_pos(work.pos);
 
-	/* We require holding an intent lock when calling
-	 * bch2_stripe_handle_tryget(), to avoid racing with the stripe trigger
-	 * deleting the stripe */
-	enum btree_iter_update_trigger_flags flags = data_pos.btree == BTREE_ID_stripes
-		? BTREE_ITER_intent : 0;
+	/*
+	 * Reconcile always mutates the key it is looking at, either by updating
+	 * reconcile state or by queueing a move. Start with an intent iterator
+	 * so we do not pay one transaction restart_upgrade per extent just to
+	 * upgrade the lock during commit. Stripe keys also require intent before
+	 * bch2_stripe_handle_tryget() can safely race with stripe deletion.
+	 */
+	enum btree_iter_update_trigger_flags flags =
+		BTREE_ITER_all_snapshots|BTREE_ITER_intent;
 
-	CLASS(btree_iter, iter)(trans, data_pos.btree, data_pos.pos, BTREE_ITER_all_snapshots|flags);
+	CLASS(btree_iter, iter)(trans, data_pos.btree, data_pos.pos, flags);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 	if (!k.k)
 		return 0;
@@ -758,11 +762,13 @@ static int do_reconcile_extent_phys(struct moving_context *ctxt,
 	if (bch2_data_update_in_flight(c, &pos))
 		return 0;
 
-	/* We require holding an intent lock when calling
-	 * bch2_stripe_handle_tryget(), to avoid racing with the stripe trigger
-	 * deleting the stripe */
-	enum btree_iter_update_trigger_flags flags = bp.v->btree_id == BTREE_ID_stripes
-		? BTREE_ITER_intent : 0;
+	/*
+	 * Phys reconcile reaches the owning extent through a backpointer and
+	 * then updates that extent in the same transaction. Take the extent
+	 * iterator in intent mode up front to avoid restart_upgrade churn when
+	 * many adjacent extents are being reprocessed after shrink.
+	 */
+	enum btree_iter_update_trigger_flags flags = BTREE_ITER_intent;
 
 	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k = bkey_try(bch2_backpointer_get_key(trans, bp, &iter, flags, last_flushed));
