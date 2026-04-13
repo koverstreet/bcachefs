@@ -878,6 +878,86 @@ static int __trigger_extent(struct btree_trans *trans,
 	return 0;
 }
 
+static int bch2_trigger_extent_same_backpointers(struct btree_trans *trans,
+						 enum btree_id btree,
+						 unsigned level,
+						 struct bkey_s_c old,
+						 struct bkey_s new,
+						 bool *handled)
+{
+	struct bch_fs *c = trans->c;
+	struct bkey_i_backpointer old_bp[BCH_REPLICAS_MAX * 2];
+	struct bkey_i_backpointer new_bp[BCH_REPLICAS_MAX * 2];
+	struct bkey_ptrs_c ptrs;
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
+	unsigned nr_old = 0, nr_new = 0;
+	unsigned i;
+
+	*handled = false;
+	if (level)
+		return 0;
+
+	/*
+	 * Reconcile-only updates do not move the extent, they only toggle the
+	 * phys-work flag that is cached in rotational-data backpointers.  Do
+	 * not delete+reinsert those backpointers through the write buffer when
+	 * the key itself is unchanged: update the existing entry in place and
+	 * adjust the reconcile_work_phys bit separately.
+	 */
+	ptrs = bch2_bkey_ptrs_c(old);
+	bkey_for_each_ptr_decode(old.k, ptrs, p, entry) {
+		BUG_ON(nr_old == ARRAY_SIZE(old_bp));
+		bch2_extent_ptr_to_bp(c, btree, level, old, p, entry, &old_bp[nr_old++]);
+	}
+
+	ptrs = bch2_bkey_ptrs_c(new.s_c);
+	bkey_for_each_ptr_decode(new.k, ptrs, p, entry) {
+		BUG_ON(nr_new == ARRAY_SIZE(new_bp));
+		bch2_extent_ptr_to_bp(c, btree, level, new.s_c, p, entry, &new_bp[nr_new++]);
+	}
+
+	if (nr_old != nr_new)
+		return 0;
+
+	for (i = 0; i < nr_old; i++) {
+		struct bch_backpointer old_v = old_bp[i].v;
+		struct bch_backpointer new_v = new_bp[i].v;
+
+		SET_BACKPOINTER_RECONCILE_PHYS(&old_v, 0);
+		SET_BACKPOINTER_RECONCILE_PHYS(&new_v, 0);
+
+		if (!bpos_eq(old_bp[i].k.p, new_bp[i].k.p) ||
+		    memcmp(&old_v, &new_v, sizeof(old_v)))
+			return 0;
+	}
+
+	for (i = 0; i < nr_old; i++) {
+		unsigned old_phys = BACKPOINTER_RECONCILE_PHYS(&old_bp[i].v);
+		unsigned new_phys = BACKPOINTER_RECONCILE_PHYS(&new_bp[i].v);
+
+		if (!old_phys && !new_phys)
+			continue;
+
+		if (old_phys)
+			try(bch2_btree_bit_mod_buffered(trans,
+					reconcile_work_phys_btree[old_phys],
+					old_bp[i].k.p, false));
+
+		if (new_phys)
+			try(bch2_btree_bit_mod_buffered(trans,
+					reconcile_work_phys_btree[new_phys],
+					new_bp[i].k.p, true));
+
+		try(bch2_trans_update_buffered(trans,
+				backpointer_btree(&new_bp[i].v),
+				&new_bp[i].k_i));
+	}
+
+	*handled = true;
+	return 0;
+}
+
 int bch2_trigger_extent(struct btree_trans *trans,
 			enum btree_id btree, unsigned level,
 			struct bkey_s_c old, struct bkey_s new,
@@ -891,7 +971,20 @@ int bch2_trigger_extent(struct btree_trans *trans,
 	if (unlikely(flags & BTREE_TRIGGER_check_repair))
 		return bch2_check_fix_ptrs(trans, btree, level, new.s_c, flags);
 
-	/* if pointers aren't changing - nothing to do: */
+	/*
+	 * Reconcile-only updates keep the same physical pointers.  Update
+	 * their backpointer flags in place so buffered delete+insert churn
+	 * cannot drop the key, then let reconcile accounting/work tracking
+	 * see the logical-state change.
+	 */
+	if (level == 0) {
+		bool handled;
+
+		try(bch2_trigger_extent_same_backpointers(trans, btree, level, old, new, &handled));
+		if (handled)
+			return bch2_trigger_extent_reconcile(trans, btree, level, old, new, flags);
+	}
+
 	if (new_ptrs_bytes == old_ptrs_bytes &&
 	    !memcmp(new_ptrs.start,
 		    old_ptrs.start,
