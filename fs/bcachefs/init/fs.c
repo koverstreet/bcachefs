@@ -385,6 +385,15 @@ void bch2_fs_read_only(struct bch_fs *c)
 	bch_verbose(c, "going read-only");
 
 	/*
+	 * Close write points before stopping background data movers. Shrink can
+	 * leave copygc waiting on allocator space from its dedicated
+	 * write_point; dropping those open buckets first breaks that dependency
+	 * so kthread_stop() does not hang behind a move write that's blocked in
+	 * the allocator.
+	 */
+	bch2_open_buckets_stop(c, NULL, true, 0);
+
+	/*
 	 * Stop background data movers before disabling writes globally:
 	 * reconcile/copygc move writes don't hold c->writes refs, but they do
 	 * still need journal/btree write access to finish their final index
