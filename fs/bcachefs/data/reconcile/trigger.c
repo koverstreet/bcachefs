@@ -729,7 +729,14 @@ static int new_needs_rb_allowed(struct btree_trans *trans,
 	if (ret)
 		return min(ret, 0);
 
-	if (new_need_rb == BIT(BCH_RECONCILE_data_replicas)) {
+	/*
+	 * Device scans can add evacuation/rereplicate work on top of existing
+	 * reconcile state, e.g. an extent that was already waiting on
+	 * erasure-code conversion. While that scan cookie is pending, tolerate
+	 * missing data_replicas/hipri state even if other reconcile bits are
+	 * also set; the scan will rewrite the full reconcile entry.
+	 */
+	if (new_need_rb & BIT(BCH_RECONCILE_data_replicas)) {
 		ret = check_dev_reconcile_scan_cookie(trans, k, s ? &s->dev_cookie : NULL);
 		if (ret)
 			return min(ret, 0);

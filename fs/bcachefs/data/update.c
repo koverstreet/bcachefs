@@ -712,7 +712,13 @@ static inline bool should_trace_update_err(struct data_update *u, int ret)
 	    ((u->opts.type == BCH_DATA_UPDATE_reconcile ||
 	      u->opts.type == BCH_DATA_UPDATE_promote) &&
 	     (bch2_err_matches(ret, BCH_ERR_data_update_fail_no_rw_devs) ||
-	      bch2_err_matches(ret, BCH_ERR_insufficient_devices))))
+	      bch2_err_matches(ret, BCH_ERR_insufficient_devices) ||
+	      /*
+	       * Reconcile promotes ENOSPC-class write failures to pending work
+	       * and retries after space/stripe availability changes, so don't
+	       * count those transient allocation misses as data update failures.
+	       */
+	      bch2_err_matches(ret, ENOSPC))))
 		return false;
 
 	return true;
@@ -1400,8 +1406,24 @@ int bch2_data_update_init(struct btree_trans *trans,
 			}
 		}
 
-		if (!rhltable_insert_key(&c->update_table, &m->pos, &m->hash, bch_update_params))
-			m->on_hashtable = true;
+		/*
+		 * Phys reconcile can queue the same logical extent from multiple
+		 * source devices. The lookup above is only a fast path; another
+		 * mover can still win the race and claim @m->pos before we insert.
+		 * Use the non-list insert helper so only one update owns the key.
+		 */
+		ret = rhashtable_lookup_insert_fast(&c->update_table.ht,
+						    &m->hash.rhead,
+						    bch_update_params);
+		if (ret == -EEXIST) {
+			event_inc(c, data_update_in_flight);
+			ret = bch_err_throw(c, data_update_fail_in_flight);
+			goto out;
+		}
+		if (ret)
+			goto out;
+
+		m->on_hashtable = true;
 	} else {
 		if (unwritten) {
 			ret = bch_err_throw(c, data_update_done_unwritten);
