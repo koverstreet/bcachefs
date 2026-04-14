@@ -45,7 +45,7 @@ static unsigned journal_alloc_target(struct bch_fs *c)
 	for_each_set_bit(i, devs.d, BCH_SB_MEMBERS_MAX) {
 		struct bch_dev *ca = bch2_dev_rcu_noerror(c, i);
 
-		if (ca && !ca->mi.target_nbuckets)
+		if (ca && !bch2_dev_is_shrinking(ca))
 			return target;
 	}
 

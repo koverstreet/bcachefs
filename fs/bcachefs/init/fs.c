@@ -394,6 +394,14 @@ void bch2_fs_read_only(struct bch_fs *c)
 	bch2_open_buckets_stop(c, NULL, true, 0);
 
 	/*
+	 * Stop per-device resize workers while writes are still available.
+	 * A pending resize may be in the middle of transactional alloc/accounting
+	 * updates; if it survives into clean shutdown it can trip write-path
+	 * assertions while the filesystem is already going read-only.
+	 */
+	bch2_dev_resize_threads_stop(c);
+
+	/*
 	 * Stop background data movers before disabling writes globally:
 	 * reconcile/copygc move writes don't hold c->writes refs, but they do
 	 * still need journal/btree write access to finish their final index
@@ -1547,15 +1555,15 @@ int bch2_fs_resize_on_mount(struct bch_fs *c)
 		return 0;
 
 	for_each_online_member(c, ca, BCH_DEV_READ_REF_fs_resize_on_mount) {
-		if (!ca->mi.target_nbuckets)
+		if (!bch2_dev_resize_pending(ca))
 			continue;
 
 		CLASS(printbuf, err)();
 		int ret;
 
-		bch_info_dev(ca, "resuming shrink to size %llu",
-			     ca->mi.target_nbuckets * ca->mi.bucket_size);
-		ret = bch2_dev_shrink_resume(c, ca, &err);
+		bch_info_dev(ca, "resuming resize to size %llu",
+			     bch2_dev_resize_target(ca) * ca->mi.bucket_size);
+		ret = bch2_dev_resize_resume(c, ca, &err);
 		if (ret) {
 			if (err.pos)
 				bch_err_dev(ca, "%s", err.buf);

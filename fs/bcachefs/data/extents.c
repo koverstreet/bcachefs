@@ -1349,7 +1349,8 @@ static bool maybe_drop_cached_ptr(struct bch_fs *c, struct bch_inode_opts *opts,
 			return drop_cached_pointer_trace(c, k, ptr, "pointer is stale");
 		if (!ca || ca->mi.state == BCH_MEMBER_STATE_evacuating)
 			return drop_cached_pointer_trace(c, k, ptr, "device bad or evacuating");
-		if (ca->mi.target_nbuckets && ca->mi.target_nbuckets <= sector_to_bucket(ca, ptr->offset))
+		if (bch2_dev_is_shrinking(ca) &&
+		    bch2_dev_resize_target(ca) <= sector_to_bucket(ca, ptr->offset))
 			return drop_cached_pointer_trace(c, k, ptr, "past shrink cutoff");
 
 		unsigned target = opts->promote_target ?: opts->foreground_target;

@@ -33,6 +33,8 @@
 
 #define race_fault(...)			dynamic_fault("bcachefs:race")
 
+struct task_struct;
+
 #include <linux/backing-dev-defs.h>
 #include <linux/bug.h>
 #include <linux/bio.h>
@@ -521,6 +523,11 @@ struct bch_dev {
 	unsigned		nr_btree_reserve;
 
 	struct work_struct	invalidate_work;
+	spinlock_t		resize_lock;
+	u64			resize_seq;
+	wait_queue_head_t	resize_wait;
+	int			resize_status;
+	struct task_struct	*resize_thread;
 
 	struct work_struct	discard_fast_work;
 	darray_u64		discard_fast;

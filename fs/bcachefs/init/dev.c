@@ -235,12 +235,15 @@
 
 #include "linux/bitmap.h"
 #include "linux/byteorder/generic.h"
+#include "linux/kthread.h"
 #include "linux/sched.h"
 #include "linux/sched/signal.h"
 #include "sb/io.h"
 #include "sb/members.h"
 #include "sb/members_format.h"
 #include "util/util.h"
+
+static void bch2_dev_resize_thread_stop(struct bch_dev *);
 
 #define x(n)		#n,
 const char * const bch2_dev_read_refs[] = {
@@ -465,6 +468,7 @@ void bch2_dev_free(struct bch_dev *ca)
 	WARN_ON(!enumerated_ref_is_zero(&ca->io_ref[WRITE]));
 	WARN_ON(!enumerated_ref_is_zero(&ca->io_ref[READ]));
 
+	bch2_dev_resize_thread_stop(ca);
 	cancel_work_sync(&ca->io_error_work);
 
 	bch2_dev_unlink(ca);
@@ -552,6 +556,9 @@ static struct bch_dev *__bch2_dev_alloc(struct bch_fs *c,
 
 	kobject_init(&ca->kobj, &bch2_dev_ktype);
 	init_completion(&ca->ref_completion);
+	spin_lock_init(&ca->resize_lock);
+	init_waitqueue_head(&ca->resize_wait);
+	ca->resize_status = 0;
 
 	INIT_WORK(&ca->io_error_work, bch2_io_error_work);
 
@@ -1257,23 +1264,157 @@ int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags, struct pri
 	return 0;
 }
 
-int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err)
+static u64 bch2_dev_resize_seq(struct bch_dev *ca)
 {
-	u64 old_nbuckets;
+	u64 seq;
 
-	old_nbuckets = ca->mi.nbuckets;
+	scoped_guard(spinlock, &ca->resize_lock)
+		seq = ca->resize_seq;
 
-	if (new_nbuckets > old_nbuckets) {
-		return bch2_dev_grow(c, ca, new_nbuckets, err);
-	} else if (new_nbuckets < old_nbuckets) {
-		return bch2_dev_shrink(c, ca, new_nbuckets, err);
-	} else {
-		return 0;
+	return seq;
+}
+
+static bool bch2_dev_resize_wait_done(struct bch_dev *ca, u64 seq, int *status)
+{
+	bool done;
+
+	scoped_guard(spinlock, &ca->resize_lock) {
+		done = ca->resize_seq != seq ||
+			ca->resize_status != -EINPROGRESS;
+		if (done)
+			*status = ca->resize_seq != seq
+				? -ECANCELED
+				: ca->resize_status;
 	}
+
+	return done;
+}
+
+static int bch2_dev_resize_wait(struct bch_dev *ca, u64 seq)
+{
+	int status = -EINPROGRESS;
+	int ret = wait_event_killable(ca->resize_wait,
+				      bch2_dev_resize_wait_done(ca, seq, &status));
+
+	return ret ? -EINTR : status;
+}
+
+static bool bch2_dev_resize_finish(struct bch_dev *ca, u64 seq, int status)
+{
+	bool is_current;
+
+	scoped_guard(spinlock, &ca->resize_lock) {
+		is_current = ca->resize_seq == seq;
+		if (is_current)
+			ca->resize_status = status;
+	}
+
+	if (is_current)
+		wake_up_all(&ca->resize_wait);
+
+	return is_current;
+}
+
+static int bch2_dev_resize_restart_check(struct bch_dev *ca, u64 seq)
+{
+	if (kthread_should_stop())
+		return -EINTR;
+
+	return bch2_dev_resize_seq(ca) != seq ? -EAGAIN : 0;
+}
+
+static int bch2_dev_resize_thread(void *arg);
+
+static int bch2_dev_resize_thread_start(struct bch_dev *ca)
+{
+	struct bch_fs *c = ca->fs;
+
+	lockdep_assert_held(&c->state_lock);
+
+	if (ca->resize_thread)
+		return 0;
+
+	struct task_struct *p =
+		kthread_create(bch2_dev_resize_thread, ca,
+			       "bch-resize/%s:%u", c->name, ca->dev_idx);
+	int ret = PTR_ERR_OR_ZERO(p);
+	if (ret)
+		return ret;
+
+	get_task_struct(p);
+	ca->resize_thread = p;
+	wake_up_process(p);
+	return 0;
+}
+
+static void bch2_dev_resize_thread_stop(struct bch_dev *ca)
+{
+	scoped_guard(spinlock, &ca->resize_lock) {
+		ca->resize_seq++;
+		ca->resize_status = -EINTR;
+	}
+
+	if (ca->resize_thread) {
+		kthread_stop(ca->resize_thread);
+		put_task_struct(ca->resize_thread);
+		ca->resize_thread = NULL;
+	}
+
+	wake_up_all(&ca->resize_wait);
+}
+
+void bch2_dev_resize_threads_stop(struct bch_fs *c)
+{
+	for_each_member_device(c, ca)
+		bch2_dev_resize_thread_stop(ca);
+}
+
+static int bch2_dev_resize_update_target(struct bch_fs *c, struct bch_dev *ca,
+					 u64 target_nbuckets, struct printbuf *err)
+{
+	lockdep_assert_held(&c->state_lock);
+
+	u64 old_nbuckets = ca->mi.nbuckets;
+
+	if (target_nbuckets > BCH_MEMBER_NBUCKETS_MAX) {
+		prt_printf(err, "New device size too big (%llu greater than max %u)\n",
+			   target_nbuckets, BCH_MEMBER_NBUCKETS_MAX);
+		return bch_err_throw(c, device_size_too_big);
+	}
+
+	if (target_nbuckets &&
+	    target_nbuckets < old_nbuckets &&
+	    target_nbuckets < ca->mi.first_bucket + BCH_MIN_NR_NBUCKETS) {
+		prt_printf(err, "New device size too small (%llu smaller than min %llu)\n",
+			   target_nbuckets,
+			   (u64) ca->mi.first_bucket + BCH_MIN_NR_NBUCKETS);
+		return bch_err_throw(c, device_size_too_small);
+	}
+
+	if (target_nbuckets > old_nbuckets &&
+	    bch2_dev_is_online(ca) &&
+	    get_capacity(ca->disk_sb.bdev->bd_disk) <
+	    ca->mi.bucket_size * target_nbuckets) {
+		prt_printf(err, "New size %llu larger than device size %llu\n",
+			   ca->mi.bucket_size * target_nbuckets,
+			   get_capacity(ca->disk_sb.bdev->bd_disk));
+		return bch_err_throw(c, device_size_too_small);
+	}
+
+	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+		guard(mutex)(&c->sb_lock);
+		struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
+
+		m->target_nbuckets = cpu_to_le64(target_nbuckets);
+		try(bch2_write_super(c));
+	}
+
+	return 0;
 }
 
 /* requires write state lock */
-int bch2_dev_grow(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err)
+static int __bch2_dev_grow(struct bch_fs *c, struct bch_dev *ca,
+			   u64 new_nbuckets, struct printbuf *err)
 {
 	guard(rwsem_write)(&c->state_lock);
 
@@ -1322,6 +1463,8 @@ int bch2_dev_grow(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct
 		guard(mutex)(&c->sb_lock);
 		struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
 		m->nbuckets = cpu_to_le64(new_nbuckets);
+		if (bch2_dev_resize_target(ca) == new_nbuckets)
+			m->target_nbuckets = 0;
 
 		bch2_write_super(c);
 	}
@@ -1470,8 +1613,7 @@ static int tail_is_empty(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets,
 
 
 static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
-			     u64 new_nbuckets, struct printbuf *err,
-			     bool resuming)
+			     u64 new_nbuckets, u64 seq, struct printbuf *err)
 {
 	u64 old_nbuckets = ca->mi.nbuckets;
 
@@ -1480,32 +1622,16 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 	scoped_guard(rwsem_write, &c->state_lock) {
 		/* validate shrink size */
 		if (new_nbuckets >= old_nbuckets) {
-			return 0;
+			return -EAGAIN;
 		}
 
-		u64 first_bucket = ca->mi.first_bucket;
-		if (new_nbuckets < first_bucket + BCH_MIN_NR_NBUCKETS) {
-			prt_printf(err, "New device size too small (%llu smaller than min %llu)\n",
-				   new_nbuckets, first_bucket + BCH_MIN_NR_NBUCKETS);
-			return bch_err_throw(c, device_size_too_small);
-		}
+		ret = bch2_dev_resize_restart_check(ca, seq);
+		if (ret)
+			return ret;
 
-		if (ca->mi.target_nbuckets) {
-			if (!resuming || ca->mi.target_nbuckets != new_nbuckets) {
-				prt_printf(err, "Device already resizing (current target: %llu, new target: %llu)\n",
-					   ca->mi.target_nbuckets, new_nbuckets);
-				return bch_err_throw(c, device_already_resizing);
-			}
-		} else {
-			/* write & commit target_nbuckets - also stops new allocations */
-			scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
-				guard(mutex)(&c->sb_lock);
-				struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
-				m->target_nbuckets = cpu_to_le64(new_nbuckets);
-
-				try(bch2_write_super(c));
-			}
-		}
+		if (bch2_dev_resize_target(ca) != new_nbuckets ||
+		    !bch2_dev_is_shrinking(ca))
+			return -EAGAIN;
 
 		/* close open buckets in the to-be-shrunk region */
 		bch2_open_buckets_stop(c, ca, false, new_nbuckets);
@@ -1528,12 +1654,20 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 		}
 	};
 
+	ret = bch2_dev_resize_restart_check(ca, seq);
+	if (ret)
+		return ret;
+
 	/*
 	 * Move journal buckets out of the tail up front: otherwise the journal
 	 * can keep reintroducing metadata references in the region we're trying
 	 * to evacuate while reconcile is draining backpointers from it.
 	 */
 	ret = move_journal_past_cutoff(c, ca, new_nbuckets, err);
+	if (ret)
+		return ret;
+
+	ret = bch2_dev_resize_restart_check(ca, seq);
 	if (ret)
 		return ret;
 
@@ -1548,6 +1682,11 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 	/* wait for to-be-shrunk region to be empty */
 	while (true) {
 		bool empty = false;
+
+		ret = bch2_dev_resize_restart_check(ca, seq);
+		if (ret)
+			return ret;
+
 		try(tail_is_empty(c, ca, new_nbuckets, err, &empty));
 
 		/* do a definitive check */
@@ -1566,10 +1705,10 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 		/* make sure reconcile is actually running */
 		bch2_reconcile_wakeup(c);
 
-		if (signal_pending(current))
+		if (kthread_should_stop())
 			return -EINTR;
 
-		schedule_timeout_killable(HZ/2);
+		schedule_timeout_interruptible(HZ/2);
 	}
 
 	/*
@@ -1582,7 +1721,19 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 	if (ret)
 		return ret;
 
+	ret = bch2_dev_resize_restart_check(ca, seq);
+	if (ret)
+		return ret;
+
 	scoped_guard(rwsem_write, &c->state_lock) {
+		ret = bch2_dev_resize_restart_check(ca, seq);
+		if (ret)
+			return ret;
+
+		if (bch2_dev_resize_target(ca) != new_nbuckets ||
+		    !bch2_dev_is_shrinking(ca))
+			return -EAGAIN;
+
 		/* flush interior updates - mirroring dev remove path */
 		bch2_btree_interior_updates_flush(c);
 
@@ -1650,8 +1801,9 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 			guard(mutex)(&c->sb_lock);
 			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
-			m->target_nbuckets = 0;
 			m->nbuckets = cpu_to_le64(new_nbuckets);
+			if (bch2_dev_resize_target(ca) == new_nbuckets)
+				m->target_nbuckets = 0;
 
 			try(bch2_write_super(c));
 		}
@@ -1677,18 +1829,112 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 	return 0;
 }
 
-int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
-		    u64 new_nbuckets, struct printbuf *err)
+static int bch2_dev_resize_thread(void *arg)
 {
-	return __bch2_dev_shrink(c, ca, new_nbuckets, err, false);
+	struct bch_dev *ca = arg;
+	struct bch_fs *c = ca->fs;
+	u64 seen_seq = 0;
+
+	set_freezable();
+
+	while (!kthread_should_stop()) {
+		kthread_wait_freezable(kthread_should_stop() ||
+				       bch2_dev_resize_seq(ca) != seen_seq);
+		if (kthread_should_stop())
+			break;
+
+		while (!kthread_should_stop()) {
+			u64 seq = bch2_dev_resize_seq(ca);
+			u64 target = bch2_dev_resize_target(ca);
+			int ret;
+			CLASS(printbuf, err)();
+
+			if (target == ca->mi.nbuckets) {
+				ret = 0;
+			} else if (target > ca->mi.nbuckets) {
+				ret = __bch2_dev_grow(c, ca, target, &err);
+			} else {
+				ret = __bch2_dev_shrink(c, ca, target, seq, &err);
+			}
+
+			if (ret == -EAGAIN)
+				continue;
+
+			if (ret && err.pos)
+				bch_err_dev(ca, "%s", err.buf);
+			else if (ret && ret != -EINTR)
+				bch_err_fn_dev(ca, ret);
+
+			seen_seq = bch2_dev_resize_seq(ca);
+			if (ret == -EINTR)
+				break;
+			if (!bch2_dev_resize_finish(ca, seq, ret))
+				continue;
+			break;
+		}
+	}
+
+	return 0;
 }
 
-int bch2_dev_shrink_resume(struct bch_fs *c, struct bch_dev *ca,
+static int bch2_dev_resize_kick(struct bch_dev *ca)
+{
+	u64 seq;
+
+	scoped_guard(spinlock, &ca->resize_lock) {
+		seq = ++ca->resize_seq;
+		ca->resize_status = -EINPROGRESS;
+	}
+
+	wake_up_process(ca->resize_thread);
+	return bch2_dev_resize_wait(ca, seq);
+}
+
+int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err)
+{
+	int ret = 0;
+	u64 target_nbuckets;
+
+	scoped_guard(rwsem_write, &c->state_lock) {
+		target_nbuckets = new_nbuckets == ca->mi.nbuckets
+			? 0
+			: new_nbuckets;
+
+		ret = bch2_dev_resize_thread_start(ca);
+		if (ret)
+			return ret;
+
+		ret = bch2_dev_resize_update_target(c, ca, target_nbuckets, err);
+		if (ret)
+			return ret;
+	}
+
+	ret = bch2_dev_resize_kick(ca);
+	if (ret == -ECANCELED)
+		prt_printf(err, "Resize request superseded by a newer target\n");
+	else if (ret && ret != -EINTR && !err->pos)
+		prt_printf(err, "Resize worker failed; see kernel log for details\n");
+	return ret;
+}
+
+int bch2_dev_resize_resume(struct bch_fs *c, struct bch_dev *ca,
 			   struct printbuf *err)
 {
-	return ca->mi.target_nbuckets
-		? __bch2_dev_shrink(c, ca, ca->mi.target_nbuckets, err, true)
-		: 0;
+	int ret = 0;
+
+	if (!bch2_dev_resize_pending(ca))
+		return 0;
+
+	scoped_guard(rwsem_write, &c->state_lock) {
+		ret = bch2_dev_resize_thread_start(ca);
+		if (ret)
+			return ret;
+	}
+
+	ret = bch2_dev_resize_kick(ca);
+	if (ret && ret != -ECANCELED && ret != -EINTR && !err->pos)
+		prt_printf(err, "Resize resume failed; see kernel log for details\n");
+	return ret;
 }
 
 /* Resize on mount */

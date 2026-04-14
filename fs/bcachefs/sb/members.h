@@ -258,10 +258,35 @@ static inline bool bch2_dev_bad_or_evacuating(struct bch_fs *c, unsigned dev)
 	return bch2_dev_bad_or_evacuating_rcu(c, dev);
 }
 
+static inline u64 bch2_dev_resize_target(const struct bch_dev *ca)
+{
+	u64 target = READ_ONCE(ca->mi.target_nbuckets);
+
+	return target ?: READ_ONCE(ca->mi.nbuckets);
+}
+
+static inline bool bch2_dev_resize_pending(const struct bch_dev *ca)
+{
+	return bch2_dev_resize_target(ca) != READ_ONCE(ca->mi.nbuckets);
+}
+
+static inline bool bch2_dev_is_shrinking(const struct bch_dev *ca)
+{
+	return bch2_dev_resize_target(ca) < READ_ONCE(ca->mi.nbuckets);
+}
+
+static inline bool bch2_dev_is_growing(const struct bch_dev *ca)
+{
+	return bch2_dev_resize_target(ca) > READ_ONCE(ca->mi.nbuckets);
+}
+
 static inline bool bch2_ptr_bad_or_evacuating_rcu(struct bch_fs *c, const struct bch_extent_ptr *ptr) {
 	struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
 
-	return !ca || bch2_dev_bad_or_evacuating_rcu(c, ptr->dev) || (ca->mi.target_nbuckets && ca->mi.target_nbuckets <= div_u64(ptr->offset, ca->mi.bucket_size));
+	return !ca ||
+		bch2_dev_bad_or_evacuating_rcu(c, ptr->dev) ||
+		(bch2_dev_is_shrinking(ca) &&
+		 bch2_dev_resize_target(ca) <= div_u64(ptr->offset, ca->mi.bucket_size));
 }
 
 static inline bool bch2_ptr_bad_or_evacuating(struct bch_fs *c, const struct bch_extent_ptr *ptr) {

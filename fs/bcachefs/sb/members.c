@@ -207,21 +207,22 @@ static int validate_member(struct printbuf *err,
 	u64 target_nbuckets = le64_to_cpu(m.target_nbuckets);
 
 	if (target_nbuckets) {
-		if (target_nbuckets >= nbuckets) {
-			prt_printf(err, "device %u: target buckets >= buckets (got %llu, nbuckets %llu)",
-				   i, target_nbuckets, nbuckets);
-			return -BCH_ERR_invalid_sb_members;
-		}
-
 		if (target_nbuckets < first_bucket) {
 			prt_printf(err, "device %u: target buckets starts before first bucket (got %llu, first %u)",
 				   i, target_nbuckets, first_bucket);
 			return -BCH_ERR_invalid_sb_members;
 		}
 
-		if (target_nbuckets - first_bucket < BCH_MIN_NR_NBUCKETS) {
+		if (target_nbuckets < nbuckets &&
+		    target_nbuckets - first_bucket < BCH_MIN_NR_NBUCKETS) {
 			prt_printf(err, "device %u: not enough target buckets (got %llu, min %u)",
 				   i, target_nbuckets - first_bucket, BCH_MIN_NR_NBUCKETS);
+			return -BCH_ERR_invalid_sb_members;
+		}
+
+		if (target_nbuckets > BCH_MEMBER_NBUCKETS_MAX) {
+			prt_printf(err, "device %u: target buckets too big (got %llu, max %u)",
+				   i, target_nbuckets, BCH_MEMBER_NBUCKETS_MAX);
 			return -BCH_ERR_invalid_sb_members;
 		}
 	}
