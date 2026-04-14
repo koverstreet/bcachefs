@@ -754,8 +754,7 @@ use_clean:
 
 	try(journal_replay_early(c, clean));
 
-	scoped_guard(rwsem_write, &c->state_lock)
-		try(bch2_fs_resize_on_mount(c));
+	try(bch2_fs_resize_on_mount(c));
 
 	if (c->sb.features & BIT_ULL(BCH_FEATURE_small_image)) {
 		bch_info(c, "filesystem is an unresized image file, mounting ro");
@@ -884,6 +883,8 @@ use_clean:
 	 */
 	set_bit(BCH_FS_may_go_rw, &c->flags);
 	clear_bit(BCH_FS_in_fsck, &c->flags);
+
+	try(bch2_fs_resize_on_mount(c));
 
 	/* in case we don't run journal replay, i.e. norecovery mode */
 	set_bit(BCH_FS_accounting_replay_done, &c->flags);

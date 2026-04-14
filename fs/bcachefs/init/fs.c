@@ -1493,40 +1493,78 @@ static bool bch2_fs_will_resize_on_mount(struct bch_fs *c)
 
 int bch2_fs_resize_on_mount(struct bch_fs *c)
 {
-	for_each_online_member(c, ca, BCH_DEV_READ_REF_fs_resize_on_mount) {
-		if (bch2_dev_will_resize_on_mount(ca)) {
-			u64 old_nbuckets = ca->mi.nbuckets;
-			u64 new_nbuckets = div64_u64(get_capacity(ca->disk_sb.bdev->bd_disk),
-						     ca->mi.bucket_size);
+	scoped_guard(rwsem_write, &c->state_lock) {
+		for_each_online_member(c, ca, BCH_DEV_READ_REF_fs_resize_on_mount) {
+			if (bch2_dev_will_resize_on_mount(ca)) {
+				u64 old_nbuckets = ca->mi.nbuckets;
+				u64 new_nbuckets = div64_u64(get_capacity(ca->disk_sb.bdev->bd_disk),
+							     ca->mi.bucket_size);
 
-			bch_info_dev(ca, "resizing to size %llu", new_nbuckets * ca->mi.bucket_size);
-			int ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
-			bch_err_fn_dev(ca, ret);
-			if (ret) {
-				enumerated_ref_put(&ca->io_ref[READ],
-						   BCH_DEV_READ_REF_fs_resize_on_mount);
-				return ret;
-			}
-
-			scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
-				guard(mutex)(&c->sb_lock);
-				struct bch_member *m =
-					bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
-				m->nbuckets = cpu_to_le64(new_nbuckets);
-				SET_BCH_MEMBER_RESIZE_ON_MOUNT(m, false);
-
-				c->disk_sb.sb->features[0] &= ~cpu_to_le64(BIT_ULL(BCH_FEATURE_small_image));
-				bch2_write_super(c);
-			}
-
-			if (ca->mi.freespace_initialized) {
-				ret = __bch2_dev_resize_alloc(ca, old_nbuckets, new_nbuckets);
+				bch_info_dev(ca, "resizing to size %llu", new_nbuckets * ca->mi.bucket_size);
+				int ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
+				bch_err_fn_dev(ca, ret);
 				if (ret) {
 					enumerated_ref_put(&ca->io_ref[READ],
-							BCH_DEV_READ_REF_fs_resize_on_mount);
+							   BCH_DEV_READ_REF_fs_resize_on_mount);
 					return ret;
 				}
+
+				scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+					guard(mutex)(&c->sb_lock);
+					struct bch_member *m =
+						bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
+					m->nbuckets = cpu_to_le64(new_nbuckets);
+					SET_BCH_MEMBER_RESIZE_ON_MOUNT(m, false);
+
+					c->disk_sb.sb->features[0] &= ~cpu_to_le64(BIT_ULL(BCH_FEATURE_small_image));
+					bch2_write_super(c);
+				}
+
+				if (ca->mi.freespace_initialized) {
+					ret = __bch2_dev_resize_alloc(ca, old_nbuckets, new_nbuckets);
+					if (ret) {
+						enumerated_ref_put(&ca->io_ref[READ],
+								BCH_DEV_READ_REF_fs_resize_on_mount);
+						return ret;
+					}
+				}
 			}
+		}
+	}
+
+	/*
+	 * A pending shrink needs reconcile_scan and backpointer btree access.
+	 * The early resize-on-mount hook runs before btree roots are read so it
+	 * can handle grow-on-mount image expansion; defer shrink resume until a
+	 * later call once BCH_FS_btree_running is set.
+	 */
+	if (!test_bit(BCH_FS_btree_running, &c->flags))
+		return 0;
+
+	if (c->opts.read_only ||
+	    (c->sb.features & (BIT_ULL(BCH_FEATURE_small_image) |
+			       BIT_ULL(BCH_FEATURE_no_default_sb))))
+		return 0;
+
+	for_each_online_member(c, ca, BCH_DEV_READ_REF_fs_resize_on_mount) {
+		if (!ca->mi.target_nbuckets)
+			continue;
+
+		CLASS(printbuf, err)();
+		int ret;
+
+		bch_info_dev(ca, "resuming shrink to size %llu",
+			     ca->mi.target_nbuckets * ca->mi.bucket_size);
+		ret = bch2_dev_shrink_resume(c, ca, &err);
+		if (ret) {
+			if (err.pos)
+				bch_err_dev(ca, "%s", err.buf);
+			else
+				bch_err_fn_dev(ca, ret);
+
+			enumerated_ref_put(&ca->io_ref[READ],
+					   BCH_DEV_READ_REF_fs_resize_on_mount);
+			return ret;
 		}
 	}
 	return 0;

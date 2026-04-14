@@ -1469,8 +1469,10 @@ static int tail_is_empty(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets,
 }
 
 
-// TODO: resume shrink on startup
-int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err) {
+static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
+			     u64 new_nbuckets, struct printbuf *err,
+			     bool resuming)
+{
 	u64 old_nbuckets = ca->mi.nbuckets;
 
 	int ret = 0;
@@ -1489,24 +1491,32 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 		}
 
 		if (ca->mi.target_nbuckets) {
-			prt_printf(err, "Device already resizing (current target: %llu, new target: %llu\n", ca->mi.target_nbuckets, new_nbuckets);
-			return bch_err_throw(c, device_already_resizing);
-		}
+			if (!resuming || ca->mi.target_nbuckets != new_nbuckets) {
+				prt_printf(err, "Device already resizing (current target: %llu, new target: %llu)\n",
+					   ca->mi.target_nbuckets, new_nbuckets);
+				return bch_err_throw(c, device_already_resizing);
+			}
+		} else {
+			/* write & commit target_nbuckets - also stops new allocations */
+			scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+				guard(mutex)(&c->sb_lock);
+				struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
+				m->target_nbuckets = cpu_to_le64(new_nbuckets);
 
-		/* write & commit target_nbuckets - also stops new allocations */
-		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
-			guard(mutex)(&c->sb_lock);
-			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
-			m->target_nbuckets = cpu_to_le64(new_nbuckets);
-
-			try(bch2_write_super(c));
+				try(bch2_write_super(c));
+			}
 		}
 
 		/* close open buckets in the to-be-shrunk region */
 		bch2_open_buckets_stop(c, ca, false, new_nbuckets);
 		bch2_reset_alloc_cursors(c); // avoid churn
 
-		/* trigger reconcile range scan -> should kick off evacuation from range */
+		/*
+		 * target_nbuckets persists in the superblock, but the device
+		 * scan's in-memory traversal state does not. Re-queue the
+		 * device scan whenever shrink starts or resumes so reconcile
+		 * reliably rediscovers the tail after a restart.
+		 */
 		struct reconcile_scan s = {
 			.type = RECONCILE_SCAN_device, // TODO(performance): make this range-based
 			.dev = ca->dev_idx,
@@ -1665,6 +1675,20 @@ int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 		bch2_recalc_capacity(c);
 	}
 	return 0;
+}
+
+int bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
+		    u64 new_nbuckets, struct printbuf *err)
+{
+	return __bch2_dev_shrink(c, ca, new_nbuckets, err, false);
+}
+
+int bch2_dev_shrink_resume(struct bch_fs *c, struct bch_dev *ca,
+			   struct printbuf *err)
+{
+	return ca->mi.target_nbuckets
+		? __bch2_dev_shrink(c, ca, ca->mi.target_nbuckets, err, true)
+		: 0;
 }
 
 /* Resize on mount */
