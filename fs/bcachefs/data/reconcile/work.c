@@ -211,14 +211,23 @@ static struct bkey_s_c next_reconcile_entry(struct btree_trans *trans,
 	if (work_pos->btree == BTREE_ID_reconcile_scan) {
 		buf->nr = 0;
 
-		int ret = for_each_btree_key_max(trans, iter, work_pos->btree, work_pos->pos, end,
-				   flags, k, ({
-			bkey_reassemble(&darray_top(*buf), k);
-			return bkey_i_to_s_c(&darray_top(*buf));
-			0;
-		}));
+		/*
+		 * Do not return out of a for_each_btree_key_* body here: we want
+		 * the iterator fully dropped before reconcile starts mutating the
+		 * extent that this work item points at. Keeping the reconcile_scan
+		 * path pinned across the later move/rewrite can deadlock against
+		 * alloc/freespace updates from the same transaction.
+		 */
+		CLASS(btree_iter, iter)(trans, work_pos->btree, work_pos->pos, flags);
+		struct bkey_s_c k = bch2_btree_iter_peek(&iter);
 
-		return ret ? bkey_s_c_err(ret) : bkey_s_c_null;
+		if (bkey_err(k))
+			return bkey_s_c_err(bkey_err(k));
+		if (!k.k || bpos_gt(k.k->p, end))
+			return bkey_s_c_null;
+
+		bkey_reassemble(&darray_top(*buf), k);
+		return bkey_i_to_s_c(&darray_top(*buf));
 	}
 
 	if (unlikely(!buf->nr)) {
@@ -1217,6 +1226,15 @@ static CLOSURE_CALLBACK(do_reconcile_phys_thread)
 		    k.k->p.inode != thr->dev)
 			break;
 
+		/*
+		 * Drop any cached search paths from next_reconcile_entry() before
+		 * we start the actual move work: otherwise reconcile_scan or
+		 * backpointer paths looked up to choose the work item can stay
+		 * pinned in this transaction and deadlock against alloc/freespace
+		 * updates during btree node rewrites.
+		 */
+		bch2_trans_begin(trans);
+
 		int ret = lockrestart_do(trans,
 			do_reconcile_extent_phys(&ctxt, &snapshot_io_opts,
 						 BBPOS(work_pos.btree, k.k->p),
@@ -1369,6 +1387,14 @@ static int do_reconcile(struct moving_context *ctxt)
 		if (k.k->type == KEY_TYPE_cookie &&
 		    reconcile_scan_decode(c, k.k->p.offset).type == RECONCILE_SCAN_pending)
 			bkey_reassemble(&pending_cookie.k_i, k);
+
+		/*
+		 * next_reconcile_entry() may have touched reconcile_scan or other
+		 * work btrees to select this item. Start the actual reconcile work
+		 * in a fresh transaction so those cached paths are gone before we
+		 * mutate alloc/freespace state via move_extent().
+		 */
+		bch2_trans_begin(trans);
 
 		if (k.k->type == KEY_TYPE_cookie) {
 			ret = do_reconcile_scan(ctxt, &snapshot_io_opts,
