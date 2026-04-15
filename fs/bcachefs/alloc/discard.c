@@ -171,6 +171,11 @@ int bch2_dev_clear_need_discard(struct bch_fs *c, struct bch_dev *ca, u64 cutoff
 			} else {
 				struct bpos bucket = u64_to_bucket(k.k->p.offset);
 
+				/*
+				 * need_discard is ordered by (journal seq, encoded bucket),
+				 * not by device bucket space, so tail truncation has to
+				 * scan and filter by the decoded bucket position.
+				 */
 				next = bpos_successor(k.k->p);
 
 				if (bucket.inode == ca->dev_idx &&
@@ -273,31 +278,59 @@ static void bch2_do_discards(struct bch_fs *c)
 		memset(s, 0, sizeof(*s));
 
 		struct bpos discard_pos_done = POS_MAX;
+		struct bpos pos = POS_MIN;
 
 		/*
 		 * Iterate need_discard btree (sorted by journal_seq).
 		 * Stop when we hit a seq beyond rewind_seq_ondisk.
 		 */
-		ret = for_each_btree_key(trans, iter,
-				BTREE_ID_need_discard, POS_MIN, 0, k, ({
-			u64 journal_seq = k.k->p.inode;
-			struct bpos bucket = u64_to_bucket(k.k->p.offset);
-			int _ret = 0;
+		while (!ret) {
+			struct bpos next = POS_MAX;
+			struct bpos bucket = POS_MAX;
+			u64 journal_seq = 0;
+			bool done = false;
 
-			s->pos = iter.pos;
+			/*
+			 * Drop the need_discard iterator before we update alloc and
+			 * commit: the discard path removes the corresponding index
+			 * entry, and keeping the original iterator pinned across that
+			 * commit can deadlock against the alloc/freespace updates.
+			 */
+			ret = lockrestart_do(trans, ({
+				int __ret = 0;
+				CLASS(btree_iter, iter)(trans, BTREE_ID_need_discard, pos, 0);
+				struct bkey_s_c k = bch2_btree_iter_peek(&iter);
+				int _ret = bkey_err(k);
+
+				if (_ret) {
+					__ret = _ret;
+				} else if (!k.k) {
+					done = true;
+				} else {
+					journal_seq = k.k->p.inode;
+					bucket = u64_to_bucket(k.k->p.offset);
+					next = bpos_successor(k.k->p);
+					s->pos = next;
+				}
+				__ret;
+			}));
+			if (ret || done)
+				break;
 
 			if (journal_seq >= min(c->journal.rewind_seq_ondisk,
 					       c->journal.flushed_seq_ondisk + 1))
 				break;
 
-			_ret = bch2_discard_one_bucket(trans, bucket,
-						       &discard_pos_done,
-						       s, false);
-
-			if (!_ret)
-				s->seen += dev_bucket_size(c, bucket.inode);
-			_ret;
-		}));
+			ret = lockrestart_do(trans, ({
+				int __ret = bch2_discard_one_bucket(trans, bucket,
+								    &discard_pos_done,
+								    s, false);
+				if (!__ret)
+					s->seen += dev_bucket_size(c, bucket.inode);
+				__ret;
+			}));
+			pos = next;
+		}
 
 		/*
 		 * Rewind buffer policy: advance rewind_seq when free space
