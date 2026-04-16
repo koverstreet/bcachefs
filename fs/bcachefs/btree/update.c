@@ -407,18 +407,7 @@ static noinline int flush_new_cached_update(struct btree_trans *trans,
 	struct btree_path *btree_path = btree_iter_path(trans, &iter);
 
 	btree_path_set_should_be_locked(trans, btree_path);
-#if 0
-	/*
-	 * The old key in the insert entry might actually refer to an existing
-	 * key in the btree that has been deleted from cache and not yet
-	 * flushed. Check for this and skip the flush so we don't run triggers
-	 * against a stale key.
-	 */
-	struct bkey k;
-	bch2_btree_path_peek_slot_exact(btree_path, &k);
-	if (!bkey_deleted(&k))
-		return 0;
-#endif
+
 	i->key_cache_already_flushed = true;
 	i->flags |= BTREE_TRIGGER_norun;
 
@@ -455,8 +444,7 @@ bch2_trans_update_by_path(struct btree_trans *trans, btree_path_idx_t path_idx,
 	 * the key cache - but the key has to exist in the btree for that to
 	 * work:
 	 */
-	return i->cached && (!i->old_btree_u64s ||
-			     bkey_deleted(&k->k) ||
+	return i->cached && (bkey_deleted(&k->k) ||
 			     key_cache_needs_flush(trans->paths + path_idx))
 		? flush_new_cached_update(trans, i, flags, ip)
 		: 0;
