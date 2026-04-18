@@ -1312,6 +1312,15 @@ static bool bch2_dev_resize_finish(struct bch_dev *ca, u64 seq, int status)
 	if (is_current)
 		wake_up_all(&ca->resize_wait);
 
+	/*
+	 * Discards are deferred while resize is active to avoid lock/allocator
+	 * deadlocks with reconcile and journal-pin flushing. Kick the worker
+	 * once the latest resize request reaches a terminal state so queued
+	 * need_discard entries can drain again.
+	 */
+	if (is_current)
+		bch2_do_discards_async(ca->fs);
+
 	return is_current;
 }
 
@@ -1653,6 +1662,21 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 			return ret;
 		}
 	};
+
+	ret = bch2_dev_resize_restart_check(ca, seq);
+	if (ret)
+		return ret;
+
+	/*
+	 * Shrink can start while a discard worker from earlier freespace
+	 * churn is still in flight. Drain that work before we begin the
+	 * evacuation/journal-flush path: once shrink has started, later
+	 * discard passes skip the shrinking device, but an already-running
+	 * discard can still race in and deadlock against resize/reconcile's
+	 * allocator and btree rewrite work.
+	 */
+	flush_work(&c->discards.work);
+	flush_work(&ca->discard_fast_work);
 
 	ret = bch2_dev_resize_restart_check(ca, seq);
 	if (ret)

@@ -150,64 +150,33 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 
 int bch2_dev_clear_need_discard(struct bch_fs *c, struct bch_dev *ca, u64 cutoff)
 {
-	struct bpos pos = POS_MIN;
+	/*
+	 * Shrink is about to delete the tail's alloc keys entirely, so we only
+	 * need to remove the derived need_discard index entries. Avoid updating
+	 * alloc keys here: that would also fire freespace/reconcile triggers
+	 * while reconcile is still draining the shrinking device, which can
+	 * deadlock with btree node rewrites in the move path.
+	 *
+	 * need_discard is ordered by (journal seq, encoded bucket), not by
+	 * device bucket space, so tail truncation has to scan and filter by the
+	 * decoded bucket position.
+	 */
+	CLASS(btree_trans, trans)(c);
+	unsigned dev_idx = ca->dev_idx;
 
-	while (1) {
-		struct bpos next = POS_MAX;
-		bool done = false;
-		int ret = bch2_trans_commit_do(c, NULL, NULL,
-				BCH_WATERMARK_reclaim|
-				BCH_TRANS_COMMIT_no_check_rw|
-				BCH_TRANS_COMMIT_no_enospc, ({
-			int __ret = 0;
-			CLASS(btree_iter, iter)(trans, BTREE_ID_need_discard, pos, 0);
-			struct bkey_s_c k = bch2_btree_iter_peek(&iter);
-			int _ret = bkey_err(k);
+	return for_each_btree_key_commit(trans, iter,
+			BTREE_ID_need_discard, POS_MIN,
+			BTREE_ITER_intent|BTREE_ITER_prefetch, k,
+			NULL, NULL,
+			BCH_WATERMARK_reclaim|
+			BCH_TRANS_COMMIT_no_check_rw|
+			BCH_TRANS_COMMIT_no_enospc, ({
+		struct bpos bucket = u64_to_bucket(k.k->p.offset);
 
-			if (_ret) {
-				__ret = _ret;
-			} else if (!k.k) {
-				done = true;
-			} else {
-				struct bpos bucket = u64_to_bucket(k.k->p.offset);
-
-				/*
-				 * need_discard is ordered by (journal seq, encoded bucket),
-				 * not by device bucket space, so tail truncation has to
-				 * scan and filter by the decoded bucket position.
-				 */
-				next = bpos_successor(k.k->p);
-
-				if (bucket.inode == ca->dev_idx &&
-				    bucket.offset >= cutoff) {
-					CLASS(btree_iter, alloc_iter)(trans, BTREE_ID_alloc,
-								      bucket, BTREE_ITER_cached);
-					struct bkey_s_c alloc_k =
-						bch2_btree_iter_peek_slot(&alloc_iter);
-					struct bkey_i_alloc_v4 *a;
-
-					_ret = bkey_err(alloc_k);
-					if (_ret) {
-						__ret = _ret;
-					} else {
-						a = errptr_try(bch2_alloc_to_v4_mut(trans, alloc_k));
-						if (a->v.data_type == BCH_DATA_need_discard) {
-							SET_BCH_ALLOC_V4_NEED_DISCARD(&a->v, false);
-							alloc_data_type_set(&a->v, a->v.data_type);
-							__ret = bch2_trans_update(trans, &alloc_iter,
-										  &a->k_i, 0);
-						}
-					}
-				}
-			}
-			__ret;
-		}));
-		if (ret)
-			return ret;
-		if (done)
-			return 0;
-		pos = next;
-	}
+		(bucket.inode == dev_idx && bucket.offset >= cutoff)
+			? bch2_btree_delete_at(trans, &iter, BTREE_TRIGGER_norun)
+			: 0;
+	}));
 }
 
 static void calculate_discard_sectors_to_release(struct btree_trans *trans)
@@ -261,6 +230,16 @@ static void calculate_discard_sectors_to_release(struct btree_trans *trans)
 	if (s->r.free < s->r.reserve * 2 &&
 	    s->r.new_rewind_seq > c->journal.rewind_seq)
 		s->r.flush_journal = true;
+}
+
+static bool bch2_discard_blocked_by_resize(struct bch_fs *c, struct bpos bucket)
+{
+	guard(rcu)();
+	struct bch_dev *ca = bch2_dev_rcu_noerror(c, bucket.inode);
+
+	return ca &&
+		bch2_dev_is_shrinking(ca) &&
+		bucket.offset >= bch2_dev_resize_target(ca);
 }
 
 static void bch2_do_discards(struct bch_fs *c)
@@ -320,6 +299,23 @@ static void bch2_do_discards(struct bch_fs *c)
 			if (journal_seq >= min(c->journal.rewind_seq_ondisk,
 					       c->journal.flushed_seq_ondisk + 1))
 				break;
+
+			/*
+			 * need_discard is only advisory trim bookkeeping. If this
+			 * bucket sits in the tail of a device that is currently
+			 * shrinking, leave the entry queued for the tail cleanup
+			 * pass: discard's alloc update can deadlock with
+			 * resize/reconcile on the region being evacuated.
+			 *
+			 * Buckets that remain below the shrink target still need
+			 * discard progress so the allocator can reuse retained
+			 * space on the shrinking device during the long-running
+			 * evacuation.
+			 */
+			if (bch2_discard_blocked_by_resize(c, bucket)) {
+				pos = next;
+				continue;
+			}
 
 			ret = lockrestart_do(trans, ({
 				int __ret = bch2_discard_one_bucket(trans, bucket,
