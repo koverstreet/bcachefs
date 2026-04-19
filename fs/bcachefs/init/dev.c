@@ -1266,12 +1266,8 @@ int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags, struct pri
 
 static u64 bch2_dev_resize_seq(struct bch_dev *ca)
 {
-	u64 seq;
-
 	scoped_guard(spinlock, &ca->resize_lock)
-		seq = ca->resize_seq;
-
-	return seq;
+		return ca->resize_seq;
 }
 
 static bool bch2_dev_resize_wait_done(struct bch_dev *ca, u64 seq, int *status)
@@ -1309,17 +1305,12 @@ static bool bch2_dev_resize_finish(struct bch_dev *ca, u64 seq, int status)
 			ca->resize_status = status;
 	}
 
-	if (is_current)
+	if (is_current) {
 		wake_up_all(&ca->resize_wait);
 
-	/*
-	 * Discards are deferred while resize is active to avoid lock/allocator
-	 * deadlocks with reconcile and journal-pin flushing. Kick the worker
-	 * once the latest resize request reaches a terminal state so queued
-	 * need_discard entries can drain again.
-	 */
-	if (is_current)
+		/* Discards are deferred during resize to avoid allocator/journal deadlocks, restart them now that we are done */
 		bch2_do_discards_async(ca->fs);
+	}
 
 	return is_current;
 }
@@ -1383,6 +1374,7 @@ static int bch2_dev_resize_update_target(struct bch_fs *c, struct bch_dev *ca,
 {
 	lockdep_assert_held(&c->state_lock);
 
+	/* validate target_nbuckets */
 	u64 old_nbuckets = ca->mi.nbuckets;
 
 	if (target_nbuckets > BCH_MEMBER_NBUCKETS_MAX) {
@@ -1410,6 +1402,7 @@ static int bch2_dev_resize_update_target(struct bch_fs *c, struct bch_dev *ca,
 		return bch_err_throw(c, device_size_too_small);
 	}
 
+	/* commit target_nbuckets */
 	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 		guard(mutex)(&c->sb_lock);
 		struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
@@ -1421,7 +1414,6 @@ static int bch2_dev_resize_update_target(struct bch_fs *c, struct bch_dev *ca,
 	return 0;
 }
 
-/* requires write state lock */
 static int __bch2_dev_grow(struct bch_fs *c, struct bch_dev *ca,
 			   u64 new_nbuckets, struct printbuf *err)
 {
@@ -1512,6 +1504,8 @@ static int drop_sbs_after_cutoff(struct bch_fs *c, struct bch_dev *ca, u64 cutof
 		}
 	}
 
+	/* this should never happen, as we only call to this function after checking the cutoff against the minimum fs size,
+	 * which includes at least the first sb copy */
 	BUG_ON(i == 0);
 
 	layout->nr_superblocks = i;
