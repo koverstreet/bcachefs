@@ -1614,6 +1614,93 @@ static int tail_is_empty(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets,
 	return 0;
 }
 
+static int bch2_dev_shrink_queue_reconcile(struct bch_fs *c, struct bch_dev *ca,
+					   bool scan_device, u32 *kick,
+					   struct printbuf *err)
+{
+	if (scan_device) {
+		struct reconcile_scan s = {
+			.type = RECONCILE_SCAN_device, // TODO(performance): make this range-based
+			.dev = ca->dev_idx,
+		};
+
+		int ret = bch2_set_reconcile_needs_scan(c, s, false);
+		if (ret) {
+			prt_printf(err, "Failed to queue device reconcile scan: %s\n",
+				   bch2_err_str(ret));
+			return ret;
+		}
+	}
+
+	/*
+	 * Shrink waits for a completed reconcile pass, not just for the device
+	 * scan cookie to disappear. Queue the pending phase alongside the scan
+	 * so the same pass also retries any work that evacuation demoted to the
+	 * pending list.
+	 */
+	int ret = bch2_set_reconcile_needs_scan(c,
+		(struct reconcile_scan) { .type = RECONCILE_SCAN_pending }, false);
+	if (ret) {
+		prt_printf(err, "Failed to queue pending reconcile scan: %s\n",
+			   bch2_err_str(ret));
+		return ret;
+	}
+
+	*kick = bch2_reconcile_kick(c);
+	return 0;
+}
+
+static int bch2_dev_shrink_wait_reconcile(struct bch_dev *ca, u64 seq, u32 kick)
+{
+	struct bch_fs *c = ca->fs;
+
+	while (true) {
+		int ret = bch2_dev_resize_restart_check(ca, seq);
+		if (ret)
+			return ret;
+
+		if (bch2_reconcile_completed_kick(c) >= kick)
+			return 0;
+
+		ret = wait_event_killable(c->reconcile.wait,
+			bch2_reconcile_completed_kick(c) >= kick ||
+			bch2_dev_resize_seq(ca) != seq ||
+			kthread_should_stop());
+		if (ret)
+			return -EINTR;
+	}
+}
+
+static int bch2_dev_shrink_clear_target(struct bch_fs *c, struct bch_dev *ca,
+					u64 new_nbuckets, u64 seq,
+					struct printbuf *err)
+{
+	int ret = 0;
+
+	scoped_guard(rwsem_write, &c->state_lock) {
+		ret = bch2_dev_resize_restart_check(ca, seq);
+		if (ret)
+			return ret;
+
+		if (bch2_dev_resize_target(ca) != new_nbuckets ||
+		    !bch2_dev_is_shrinking(ca))
+			return -EAGAIN;
+
+		try(bch2_dev_resize_update_target(c, ca, 0, err));
+	}
+
+	/*
+	 * Canceling the persisted shrink target lifts the shrink cutoff. Retry
+	 * pending reconcile work so anything that was parked behind the failed
+	 * shrink gets re-evaluated under the restored placement rules.
+	 */
+	ret = bch2_reconcile_pending_wakeup(c);
+	if (ret)
+		bch_err_fn(c, ret);
+
+	return 0;
+}
+
 
 static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 			     u64 new_nbuckets, u64 seq, struct printbuf *err)
@@ -1639,22 +1726,6 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 		/* close open buckets in the to-be-shrunk region */
 		bch2_open_buckets_stop(c, ca, false, new_nbuckets);
 		bch2_reset_alloc_cursors(c); // avoid churn
-
-		/*
-		 * target_nbuckets persists in the superblock, but the device
-		 * scan's in-memory traversal state does not. Re-queue the
-		 * device scan whenever shrink starts or resumes so reconcile
-		 * reliably rediscovers the tail after a restart.
-		 */
-		struct reconcile_scan s = {
-			.type = RECONCILE_SCAN_device, // TODO(performance): make this range-based
-			.dev = ca->dev_idx,
-		};
-		ret = bch2_set_reconcile_needs_scan(c, s, true);
-		if (ret) {
-			prt_printf(err, "Failed to run device reconcile scan: %s\n", bch2_err_str(ret));
-			return ret;
-		}
 	};
 
 	ret = bch2_dev_resize_restart_check(ca, seq);
@@ -1698,8 +1769,9 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 	 */
 
 	/* wait for to-be-shrunk region to be empty */
-	while (true) {
+	for (unsigned pass = 0; ; pass++) {
 		bool empty = false;
+		u32 kick;
 
 		ret = bch2_dev_resize_restart_check(ca, seq);
 		if (ret)
@@ -1720,13 +1792,28 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 			}
 		}
 
-		/* make sure reconcile is actually running */
-		bch2_reconcile_wakeup(c);
+		if (pass >= 2) {
+			prt_printf(err,
+				   "Shrink failed: insufficient space or replicas to evacuate data from the shrink tail\n");
+			ret = bch2_dev_shrink_clear_target(c, ca, new_nbuckets, seq, err);
+			if (ret)
+				return ret;
+			return -ENOSPC;
+		}
 
-		if (kthread_should_stop())
-			return -EINTR;
+		/*
+		 * A consumed scan cookie only means reconcile observed the scan
+		 * request and queued downstream work. Wait for a completed pass
+		 * so the scan-generated normal and pending work has been
+		 * attempted before we decide the tail still cannot drain.
+		 */
+		ret = bch2_dev_shrink_queue_reconcile(c, ca, pass == 0, &kick, err);
+		if (ret)
+			return ret;
 
-		schedule_timeout_interruptible(HZ/2);
+		ret = bch2_dev_shrink_wait_reconcile(ca, seq, kick);
+		if (ret)
+			return ret;
 	}
 
 	/*

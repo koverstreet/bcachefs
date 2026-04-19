@@ -1324,8 +1324,9 @@ static int do_reconcile(struct moving_context *ctxt)
 	struct bch_fs *c = trans->c;
 	struct bch_fs_reconcile *r = &c->reconcile;
 	u64 sectors_scanned = 0;
-	u32 kick = r->kick;
+	u32 kick = atomic_read(&r->kick);
 	u32 copygc_run_count = c->copygc.run_count;
+	bool pass_complete = false;
 	int ret = 0;
 
 	CLASS(darray_reconcile_work, work)();
@@ -1359,8 +1360,8 @@ static int do_reconcile(struct moving_context *ctxt)
 				break;
 		}
 
-		if (kick != r->kick) {
-			kick		= r->kick;
+		if (kick != atomic_read(&r->kick)) {
+			kick		= atomic_read(&r->kick);
 			work.nr		= 0;
 			r->phase	= 0;
 			reconcile_phase_start(c);
@@ -1376,8 +1377,10 @@ static int do_reconcile(struct moving_context *ctxt)
 			break;
 
 		if (!k.k) {
-			if (!reconcile_phase_next(c, ctxt, &pending_cookie))
+			if (!reconcile_phase_next(c, ctxt, &pending_cookie)) {
+				pass_complete = true;
 				break;
+			}
 			continue;
 		}
 
@@ -1463,13 +1466,27 @@ static int do_reconcile(struct moving_context *ctxt)
 		try(bch2_clear_reconcile_needs_scan(trans,
 				pending_cookie.k.p, pending_cookie.v.cookie));
 
+	/*
+	 * A completed kick means reconcile drained every phase for the current
+	 * request generation without being superseded by a newer wakeup.
+	 * Shrink uses this as the point where all scan-generated downstream
+	 * work has been attempted before it decides a tail is still impossible
+	 * to evacuate.
+	 */
+	if (!ret &&
+	    pass_complete &&
+	    kick == atomic_read(&r->kick)) {
+		atomic_set(&r->completed_kick, kick);
+		wake_up_all(&r->wait);
+	}
+
 	bch2_move_stats_exit(&r->work_stats, c);
 
 	if (!ret &&
 	    !kthread_should_stop() &&
 	    !atomic64_read(&r->work_stats.sectors_seen) &&
 	    !sectors_scanned &&
-	    kick == r->kick) {
+	    kick == atomic_read(&r->kick)) {
 		bch2_moving_ctxt_flush_all(ctxt);
 		bch2_trans_unlock_long(trans);
 		reconcile_wait(c);
@@ -1658,9 +1675,13 @@ void bch2_fs_reconcile_exit(struct bch_fs *c)
 
 int bch2_fs_reconcile_init(struct bch_fs *c)
 {
-#ifdef CONFIG_POWER_SUPPLY
 	struct bch_fs_reconcile *r = &c->reconcile;
 
+	atomic_set(&r->kick, 0);
+	init_waitqueue_head(&r->wait);
+	atomic_set(&r->completed_kick, 0);
+
+#ifdef CONFIG_POWER_SUPPLY
 	r->power_notifier.notifier_call = bch2_reconcile_power_notifier;
 	try(power_supply_reg_notifier(&r->power_notifier));
 

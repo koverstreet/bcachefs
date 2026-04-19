@@ -2,13 +2,17 @@
 #ifndef _BCACHEFS_REBALANCE_TYPES_H
 #define _BCACHEFS_REBALANCE_TYPES_H
 
+#include <linux/wait.h>
+
 #include "btree/bbpos_types.h"
 #include "data/move_types.h"
 #include "init/progress.h"
 
 struct bch_fs_reconcile {
 	struct task_struct __rcu	*thread;
-	u32				kick;
+	atomic_t			kick;
+	wait_queue_head_t		wait;
+	atomic_t			completed_kick;
 
 	bool				running;
 	u64				wait_iotime_start;
