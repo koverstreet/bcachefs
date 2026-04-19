@@ -1659,11 +1659,17 @@ static int bch2_dev_shrink_wait_reconcile(struct bch_dev *ca, u64 seq, u32 kick)
 		if (ret)
 			return ret;
 
-		if (bch2_reconcile_completed_kick(c) >= kick)
+		/*
+		 * A completed kick only says the requested reconcile pass
+		 * drained. Wait for the worker to reach its idle state too, or
+		 * shrink's final journal flush can still race with reconcile's
+		 * cached btree paths and stall behind key-cache pin flushing.
+		 */
+		if (bch2_reconcile_kick_idle(c, kick))
 			return 0;
 
 		ret = wait_event_killable(c->reconcile.wait,
-			bch2_reconcile_completed_kick(c) >= kick ||
+			bch2_reconcile_kick_idle(c, kick) ||
 			bch2_dev_resize_seq(ca) != seq ||
 			kthread_should_stop());
 		if (ret)

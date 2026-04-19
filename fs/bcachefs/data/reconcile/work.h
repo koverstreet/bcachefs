@@ -51,6 +51,12 @@ static inline u32 bch2_reconcile_completed_kick(struct bch_fs *c)
 	return atomic_read(&c->reconcile.completed_kick);
 }
 
+static inline bool bch2_reconcile_kick_idle(struct bch_fs *c, u32 kick)
+{
+	return bch2_reconcile_completed_kick(c) >= kick &&
+		!READ_ONCE(c->reconcile.running);
+}
+
 static inline int bch2_reconcile_pending_wakeup(struct bch_fs *c)
 {
 	return bch2_set_reconcile_needs_scan(c,

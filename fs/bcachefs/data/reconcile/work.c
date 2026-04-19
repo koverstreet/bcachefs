@@ -920,14 +920,29 @@ static int do_reconcile_scan_bps(struct moving_context *ctxt,
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
 	struct bch_fs_reconcile *r = &c->reconcile;
+	struct bpos start = POS(s.dev, 0);
+	struct bch_dev *ca;
 
-	r->scan_start	= BBPOS(BTREE_ID_backpointers, POS(s.dev, 0));
+	/*
+	 * Shrink only needs reconcile work for the tail that will be truncated.
+	 * Scanning the whole device requeues metadata below the retained region,
+	 * which can churn btree rewrites for tens of seconds before the resize
+	 * worker ever gets to commit the smaller size.
+	 */
+	scoped_guard(rcu) {
+		ca = bch2_dev_rcu_noerror(c, s.dev);
+		if (ca && bch2_dev_is_shrinking(ca))
+			start = bucket_pos_to_bp_start(ca,
+					POS(s.dev, bch2_dev_resize_target(ca)));
+	}
+
+	r->scan_start	= BBPOS(BTREE_ID_backpointers, start);
 	r->scan_end	= BBPOS(BTREE_ID_backpointers, POS(s.dev, U64_MAX));
 
 	bch2_btree_write_buffer_flush_sync(trans);
 
 	return backpointer_scan_for_each(trans, iter, BTREE_ID_backpointers,
-					 POS(s.dev, 0), POS(s.dev, U64_MAX),
+					 start, POS(s.dev, U64_MAX),
 				  last_flushed, NULL, bp, ({
 		ctxt->stats->pos = BBPOS(BTREE_ID_backpointers, iter.pos);
 
@@ -1100,10 +1115,16 @@ static void reconcile_wait(struct bch_fs *c)
 
 	r->wait_iotime_end		= now + (min_member_capacity >> 6);
 
-	if (r->running) {
+	if (READ_ONCE(r->running)) {
 		r->wait_iotime_start	= now;
 		r->wait_wallclock_start	= ktime_get_real_ns();
-		r->running		= false;
+		WRITE_ONCE(r->running, false);
+		/*
+		 * Shrink waits for reconcile to go idle before its final
+		 * journal/key-cache flush, otherwise reconcile can still hold
+		 * cached search paths while it unwinds from the completed kick.
+		 */
+		wake_up_all(&r->wait);
 	}
 
 	bch2_kthread_io_clock_wait_once(clock, r->wait_iotime_end, MAX_SCHEDULE_TIMEOUT);
@@ -1384,7 +1405,7 @@ static int do_reconcile(struct moving_context *ctxt)
 			continue;
 		}
 
-		r->running = true;
+		WRITE_ONCE(r->running, true);
 		r->work_pos.pos = k.k->p;
 
 		if (k.k->type == KEY_TYPE_cookie &&
