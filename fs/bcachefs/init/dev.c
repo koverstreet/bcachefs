@@ -1650,29 +1650,38 @@ static int bch2_dev_shrink_queue_reconcile(struct bch_fs *c, struct bch_dev *ca,
 	return 0;
 }
 
-static int bch2_dev_shrink_wait_reconcile(struct bch_dev *ca, u64 seq, u32 kick)
+static int bch2_dev_shrink_wait_reconcile(struct bch_dev *ca, u64 new_nbuckets,
+					  u64 seq, u32 kick,
+					  struct printbuf *err)
 {
 	struct bch_fs *c = ca->fs;
 
 	while (true) {
+		bool empty = false;
 		int ret = bch2_dev_resize_restart_check(ca, seq);
 		if (ret)
 			return ret;
 
 		/*
-		 * A completed kick only says the requested reconcile pass
-		 * drained. Wait for the worker to reach its idle state too, or
-		 * shrink's final journal flush can still race with reconcile's
-		 * cached btree paths and stall behind key-cache pin flushing.
+		 * We only need reconcile to keep running until the shrink tail is
+		 * actually empty. A kick can continue chewing through unrelated
+		 * global reconcile work for minutes after the truncating region is
+		 * already evacuated, especially with fragmented variable-bucket
+		 * workloads. Poll tail emptiness so shrink can move on as soon as
+		 * the region being truncated is clear.
 		 */
-		if (bch2_reconcile_kick_idle(c, kick))
+		try(tail_is_empty(c, ca, new_nbuckets, err, &empty));
+
+		if (empty ||
+		    bch2_reconcile_completed_kick(c) >= kick)
 			return 0;
 
-		ret = wait_event_killable(c->reconcile.wait,
-			bch2_reconcile_kick_idle(c, kick) ||
+		ret = wait_event_killable_timeout(c->reconcile.wait,
+			bch2_reconcile_completed_kick(c) >= kick ||
 			bch2_dev_resize_seq(ca) != seq ||
-			kthread_should_stop());
-		if (ret)
+			kthread_should_stop(),
+			HZ);
+		if (ret < 0)
 			return -EINTR;
 	}
 }
@@ -1707,12 +1716,147 @@ static int bch2_dev_shrink_clear_target(struct bch_fs *c, struct bch_dev *ca,
 	return 0;
 }
 
+static int bch2_dev_shrink_finish(struct bch_fs *c, struct bch_dev *ca,
+				  u64 old_nbuckets, u64 new_nbuckets,
+				  u64 seq, struct printbuf *err)
+{
+	int ret;
+
+	/*
+	 * Re-run journal relocation as a final fence before we commit the new
+	 * size: the current journal bucket may have advanced while we were
+	 * waiting for the tail to drain, and we must not expose the smaller
+	 * nbuckets while journal state can still reference the truncated tail.
+	 */
+	ret = move_journal_past_cutoff(c, ca, new_nbuckets, err);
+	if (ret)
+		return ret;
+
+	ret = bch2_dev_resize_restart_check(ca, seq);
+	if (ret)
+		return ret;
+
+	scoped_guard(rwsem_write, &c->state_lock) {
+		bool empty = false;
+
+		ret = bch2_dev_resize_restart_check(ca, seq);
+		if (ret)
+			return ret;
+
+		if (bch2_dev_resize_target(ca) != new_nbuckets ||
+		    !bch2_dev_is_shrinking(ca))
+			return -EAGAIN;
+
+		/* flush interior updates - mirroring dev remove path */
+		bch2_btree_interior_updates_flush(c);
+
+		/* flush journal - mirroring dev remove path */
+		bch2_journal_flush_all_pins(&c->journal);
+
+		ret = bch2_journal_flush_device_pins(&c->journal, ca->dev_idx);
+		if (ret) {
+			prt_printf(err, "bch2_journal_flush_device_pins() error: %s\n",
+				   bch2_err_str(ret));
+			return ret;
+		}
+
+		ret = bch2_journal_flush(&c->journal);
+		if (ret) {
+			prt_printf(err, "bch2_journal_flush() error: %s\n",
+				   bch2_err_str(ret));
+			return ret;
+		}
+
+		/* re-check that tail is really empty */
+		ret = tail_is_empty(c, ca, new_nbuckets, err, &empty);
+		if (ret)
+			return ret;
+		if (!empty) {
+			prt_printf(err, "Shrink failed: still has data\n");
+			return -EBUSY;
+		}
+
+		/*
+		 * Buckets in the truncated tail may still be in NEED_DISCARD
+		 * state. Clear that bookkeeping before we drop the alloc range so
+		 * accounting/fsck do not retain tail-only metadata after shrink.
+		 */
+		ret = bch2_dev_clear_need_discard(c, ca, new_nbuckets);
+		if (ret) {
+			prt_printf(err, "error clearing need_discard state: %s\n",
+				   bch2_err_str(ret));
+			return ret;
+		}
+
+		/* drop references to now-truncated superblock copies */
+		ret = drop_sbs_after_cutoff(c, ca, new_nbuckets);
+		if (ret) {
+			prt_printf(err, "Error dropping superblocks after cutoff: %s\n",
+				   bch2_err_str(ret));
+			return ret;
+		}
+
+		/* update accounting info - has to happen before truncating alloc info */
+		ret = bch2_dev_truncate_accounting(c, ca, old_nbuckets, new_nbuckets);
+		if (ret) {
+			prt_printf(err, "error updating accounting info: %s\n",
+				   bch2_err_str(ret));
+			return ret;
+		}
+
+		/* truncate alloc info */
+		ret = bch2_dev_remove_alloc(c, ca, new_nbuckets);
+		if (ret) {
+			prt_printf(err, "error truncating alloc info: %s\n",
+				   bch2_err_str(ret));
+			return ret;
+		}
+
+		/*
+		 * Commit the shrink only after the truncated tail has been
+		 * removed from alloc metadata, so later transactions can't see
+		 * stale tail buckets after the new size is visible.
+		 */
+		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+			guard(mutex)(&c->sb_lock);
+			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
+			m->nbuckets = cpu_to_le64(new_nbuckets);
+			if (bch2_dev_resize_target(ca) == new_nbuckets)
+				m->target_nbuckets = 0;
+
+			ret = bch2_write_super(c);
+			if (ret)
+				return ret;
+		}
+
+		/* resize buckets */
+		ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
+		if (ret) {
+			prt_printf(err, "bch2_dev_buckets_resize() error: %s\n",
+				   bch2_err_str(ret));
+			return ret;
+		}
+
+		// TODO: figure out what parts of this path still need doing
+		// if (ca->mi.freespace_initialized) {
+		// 	ret = __bch2_dev_resize_alloc(ca, old_nbuckets, new_nbuckets);
+		// 	if (ret) {
+		// 		prt_printf(err, "__bch2_dev_resize_alloc() error: %s\n", bch2_err_str(ret));
+		// 		return ret;
+		// 	}
+		// }
+
+		bch2_recalc_capacity(c);
+	}
+
+	return 0;
+}
+
 
 static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 			     u64 new_nbuckets, u64 seq, struct printbuf *err)
 {
 	u64 old_nbuckets = ca->mi.nbuckets;
-
 	int ret = 0;
 
 	scoped_guard(rwsem_write, &c->state_lock) {
@@ -1809,135 +1953,20 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 
 		/*
 		 * A consumed scan cookie only means reconcile observed the scan
-		 * request and queued downstream work. Wait for a completed pass
-		 * so the scan-generated normal and pending work has been
-		 * attempted before we decide the tail still cannot drain.
+		 * request and queued downstream work. Wait until either the
+		 * requested pass completes or the tail is already empty before we
+		 * decide whether shrink needs another evacuation pass.
 		 */
 		ret = bch2_dev_shrink_queue_reconcile(c, ca, pass == 0, &kick, err);
 		if (ret)
 			return ret;
 
-		ret = bch2_dev_shrink_wait_reconcile(ca, seq, kick);
+		ret = bch2_dev_shrink_wait_reconcile(ca, new_nbuckets, seq, kick, err);
 		if (ret)
 			return ret;
 	}
 
-	/*
-	 * Re-run journal relocation as a final fence before we commit the new
-	 * size: the current journal bucket may have advanced while we were
-	 * waiting for the tail to drain, and we must not expose the smaller
-	 * nbuckets while journal state can still reference the truncated tail.
-	 */
-	ret = move_journal_past_cutoff(c, ca, new_nbuckets, err);
-	if (ret)
-		return ret;
-
-	ret = bch2_dev_resize_restart_check(ca, seq);
-	if (ret)
-		return ret;
-
-	scoped_guard(rwsem_write, &c->state_lock) {
-		ret = bch2_dev_resize_restart_check(ca, seq);
-		if (ret)
-			return ret;
-
-		if (bch2_dev_resize_target(ca) != new_nbuckets ||
-		    !bch2_dev_is_shrinking(ca))
-			return -EAGAIN;
-
-		/* flush interior updates - mirroring dev remove path */
-		bch2_btree_interior_updates_flush(c);
-
-		/* flush journal - mirroring dev remove path */
-		bch2_journal_flush_all_pins(&c->journal);
-
-		ret = bch2_journal_flush_device_pins(&c->journal, ca->dev_idx);
-		if (ret) {
-			prt_printf(err, "bch2_journal_flush_device_pins() error: %s\n", bch2_err_str(ret));
-			return ret;
-		}
-
-		ret = bch2_journal_flush(&c->journal);
-		if (ret) {
-			prt_printf(err, "bch2_journal_flush() error: %s\n", bch2_err_str(ret));
-			return ret;
-		}
-
-		/* re-check that tail is really empty */
-		bool empty = false;
-		try(tail_is_empty(c, ca, new_nbuckets, err, &empty));
-		if (!empty) {
-			prt_printf(err, "Shrink failed: still has data\n");
-			return -EBUSY;
-		}
-
-		/*
-		 * Buckets in the truncated tail may still be in NEED_DISCARD
-		 * state. Clear that bookkeeping before we drop the alloc range so
-		 * accounting/fsck do not retain tail-only metadata after shrink.
-		 */
-		ret = bch2_dev_clear_need_discard(c, ca, new_nbuckets);
-		if (ret) {
-			prt_printf(err, "error clearing need_discard state: %s\n",
-				   bch2_err_str(ret));
-			return ret;
-		}
-
-		/* drop references to now-truncated superblock copies */
-		ret = drop_sbs_after_cutoff(c, ca, new_nbuckets);
-		if (ret) {
-			prt_printf(err, "Error dropping superblocks after cutoff: %s\n", bch2_err_str(ret));
-			return ret;
-		}
-
-		/* update accounting info - has to happen before truncating alloc info */
-		ret = bch2_dev_truncate_accounting(c, ca, old_nbuckets, new_nbuckets);
-		if (ret) {
-			prt_printf(err, "error updating accounting info: %s\n", bch2_err_str(ret));
-			return ret;
-		}
-
-		/* truncate alloc info */
-		ret = bch2_dev_remove_alloc(c, ca, new_nbuckets);
-		if (ret) {
-			prt_printf(err, "error truncating alloc info: %s\n", bch2_err_str(ret));
-			return ret;
-		}
-
-		/*
-		 * Commit the shrink only after the truncated tail has been
-		 * removed from alloc metadata, so later transactions can't see
-		 * stale tail buckets after the new size is visible.
-		 */
-		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
-			guard(mutex)(&c->sb_lock);
-			struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
-			m->nbuckets = cpu_to_le64(new_nbuckets);
-			if (bch2_dev_resize_target(ca) == new_nbuckets)
-				m->target_nbuckets = 0;
-
-			try(bch2_write_super(c));
-		}
-
-		/* resize buckets */
-		ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
-		if (ret) {
-			prt_printf(err, "bch2_dev_buckets_resize() error: %s\n", bch2_err_str(ret));
-			return ret;
-		}
-
-		// TODO: figure out what parts of this path still need doing
-		// if (ca->mi.freespace_initialized) {
-		// 	ret = __bch2_dev_resize_alloc(ca, old_nbuckets, new_nbuckets);
-		// 	if (ret) {
-		// 		prt_printf(err, "__bch2_dev_resize_alloc() error: %s\n", bch2_err_str(ret));
-		// 		return ret;
-		// 	}
-		// }
-
-		bch2_recalc_capacity(c);
-	}
-	return 0;
+	return bch2_dev_shrink_finish(c, ca, old_nbuckets, new_nbuckets, seq, err);
 }
 
 static int bch2_dev_resize_thread(void *arg)

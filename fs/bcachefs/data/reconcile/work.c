@@ -1119,12 +1119,6 @@ static void reconcile_wait(struct bch_fs *c)
 		r->wait_iotime_start	= now;
 		r->wait_wallclock_start	= ktime_get_real_ns();
 		WRITE_ONCE(r->running, false);
-		/*
-		 * Shrink waits for reconcile to go idle before its final
-		 * journal/key-cache flush, otherwise reconcile can still hold
-		 * cached search paths while it unwinds from the completed kick.
-		 */
-		wake_up_all(&r->wait);
 	}
 
 	bch2_kthread_io_clock_wait_once(clock, r->wait_iotime_end, MAX_SCHEDULE_TIMEOUT);
