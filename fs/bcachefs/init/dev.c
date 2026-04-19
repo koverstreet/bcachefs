@@ -1276,18 +1276,18 @@ static u64 bch2_dev_resize_seq(struct bch_dev *ca)
 
 static bool bch2_dev_resize_wait_done(struct bch_dev *ca, u64 seq, int *status)
 {
-	bool done;
-
 	scoped_guard(spinlock, &ca->resize_lock) {
-		done = ca->resize_seq != seq ||
-			ca->resize_status != -EINPROGRESS;
-		if (done)
-			*status = ca->resize_seq != seq
-				? -ECANCELED
-				: ca->resize_status;
+		if (ca->resize_seq != seq) {
+			*status = -ECANCELED;
+			return true;
+		}
+		if (ca->resize_status != -EINPROGRESS) {
+			*status = ca->resize_status;
+			return true;
+		}
 	}
 
-	return done;
+	return false;
 }
 
 static int bch2_dev_resize_wait(struct bch_dev *ca, u64 seq)
