@@ -1750,8 +1750,15 @@ static int bch2_dev_shrink_finish(struct bch_fs *c, struct bch_dev *ca,
 		/* flush interior updates - mirroring dev remove path */
 		bch2_btree_interior_updates_flush(c);
 
-		/* flush journal - mirroring dev remove path */
-		bch2_journal_flush_all_pins(&c->journal);
+		/*
+		 * Only flush pins that were already outstanding when shrink
+		 * entered the final commit path. Reconcile can continue
+		 * generating unrelated key-cache journal pins on newer
+		 * sequences while the tail is already empty; waiting for every
+		 * future pin here can turn shrink into an unbounded global
+		 * journal drain.
+		 */
+		bch2_journal_flush_outstanding_pins(&c->journal);
 
 		ret = bch2_journal_flush_device_pins(&c->journal, ca->dev_idx);
 		if (ret) {
