@@ -1315,6 +1315,7 @@ static bool bch2_dev_resize_finish(struct bch_dev *ca, u64 seq, int status)
 	return is_current;
 }
 
+/* checks for kthread interruption, and resize seq having changed */
 static int bch2_dev_resize_restart_check(struct bch_dev *ca, u64 seq)
 {
 	if (kthread_should_stop())
