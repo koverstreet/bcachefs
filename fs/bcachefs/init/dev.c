@@ -1934,7 +1934,7 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 
 		if (pass >= 2) {
 			prt_printf(err,
-				   "Shrink failed: insufficient space or replicas to evacuate data from the shrink tail\n");
+				   "Shrink failed: insufficient space on the filesystem to evacuate data from the shrink tail\n");
 			ret = bch2_dev_shrink_clear_target(c, ca, new_nbuckets, seq, err);
 			if (ret)
 				return ret;
