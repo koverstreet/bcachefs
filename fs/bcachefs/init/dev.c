@@ -2234,6 +2234,12 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 			 * metadata is still being committed then the set of tail
 			 * blockers is still moving, so rescan from the current
 			 * tail instead of treating the shrink as impossible.
+			 *
+			 * This is intentionally conservative but the signal is
+			 * filesystem-global: unrelated metadata-writing IO can
+			 * advance the journal and keep the heuristic from ever
+			 * counting a stalled pass. A later cleanup should narrow
+			 * this to a shrink-local churn signal.
 			 */
 			if (journal_cur_seq(&c->journal) != journal_seq_before) {
 				scan_device = true;
