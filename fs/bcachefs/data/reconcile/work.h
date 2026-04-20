@@ -51,6 +51,11 @@ static inline u32 bch2_reconcile_completed_kick(struct bch_fs *c)
 	return atomic_read(&c->reconcile.completed_kick);
 }
 
+static inline u64 bch2_reconcile_completed_work_units(struct bch_fs *c)
+{
+	return atomic64_read(&c->reconcile.completed_work_units);
+}
+
 static inline int bch2_reconcile_pending_wakeup(struct bch_fs *c)
 {
 	return bch2_set_reconcile_needs_scan(c,

@@ -215,13 +215,16 @@
 #include "alloc/foreground.h"
 
 #include "bcachefs_format.h"
+#include "btree/bkey_methods.h"
 #include "btree/bkey_types.h"
 #include "btree/interior.h"
 
 #include "btree/iter.h"
+#include "btree/update.h"
 #include "btree/types.h"
 #include "btree/write_buffer.h"
 #include "data/ec/init.h"
+#include "data/extents.h"
 #include "data/migrate.h"
 #include "data/reconcile/work.h"
 
@@ -1595,9 +1598,60 @@ static int move_journal_past_cutoff(struct bch_fs *c, struct bch_dev *ca,
 	}
 }
 
+struct shrink_tail_head {
+	struct bpos	bucket;
+	struct bpos	first_bp;
+	unsigned	nr_backpointers;
+};
+
+struct shrink_tail_progress {
+	struct shrink_tail_head	head;
+	u64			nr_backpointers;
+};
+
+static inline bool shrink_tail_head_empty(const struct shrink_tail_head *head)
+{
+	return bpos_eq(head->first_bp, SPOS_MAX);
+}
+
+static bool shrink_tail_head_progressed(const struct shrink_tail_head *old,
+					const struct shrink_tail_head *new)
+{
+	if (shrink_tail_head_empty(new))
+		return true;
+
+	if (shrink_tail_head_empty(old))
+		return false;
+
+	if (!bpos_eq(new->bucket, old->bucket))
+		return bpos_gt(new->bucket, old->bucket);
+
+	if (!bpos_eq(new->first_bp, old->first_bp))
+		return bpos_gt(new->first_bp, old->first_bp);
+
+	return new->nr_backpointers < old->nr_backpointers;
+}
+
+static bool shrink_tail_progressed(const struct shrink_tail_progress *old,
+				   const struct shrink_tail_progress *new)
+{
+	if (shrink_tail_head_empty(&new->head))
+		return true;
+
+	if (shrink_tail_head_empty(&old->head))
+		return false;
+
+	if (new->nr_backpointers < old->nr_backpointers)
+		return true;
+
+	return shrink_tail_head_progressed(&old->head, &new->head);
+}
+
 // TODO: make sure everything is caught here. Maybe look at bch2_dev_has_data for this
 // Fore example journals and superblocks might need special handling
-static int tail_is_empty(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err, bool *empty) {
+static int tail_head_snapshot(struct bch_fs *c, struct bch_dev *ca,
+			      u64 new_nbuckets, struct shrink_tail_head *head)
+{
 	struct bpos bp_start = bucket_pos_to_bp_start(ca, POS(ca->dev_idx, new_nbuckets));
 	struct bpos bp_end = bucket_pos_to_bp_start(ca, POS(ca->dev_idx, ca->mi.nbuckets));
 
@@ -1611,8 +1665,166 @@ static int tail_is_empty(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets,
 
 	try(bkey_err(bp));
 
-	*empty = !bp.k;
+	*head = (struct shrink_tail_head) {
+		.bucket		= SPOS_MAX,
+		.first_bp	= SPOS_MAX,
+	};
+
+	if (!bp.k)
+		return 0;
+
+	head->bucket = bp_pos_to_bucket(ca, bp.k->p);
+	head->first_bp = bp.k->p;
+
+	do {
+		head->nr_backpointers++;
+		bch2_bp_scan_iter_advance(&iter);
+		bp = bch2_bp_scan_iter_peek(trans, &iter, bp_end, &last_flushed);
+		try(bkey_err(bp));
+	} while (bp.k && bpos_eq(bp_pos_to_bucket(ca, bp.k->p), head->bucket));
+
 	return 0;
+}
+
+static int tail_progress_snapshot(struct bch_fs *c, struct bch_dev *ca,
+				  u64 new_nbuckets,
+				  struct shrink_tail_progress *progress)
+{
+	struct bpos bp_start = bucket_pos_to_bp_start(ca, POS(ca->dev_idx, new_nbuckets));
+	struct bpos bp_end = bucket_pos_to_bp_start(ca, POS(ca->dev_idx, ca->mi.nbuckets));
+
+	CLASS(btree_trans, trans)(c);
+	CLASS(backpointer_scan_iter, iter)(BTREE_ID_backpointers, bp_start, NULL);
+
+	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
+	wb_maybe_flush_init(&last_flushed);
+
+	*progress = (struct shrink_tail_progress) {
+		.head.bucket	= SPOS_MAX,
+		.head.first_bp	= SPOS_MAX,
+	};
+
+	while (true) {
+		struct bkey_s_c_backpointer bp =
+			bch2_bp_scan_iter_peek(trans, &iter, bp_end, &last_flushed);
+
+		try(bkey_err(bp));
+		if (!bp.k)
+			return 0;
+
+		if (shrink_tail_head_empty(&progress->head)) {
+			progress->head.bucket = bp_pos_to_bucket(ca, bp.k->p);
+			progress->head.first_bp = bp.k->p;
+		}
+
+		if (bpos_eq(bp_pos_to_bucket(ca, bp.k->p), progress->head.bucket))
+			progress->head.nr_backpointers++;
+
+		progress->nr_backpointers++;
+		bch2_bp_scan_iter_advance(&iter);
+	}
+}
+
+static int tail_is_empty(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets,
+			 bool *empty)
+{
+	struct shrink_tail_head head;
+
+	try(tail_head_snapshot(c, ca, new_nbuckets, &head));
+	*empty = shrink_tail_head_empty(&head);
+	return 0;
+}
+
+static int bch2_dev_shrink_invalidate_bp(struct btree_trans *trans,
+					 struct bch_dev *ca,
+					 struct bkey_s_c_backpointer bp,
+					 struct wb_maybe_flush *last_flushed)
+{
+	struct bch_fs *c = trans->c;
+
+	CLASS(btree_iter_uninit, iter)(trans);
+	struct bkey_s_c k = bkey_try(bch2_backpointer_get_key(trans, bp, &iter, 0, last_flushed));
+	if (!k.k)
+		return 0;
+
+	struct bkey_i *n = errptr_try(bch2_bkey_make_mut(trans, &iter, &k,
+						BTREE_UPDATE_internal_snapshot_node));
+
+	bch2_bkey_drop_device_noerror(c, bkey_i_to_s(n), ca->dev_idx);
+
+	if (!bch2_bkey_can_read(c, bkey_i_to_s_c(n)))
+		bch2_set_bkey_error(c, n, KEY_TYPE_ERROR_device_removed);
+
+	return 0;
+}
+
+static int bch2_dev_shrink_invalidate_cached_bucket(struct btree_trans *trans,
+						    struct bch_dev *ca,
+						    struct bpos bucket,
+						    u8 gen,
+						    struct wb_maybe_flush *last_flushed)
+{
+	struct bpos bp_start = bucket_pos_to_bp_start(ca, bucket);
+	struct bpos bp_end = bucket_pos_to_bp_end(ca, bucket);
+
+	return for_each_btree_key_max_commit(trans, iter, BTREE_ID_backpointers,
+				      bp_start, bp_end, 0, k,
+				      NULL, NULL,
+				      BCH_WATERMARK_btree|
+				      BCH_TRANS_COMMIT_no_enospc, ({
+		if (k.k->type != KEY_TYPE_backpointer)
+			continue;
+
+		struct bkey_s_c_backpointer bp = bkey_s_c_to_backpointer(k);
+
+		if (bp.v->bucket_gen != gen)
+			continue;
+
+		try(bch2_dev_shrink_invalidate_bp(trans, ca, bp, last_flushed));
+		0;
+	}));
+}
+
+static int bch2_dev_shrink_invalidate_tail_cached(struct bch_fs *c, struct bch_dev *ca,
+						  u64 new_nbuckets, bool *invalidated)
+{
+	struct bpos start = POS(ca->dev_idx, new_nbuckets);
+	struct bpos end = POS(ca->dev_idx, ca->mi.nbuckets - 1);
+	CLASS(btree_trans, trans)(c);
+
+	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
+	wb_maybe_flush_init(&last_flushed);
+
+	/*
+	 * Shrink evacuation rewrites live data elsewhere but leaves the old
+	 * buckets behind as cached copies. Those cached-only tail buckets don't
+	 * need reconcile, yet they still keep backpointers alive and make
+	 * tail_is_empty() fail. Drop them directly so shrink only waits on
+	 * buckets that still hold durable data or metadata.
+	 */
+	*invalidated = false;
+
+	try(bch2_btree_write_buffer_flush_sync(trans));
+
+	return for_each_btree_key_max_commit(trans, iter, BTREE_ID_alloc,
+				start, end, BTREE_ITER_prefetch, k,
+				NULL, NULL,
+				BCH_WATERMARK_btree|
+				BCH_TRANS_COMMIT_no_enospc, ({
+		struct bch_alloc_v4 a_convert;
+		const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &a_convert);
+
+		if (a->data_type != BCH_DATA_cached || !a->cached_sectors)
+			continue;
+
+		if (bch2_bucket_is_open_safe(c, k.k->p.inode, k.k->p.offset))
+			continue;
+
+		try(bch2_dev_shrink_invalidate_cached_bucket(trans, ca, k.k->p,
+							     a->gen, &last_flushed));
+		*invalidated = true;
+		0;
+	}));
 }
 
 static int bch2_dev_shrink_queue_reconcile(struct bch_fs *c, struct bch_dev *ca,
@@ -1653,12 +1865,14 @@ static int bch2_dev_shrink_queue_reconcile(struct bch_fs *c, struct bch_dev *ca,
 
 static int bch2_dev_shrink_wait_reconcile(struct bch_dev *ca, u64 new_nbuckets,
 					  u64 seq, u32 kick,
+					  const struct shrink_tail_head *head_before,
+					  bool *kick_complete,
 					  struct printbuf *err)
 {
 	struct bch_fs *c = ca->fs;
 
 	while (true) {
-		bool empty = false;
+		bool completed;
 		int ret = bch2_dev_resize_restart_check(ca, seq);
 		if (ret)
 			return ret;
@@ -1668,14 +1882,21 @@ static int bch2_dev_shrink_wait_reconcile(struct bch_dev *ca, u64 new_nbuckets,
 		 * actually empty. A kick can continue chewing through unrelated
 		 * global reconcile work for minutes after the truncating region is
 		 * already evacuated, especially with fragmented variable-bucket
-		 * workloads. Poll tail emptiness so shrink can move on as soon as
-		 * the region being truncated is clear.
+		 * workloads. Poll the head of the shrink tail and bound each wait
+		 * to a one-second slice so shrink can rescan its own state instead
+		 * of sitting behind one long reconcile kick.
 		 */
-		try(tail_is_empty(c, ca, new_nbuckets, err, &empty));
+		struct shrink_tail_head head_after;
 
-		if (empty ||
-		    bch2_reconcile_completed_kick(c) >= kick)
+		try(tail_head_snapshot(c, ca, new_nbuckets, &head_after));
+		completed = bch2_reconcile_completed_kick(c) >= kick;
+
+		if (shrink_tail_head_empty(&head_after) ||
+		    shrink_tail_head_progressed(head_before, &head_after) ||
+		    completed) {
+			*kick_complete = completed;
 			return 0;
+		}
 
 		ret = wait_event_killable_timeout(c->reconcile.wait,
 			bch2_reconcile_completed_kick(c) >= kick ||
@@ -1684,6 +1905,10 @@ static int bch2_dev_shrink_wait_reconcile(struct bch_dev *ca, u64 new_nbuckets,
 			HZ);
 		if (ret < 0)
 			return -EINTR;
+		if (!ret) {
+			*kick_complete = false;
+			return 0;
+		}
 	}
 }
 
@@ -1758,7 +1983,7 @@ static int bch2_dev_shrink_finalize(struct bch_fs *c, struct bch_dev *ca,
 		}
 
 		/* re-check that tail is really empty */
-		ret = tail_is_empty(c, ca, new_nbuckets, err, &empty);
+		ret = tail_is_empty(c, ca, new_nbuckets, &empty);
 		if (ret)
 			return ret;
 		if (!empty) {
@@ -1900,45 +2125,75 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 	if (ret)
 		return ret;
 
-	/*  TODO:
-	 *  When we evacuate data, the original is left in place and marked as cached, just like when moving it for target/compression regions.
-	 *  We need to somehow handle this:
-	 *  - Maybe we can just not count it in tail_is_empty() and just shrink it away - but this would likely leave some metadata incorrect
-	 *  - We could just make it completely remove the data if it is evacuating, instead of marking it as cached
-	 *  - We could make passes that check for cached buckets in the tail, and close/remove those - we may actually need to handle buckets anyways
-	 */
-
 	/* wait for to-be-shrunk region to be empty */
+	const unsigned stalled_kicks_limit = 32;
+	struct shrink_tail_progress best_progress = {
+		.head.bucket	= SPOS_MAX,
+		.head.first_bp	= SPOS_MAX,
+	};
+	bool scan_device = true;
+	unsigned stalled_kicks = 0;
+
 	for (unsigned pass = 0; ; pass++) {
-		bool empty = false;
+		bool invalidated_cached = false;
+		bool kick_complete;
+		struct shrink_tail_head head;
+		struct shrink_tail_progress progress;
 		u32 kick;
 
 		ret = bch2_dev_resize_restart_check(ca, seq);
 		if (ret)
 			return ret;
 
-		try(tail_is_empty(c, ca, new_nbuckets, err, &empty));
+		try(tail_head_snapshot(c, ca, new_nbuckets, &head));
 
 		/* do a definitive check */
-		if (empty) {
+		if (shrink_tail_head_empty(&head)) {
 			{
 				CLASS(btree_trans, trans)(c);
 				try(bch2_btree_write_buffer_flush_sync(trans));
 			}
 
-			try(tail_is_empty(c, ca, new_nbuckets, err, &empty));
-			if (empty) {
+			try(tail_head_snapshot(c, ca, new_nbuckets, &head));
+			if (shrink_tail_head_empty(&head)) {
 				break;
 			}
 		}
 
-		if (pass >= 2) {
-			prt_printf(err,
-				   "Shrink failed: insufficient space on the filesystem to evacuate data from the shrink tail\n");
-			ret = bch2_dev_shrink_clear_target(c, ca, new_nbuckets, seq, err);
-			if (ret)
-				return ret;
-			return -ENOSPC;
+		ret = bch2_dev_shrink_invalidate_tail_cached(c, ca, new_nbuckets,
+							     &invalidated_cached);
+		if (ret) {
+			prt_printf(err, "Failed to invalidate cached shrink-tail data: %s\n",
+				   bch2_err_str(ret));
+			return ret;
+		}
+
+		if (invalidated_cached) {
+			{
+				CLASS(btree_trans, trans)(c);
+				try(bch2_btree_write_buffer_flush_sync(trans));
+			}
+
+			try(tail_head_snapshot(c, ca, new_nbuckets, &head));
+			if (shrink_tail_head_empty(&head))
+				break;
+		}
+
+		/*
+		 * Live foreground IO can require several shrink/reconcile passes
+		 * before the leading tail bucket drains, and the head bucket can
+		 * stay put while work elsewhere in the tail is still making
+		 * space for it. Track both the leading bucket and the total tail
+		 * backpointer count, then only fail after many completed
+		 * no-progress reconcile kicks that actually scanned or processed
+		 * shrink work instead of using a wall-clock timeout.
+		 */
+		try(tail_progress_snapshot(c, ca, new_nbuckets, &progress));
+
+		if (shrink_tail_progressed(&best_progress, &progress)) {
+			best_progress = progress;
+			scan_device = false;
+			stalled_kicks = 0;
 		}
 
 		/*
@@ -1947,13 +2202,37 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 		 * requested pass completes or the tail is already empty before we
 		 * decide whether shrink needs another evacuation pass.
 		 */
-		ret = bch2_dev_shrink_queue_reconcile(c, ca, pass == 0, &kick, err);
+		ret = bch2_dev_shrink_queue_reconcile(c, ca, pass == 0 || scan_device,
+						      &kick, err);
 		if (ret)
 			return ret;
 
-		ret = bch2_dev_shrink_wait_reconcile(ca, new_nbuckets, seq, kick, err);
+		ret = bch2_dev_shrink_wait_reconcile(ca, new_nbuckets, seq, kick,
+						     &head, &kick_complete, err);
 		if (ret)
 			return ret;
+
+		try(tail_progress_snapshot(c, ca, new_nbuckets, &progress));
+
+		if (shrink_tail_head_empty(&progress.head))
+			break;
+
+		if (shrink_tail_progressed(&best_progress, &progress)) {
+			best_progress = progress;
+			scan_device = false;
+			stalled_kicks = 0;
+		} else if (kick_complete) {
+			scan_device = !bch2_reconcile_completed_work_units(c);
+			if (bch2_reconcile_completed_work_units(c) &&
+			    ++stalled_kicks >= stalled_kicks_limit) {
+				prt_printf(err,
+					   "Shrink failed: insufficient space on the filesystem to evacuate data from the shrink tail\n");
+				ret = bch2_dev_shrink_clear_target(c, ca, new_nbuckets, seq, err);
+				if (ret)
+					return ret;
+				return -ENOSPC;
+			}
+		}
 	}
 
 	return bch2_dev_shrink_finalize(c, ca, old_nbuckets, new_nbuckets, seq, err);
