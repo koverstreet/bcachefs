@@ -1705,11 +1705,7 @@ static int bch2_dev_shrink_clear_target(struct bch_fs *c, struct bch_dev *ca,
 		try(bch2_dev_resize_update_target(c, ca, 0, err));
 	}
 
-	/*
-	 * Canceling the persisted shrink target lifts the shrink cutoff. Retry
-	 * pending reconcile work so anything that was parked behind the failed
-	 * shrink gets re-evaluated under the restored placement rules.
-	 */
+	/* allocations are now no longer blocked after the cutoff, so there may now be more usable space  */
 	ret = bch2_reconcile_pending_wakeup(c);
 	if (ret)
 		bch_err_fn(c, ret);
