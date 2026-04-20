@@ -1717,7 +1717,7 @@ static int bch2_dev_shrink_clear_target(struct bch_fs *c, struct bch_dev *ca,
 	return 0;
 }
 
-static int bch2_dev_shrink_finish(struct bch_fs *c, struct bch_dev *ca,
+static int bch2_dev_shrink_finalize(struct bch_fs *c, struct bch_dev *ca,
 				  u64 old_nbuckets, u64 new_nbuckets,
 				  u64 seq, struct printbuf *err)
 {
@@ -1960,7 +1960,7 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 			return ret;
 	}
 
-	return bch2_dev_shrink_finish(c, ca, old_nbuckets, new_nbuckets, seq, err);
+	return bch2_dev_shrink_finalize(c, ca, old_nbuckets, new_nbuckets, seq, err);
 }
 
 static int bch2_dev_resize_thread(void *arg)
