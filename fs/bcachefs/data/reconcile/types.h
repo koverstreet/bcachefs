@@ -13,7 +13,6 @@ struct bch_fs_reconcile {
 	atomic_t			kick;
 	wait_queue_head_t		wait;
 	atomic_t			completed_kick;
-	atomic64_t			completed_work_units;
 
 	bool				running;
 	u64				wait_iotime_start;

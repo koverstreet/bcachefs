@@ -231,6 +231,7 @@
 #include "debug/sysfs.h"
 
 #include "journal/init.h"
+#include "journal/journal.h"
 #include "journal/reclaim.h"
 
 #include "init/dev.h"
@@ -2184,9 +2185,11 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 		 * before the leading tail bucket drains, and the head bucket can
 		 * stay put while work elsewhere in the tail is still making
 		 * space for it. Track both the leading bucket and the total tail
-		 * backpointer count, then only fail after many completed
-		 * no-progress reconcile kicks that actually scanned or processed
-		 * shrink work instead of using a wall-clock timeout.
+		 * backpointer count, but only count no-progress passes after a
+		 * full device rescan on a journal-quiescent state; if the
+		 * journal is still moving then foreground IO or reconcile is
+		 * still mutating metadata and a no-progress pass is not evidence
+		 * that the shrink tail is impossible to evacuate.
 		 */
 		try(tail_progress_snapshot(c, ca, new_nbuckets, &progress));
 
@@ -2202,10 +2205,13 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 		 * requested pass completes or the tail is already empty before we
 		 * decide whether shrink needs another evacuation pass.
 		 */
-		ret = bch2_dev_shrink_queue_reconcile(c, ca, pass == 0 || scan_device,
-						      &kick, err);
+		bool did_scan = pass == 0 || scan_device;
+		u64 journal_seq_before;
+
+		ret = bch2_dev_shrink_queue_reconcile(c, ca, did_scan, &kick, err);
 		if (ret)
 			return ret;
+		journal_seq_before = journal_cur_seq(&c->journal);
 
 		ret = bch2_dev_shrink_wait_reconcile(ca, new_nbuckets, seq, kick,
 						     &head, &kick_complete, err);
@@ -2222,9 +2228,19 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 			scan_device = false;
 			stalled_kicks = 0;
 		} else if (kick_complete) {
-			scan_device = !bch2_reconcile_completed_work_units(c);
-			if (bch2_reconcile_completed_work_units(c) &&
-			    ++stalled_kicks >= stalled_kicks_limit) {
+			/*
+			 * A no-progress pass only counts toward ENOSPC after a
+			 * full device rescan on a quiescent journal state. If
+			 * metadata is still being committed then the set of tail
+			 * blockers is still moving, so rescan from the current
+			 * tail instead of treating the shrink as impossible.
+			 */
+			if (journal_cur_seq(&c->journal) != journal_seq_before) {
+				scan_device = true;
+				stalled_kicks = 0;
+			} else if (!did_scan) {
+				scan_device = true;
+			} else if (++stalled_kicks >= stalled_kicks_limit) {
 				prt_printf(err,
 					   "Shrink failed: insufficient space on the filesystem to evacuate data from the shrink tail\n");
 				ret = bch2_dev_shrink_clear_target(c, ca, new_nbuckets, seq, err);
