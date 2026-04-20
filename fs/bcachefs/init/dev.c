@@ -1706,7 +1706,7 @@ static int bch2_dev_shrink_clear_target(struct bch_fs *c, struct bch_dev *ca,
 	}
 
 	/* allocations are now no longer blocked after the cutoff, so there may now be more usable space  */
-	ret = bch2_reconcile_pending_wakeup(c);
+	ret = bch2_reconcile_pending_wakeup(c); // TODO: also do this when a user requests a shrink cancel (aka a resize to the current size)
 	if (ret)
 		bch_err_fn(c, ret);
 
