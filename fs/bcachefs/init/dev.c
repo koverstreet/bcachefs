@@ -1723,20 +1723,6 @@ static int bch2_dev_shrink_finish(struct bch_fs *c, struct bch_dev *ca,
 {
 	int ret;
 
-	/*
-	 * Re-run journal relocation as a final fence before we commit the new
-	 * size: the current journal bucket may have advanced while we were
-	 * waiting for the tail to drain, and we must not expose the smaller
-	 * nbuckets while journal state can still reference the truncated tail.
-	 */
-	ret = move_journal_past_cutoff(c, ca, new_nbuckets, err);
-	if (ret)
-		return ret;
-
-	ret = bch2_dev_resize_restart_check(ca, seq);
-	if (ret)
-		return ret;
-
 	scoped_guard(rwsem_write, &c->state_lock) {
 		bool empty = false;
 
