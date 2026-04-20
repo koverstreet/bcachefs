@@ -1223,7 +1223,7 @@ int bch2_dev_usage_remove(struct bch_fs *c, struct bch_dev *ca)
 	struct disk_accounting_pos end;
 	disk_accounting_key_init(end, dev_data_type, .dev = ca->dev_idx, .data_type = U8_MAX);
 
-	return bch2_btree_write_buffer_flush_sync(trans) ?:
+	return bch2_btree_write_buffer_flush_sync(trans, bch_wb_btree_mask(BTREE_ID_accounting)) ?:
 		commit_do(trans, NULL, NULL, 0, ({
 			struct bkey_s_c k;
 			int ret = 0;
@@ -1250,7 +1250,7 @@ int bch2_dev_usage_remove(struct bch_fs *c, struct bch_dev *ca)
 			}
 
 			ret;
-	})) ?: bch2_btree_write_buffer_flush_sync(trans);
+	})) ?: bch2_btree_write_buffer_flush_sync(trans, bch_wb_btree_mask(BTREE_ID_accounting));
 }
 
 int bch2_dev_usage_init(struct bch_dev *ca, bool gc)

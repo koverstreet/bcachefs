@@ -145,7 +145,7 @@ void bch2_ec_stripe_delete_work(struct work_struct *work)
 		container_of(work, struct bch_fs, ec.stripe_delete_work);
 
 	bch2_trans_run(c,
-		bch2_btree_write_buffer_tryflush(trans) ?:
+		bch2_btree_write_buffer_tryflush(trans, bch_wb_btree_mask(BTREE_ID_lru)) ?:
 		for_each_btree_key_max_commit(trans, lru_iter, BTREE_ID_lru,
 				lru_pos(BCH_LRU_STRIPE_FRAGMENTATION, 1, 0),
 				lru_pos(BCH_LRU_STRIPE_FRAGMENTATION, 1, LRU_TIME_MAX),
@@ -422,7 +422,9 @@ static int __stripe_update_extents(struct btree_trans *trans,
 {
 	unsigned nr_data = new_stripe->v.nr_blocks - new_stripe->v.nr_redundant;
 
-	try(bch2_btree_write_buffer_flush_sync(trans));
+	try(bch2_btree_write_buffer_flush_sync(trans,
+		bch_wb_btree_mask(BTREE_ID_backpointers)|
+		bch_wb_btree_mask(BTREE_ID_stripe_backpointers)));
 
 	for_each_data_block(i, nr_data) {
 		unsigned old_blocknr = i < old_blocks_nr

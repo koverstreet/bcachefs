@@ -1375,7 +1375,7 @@ int bch2_delete_dead_inodes(struct bch_fs *c)
 	 * but we can't retry because the btree write buffer won't have been
 	 * flushed and we'd spin:
 	 */
-	return  bch2_btree_write_buffer_flush_sync(trans) ?:
+	return  bch2_btree_write_buffer_flush_sync(trans, bch_wb_btree_mask(BTREE_ID_deleted_inodes)) ?:
 		for_each_btree_key_commit(trans, iter, BTREE_ID_deleted_inodes, POS_MIN,
 					BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
 					NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({

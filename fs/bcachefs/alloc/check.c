@@ -170,7 +170,7 @@ int bch2_check_alloc_key(struct btree_trans *trans,
 		k = bkey_try(bch2_btree_iter_peek_slot(discard_iter));
 
 		if (k.k->type != KEY_TYPE_set)
-			try(bch2_btree_write_buffer_maybe_flush(trans, alloc_k, last_flushed));
+			try(bch2_btree_write_buffer_maybe_flush(trans, bch_wb_btree_mask(BTREE_ID_need_discard), alloc_k, last_flushed));
 
 		if (need_discard_or_freespace_err_on(k.k->type != KEY_TYPE_set,
 						     trans, alloc_k, false, true, true))
@@ -331,7 +331,7 @@ static int bch2_recheck_freespace_key(struct btree_trans *trans, struct bbpos po
 
 	u8 gen;
 	return k.k->type != KEY_TYPE_set
-		? __bch2_check_freespace_key(trans, &iter, &gen, NULL, FSCK_ERR_SILENT, NULL)
+		? __bch2_check_freespace_key(trans, &iter, &gen, NULL, FSCK_ERR_SILENT)
 		: 0;
 }
 
@@ -403,7 +403,7 @@ static int bch2_check_discard_key(struct btree_trans *trans, struct btree_iter *
 
 	if (a->data_type != BCH_DATA_need_discard ||
 	    a->journal_seq_empty != iter->pos.inode) {
-		try(bch2_btree_write_buffer_maybe_flush(trans, alloc_k, last_flushed));
+		try(bch2_btree_write_buffer_maybe_flush(trans, bch_wb_btree_mask(BTREE_ID_need_discard), alloc_k, last_flushed));
 
 		CLASS(printbuf, buf)();
 		if (ret_fsck_err(trans, need_discard_freespace_key_bad,
@@ -419,8 +419,7 @@ static int bch2_check_discard_key(struct btree_trans *trans, struct btree_iter *
 }
 
 int __bch2_check_freespace_key(struct btree_trans *trans, struct btree_iter *iter, u8 *gen,
-			       u64 *journal_seq_empty, enum bch_fsck_flags fsck_flags,
-			       struct wb_maybe_flush *last_flushed)
+			       u64 *journal_seq_empty, enum bch_fsck_flags fsck_flags)
 {
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf)();
@@ -453,9 +452,6 @@ int __bch2_check_freespace_key(struct btree_trans *trans, struct btree_iter *ite
 
 	if (a->data_type != BCH_DATA_free ||
 	    genbits != alloc_freespace_genbits(*a)) {
-		if (last_flushed)
-			try(bch2_btree_write_buffer_maybe_flush(trans, alloc_k, last_flushed));
-
 		if (__fsck_err(trans, fsck_flags,
 			       need_discard_freespace_key_bad,
 			     "%s\nincorrectly set at %s:%llu:%llu:0 (genbits %llu should be %llu)",
@@ -482,7 +478,7 @@ fsck_err:
 static int bch2_check_freespace_key(struct btree_trans *trans, struct btree_iter *iter)
 {
 	u8 gen;
-	int ret = __bch2_check_freespace_key(trans, iter, &gen, NULL, 0, NULL);
+	int ret = __bch2_check_freespace_key(trans, iter, &gen, NULL, 0);
 	return ret < 0 ? ret : 0;
 }
 

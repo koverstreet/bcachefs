@@ -534,11 +534,13 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	 */
 	bch2_trans_begin(trans);
 
-	CLASS(btree_iter, bp_iter)(trans, dev != BCH_SB_MEMBER_INVALID
-				   ? BTREE_ID_backpointers
-				   : BTREE_ID_stripe_backpointers, bp_start, 0);
+	enum btree_id bp_btree = dev != BCH_SB_MEMBER_INVALID
+		? BTREE_ID_backpointers
+		: BTREE_ID_stripe_backpointers;
 
-	ret = bch2_btree_write_buffer_tryflush(trans);
+	CLASS(btree_iter, bp_iter)(trans, bp_btree, bp_start, 0);
+
+	ret = bch2_btree_write_buffer_tryflush(trans, bch_wb_btree_mask(bp_btree));
 	if (!bch2_err_matches(ret, EROFS))
 		bch_err_msg(c, ret, "flushing btree write buffer");
 	if (ret)
@@ -644,7 +646,11 @@ int bch2_move_data_phys(struct bch_fs *c,
 		ctxt.stats->data_type = (int) DATA_PROGRESS_DATA_TYPE_phys;
 	}
 
-	bch2_btree_write_buffer_flush_sync(ctxt.trans);
+	enum btree_id bp_btree = dev != BCH_SB_MEMBER_INVALID
+		? BTREE_ID_backpointers
+		: BTREE_ID_stripe_backpointers;
+
+	bch2_btree_write_buffer_flush_sync(ctxt.trans, bch_wb_btree_mask(bp_btree));
 
 	return __bch2_move_data_phys(&ctxt, NULL, dev, start, end, data_types, false, pred, arg);
 }

@@ -60,6 +60,12 @@ static const char * const bch_wb_btree_names[] = {
 #undef x
 };
 
+const u8 bch_wb_btree_to_btree_id_tbl[BCH_WB_BTREE_NR] = {
+#define x(name) [BCH_WB_BTREE_##name] = BTREE_ID_##name,
+	BCH_WRITE_BUFFER_BTREES()
+#undef x
+};
+
 static int bch2_btree_write_buffer_journal_flush(struct journal *,
 				struct journal_entry_pin *, u64);
 
@@ -831,36 +837,46 @@ static bool wb_pin_le(struct bch_fs_btree_write_buffer *wb, u64 max_seq)
 	       (flushing && flushing <= max_seq);
 }
 
-static bool any_wb_pin_le(struct bch_fs *c, u64 max_seq,
+static bool any_wb_pin_le(struct bch_fs *c, unsigned mask, u64 max_seq,
 			  bool *did_work, enum wb_flush_caller caller)
 {
-	for (struct bch_fs_btree_write_buffer *wb = c->btree.write_buffer;
-	     wb < c->btree.write_buffer + BCH_WB_BTREE_NR;
-	     wb++)
+	for (unsigned i = 0; i < BCH_WB_BTREE_NR; i++) {
+		if (!(mask & BIT(i)))
+			continue;
+		struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer[i];
 		if (wb_pin_le(wb, max_seq)) {
 			WRITE_ONCE(wb->flush_work_caller, caller);
 			queue_work(c->btree.write_buffer_wq, &wb->flush_work);
-			*did_work = true;
+			if (did_work)
+				*did_work = true;
 			return true;
 		}
+	}
 	return false;
 }
 
 /*
- * Drive a fan-out flush across all per-btree write buffer instances:
+ * Pull keys from the journal and flush them to their btrees, parallelized
+ * across the per-btree flush workers.
  *
- *   1) fetch from the journal (snapshots cur_entry_offset_if_blocked,
- *      so max_seq + offset is well-defined),
- *   2) wake every per-btree flush worker, and
- *   3) wait for the workers to drain pins ≤ max_seq.
+ * @mask:  bitmask of write-buffered btrees to flush (bit i = BCH_WB_BTREE_i).
+ *         The journal fetch is always all-btrees (journal bufs mix keys
+ *         across btrees), but the per-btree flush is narrowed to what
+ *         the caller asked for.
  *
- * The dispatcher used to call flush_locked() inline, serializing the per-btree
- * flushes; the toplevel sort is the expensive step and we want it parallelized.
- * @caller is recorded only by the dispatcher diagnostic counter (see below);
- * worker-driven flushes always count as WB_FLUSH_thread.
+ * For each selected btree with keys staged, we set the worker's caller and
+ * queue_work it; then wait on the shared closure_waitlist for pins ≤ max_seq
+ * to drain. Workers wake the waitlist as they drop pins (at the end of
+ * flush_work_fn, and from journal_keys_to_write_buffer_end on pin drops).
+ *
+ * @caller is recorded by the worker into nr_flushes_caller[]; racy under
+ * concurrent dispatchers and only feeds the diagnostic histogram.
  */
-static int btree_write_buffer_flush_seq(struct btree_trans *trans, u64 max_seq,
-					bool *did_work, enum wb_flush_caller caller)
+static int btree_write_buffer_flush_seq(struct btree_trans *trans,
+					unsigned mask,
+					u64 max_seq,
+					bool *did_work,
+					enum wb_flush_caller caller)
 {
 	struct bch_fs *c = trans->c;
 	int ret = 0, fetch_from_journal_err;
@@ -871,7 +887,7 @@ static int btree_write_buffer_flush_seq(struct btree_trans *trans, u64 max_seq,
 		fetch_from_journal_err = fetch_wb_keys_from_journal(c, max_seq);
 
 		closure_wait_event(&c->btree.write_buffer_flush_wait,
-				   !any_wb_pin_le(c, max_seq, did_work, caller) ||
+				   !any_wb_pin_le(c, mask, max_seq, did_work, caller) ||
 				   (ret = bch2_journal_error(&c->journal)));
 	} while (!ret && fetch_from_journal_err);
 
@@ -901,15 +917,15 @@ static int bch2_btree_write_buffer_journal_flush(struct journal *j,
 	return 0;
 }
 
-int bch2_btree_write_buffer_flush_sync(struct btree_trans *trans)
+int bch2_btree_write_buffer_flush_sync(struct btree_trans *trans, unsigned mask)
 {
 	struct bch_fs *c = trans->c;
-	bool did_work = false;
 
 	event_inc_trace(c, write_buffer_flush_sync, buf, prt_str(&buf, trans->fn));
 
-	return btree_write_buffer_flush_seq(trans, journal_cur_seq(&c->journal), &did_work,
-					    WB_FLUSH_sync);
+	return btree_write_buffer_flush_seq(trans, mask,
+					    journal_cur_seq(&c->journal),
+					    NULL, WB_FLUSH_sync);
 }
 
 /*
@@ -923,17 +939,22 @@ bool bch2_btree_write_buffer_flush_going_ro(struct bch_fs *c)
 
 	CLASS(btree_trans, trans)(c);
 	bool did_work = false;
-	btree_write_buffer_flush_seq(trans, journal_cur_seq(&c->journal), &did_work,
-				     WB_FLUSH_sync);
+	btree_write_buffer_flush_seq(trans, BCH_WB_BTREES_ALL,
+				     journal_cur_seq(&c->journal),
+				     &did_work, WB_FLUSH_sync);
 	return did_work;
 }
 
-static int bch2_btree_write_buffer_flush_nocheck_rw(struct btree_trans *trans)
+static int bch2_btree_write_buffer_flush_nocheck_rw(struct btree_trans *trans,
+						    unsigned mask)
 {
 	struct bch_fs *c = trans->c;
 	int ret = 0;
 
-	for (enum bch_wb_btree i = 0; i < BCH_WB_BTREE_NR; i++) {
+	for (unsigned i = 0; i < BCH_WB_BTREE_NR; i++) {
+		if (!(mask & BIT(i)))
+			continue;
+
 		struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer[i];
 
 		if (mutex_trylock(&wb->flushing.lock)) {
@@ -948,25 +969,27 @@ static int bch2_btree_write_buffer_flush_nocheck_rw(struct btree_trans *trans)
 	return ret;
 }
 
-int bch2_btree_write_buffer_tryflush(struct btree_trans *trans)
+int bch2_btree_write_buffer_tryflush(struct btree_trans *trans, unsigned mask)
 {
 	struct bch_fs *c = trans->c;
-	bool any_keys = false;
 
+	bool any = false;
 	for (unsigned i = 0; i < BCH_WB_BTREE_NR; i++) {
+		if (!(mask & BIT(i)))
+			continue;
 		struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer[i];
 		if (wb->inc.keys.nr || wb->flushing.keys.nr) {
-			any_keys = true;
+			any = true;
 			break;
 		}
 	}
-	if (!any_keys)
+	if (!any)
 		return 0;
 
 	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_btree_write_buffer))
 		return bch_err_throw(c, erofs_no_writes);
 
-	int ret = bch2_btree_write_buffer_flush_nocheck_rw(trans);
+	int ret = bch2_btree_write_buffer_flush_nocheck_rw(trans, mask);
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_btree_write_buffer);
 	return ret;
 }
@@ -977,6 +1000,7 @@ int bch2_btree_write_buffer_tryflush(struct btree_trans *trans)
  * if this is a key we haven't yet checked.
  */
 int bch2_btree_write_buffer_maybe_flush(struct btree_trans *trans,
+					unsigned mask,
 					struct bkey_s_c referring_k,
 					struct wb_maybe_flush *f)
 {
@@ -1003,9 +1027,9 @@ int bch2_btree_write_buffer_maybe_flush(struct btree_trans *trans,
 			bch2_btree_interior_updates_flush(c);
 		}
 
-		bool did_work = false;
-		try(btree_write_buffer_flush_seq(trans, journal_cur_seq(&c->journal), &did_work,
-						 WB_FLUSH_maybe));
+		try(btree_write_buffer_flush_seq(trans, mask,
+						 journal_cur_seq(&c->journal),
+						 NULL, WB_FLUSH_maybe));
 
 		bch2_bkey_buf_copy(&f->last_flushed, tmp.k);
 		f->nr_flushes++;

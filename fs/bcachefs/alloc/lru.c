@@ -88,7 +88,7 @@ int bch2_lru_check_set(struct btree_trans *trans,
 	struct bkey_s_c lru_k = bkey_try(bch2_btree_iter_peek_slot(&lru_iter));
 
 	if (lru_k.k->type != KEY_TYPE_set) {
-		try(bch2_btree_write_buffer_maybe_flush(trans, referring_k, last_flushed));
+		try(bch2_btree_write_buffer_maybe_flush(trans, bch_wb_btree_mask(BTREE_ID_lru), referring_k, last_flushed));
 
 		CLASS(printbuf, buf)();
 		prt_printf(&buf, "missing %s lru entry at pos ", bch2_lru_types[lru_type(lru_k)]);
@@ -121,7 +121,7 @@ static struct bbpos lru_pos_to_bp(struct bkey_s_c lru_k)
 int bch2_dev_remove_lrus(struct bch_fs *c, struct bch_dev *ca)
 {
 	CLASS(btree_trans, trans)(c);
-	int ret = bch2_btree_write_buffer_flush_sync(trans) ?:
+	int ret = bch2_btree_write_buffer_flush_sync(trans, bch_wb_btree_mask(BTREE_ID_lru)) ?:
 		for_each_btree_key(trans, iter,
 				 BTREE_ID_lru, POS_MIN, BTREE_ITER_prefetch, k, ({
 		struct bbpos bp = lru_pos_to_bp(k);
@@ -182,7 +182,7 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 	u64 idx = bkey_lru_type_idx(c, type, k);
 
 	if (lru_pos_time(lru_k.k->p) != idx) {
-		try(bch2_btree_write_buffer_maybe_flush(trans, lru_k, last_flushed));
+		try(bch2_btree_write_buffer_maybe_flush(trans, bch_wb_btree_mask(BTREE_ID_lru), lru_k, last_flushed));
 
 		if (ret_fsck_err(trans, lru_entry_bad,
 			     "incorrect lru entry: lru %s time %llu\n"

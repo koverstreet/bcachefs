@@ -482,7 +482,7 @@ static void bch2_do_discards(struct bch_fs *c)
 		 * the alloc trigger's atomic section:
 		 */
 		if (!ret && s->r.flush_wb && flushed_wb < 2) {
-			ret = bch2_btree_write_buffer_flush_sync(trans);
+			ret = bch2_btree_write_buffer_flush_sync(trans, bch_wb_btree_mask(BTREE_ID_need_discard));
 			if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 				ret = 0;
 			again = true;
@@ -747,7 +747,7 @@ static void __bch2_do_invalidates(struct bch_dev *ca)
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
 	wb_maybe_flush_init(&last_flushed);
 
-	bch2_btree_write_buffer_tryflush(trans);
+	bch2_btree_write_buffer_tryflush(trans, bch_wb_btree_mask(BTREE_ID_lru));
 
 	s64 nr_to_invalidate =
 		should_invalidate_buckets(ca, bch2_dev_usage_read(ca));

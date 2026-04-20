@@ -17,14 +17,11 @@ static inline enum bch_wb_btree bch_wb_btree_idx(enum btree_id btree)
 	}
 }
 
+extern const u8 bch_wb_btree_to_btree_id_tbl[BCH_WB_BTREE_NR];
+
 static inline enum btree_id bch_wb_btree_to_btree_id(enum bch_wb_btree idx)
 {
-	static const u8 tbl[BCH_WB_BTREE_NR] = {
-#define x(name) [BCH_WB_BTREE_##name] = BTREE_ID_##name,
-		BCH_WRITE_BUFFER_BTREES()
-#undef x
-	};
-	return tbl[idx];
+	return bch_wb_btree_to_btree_id_tbl[idx];
 }
 
 static inline bool bch_wb_btree_should_flush(struct bch_fs_btree_write_buffer *wb)
@@ -44,9 +41,22 @@ static inline bool bch2_btree_write_buffer_must_wait(struct bch_fs *c)
 }
 
 struct btree_trans;
-int bch2_btree_write_buffer_flush_sync(struct btree_trans *);
+/*
+ * These take a bitmask of write-buffered btrees — bit i = flush BCH_WB_BTREE_i.
+ * Use bch_wb_btree_mask(BTREE_ID_X) for a single btree, OR them together for
+ * multiple, or BCH_WB_BTREES_ALL for every write-buffered btree (e.g. going
+ * RO, debug "flush everything" triggers).
+ */
+#define BCH_WB_BTREES_ALL		((1U << BCH_WB_BTREE_NR) - 1)
+
+static inline unsigned bch_wb_btree_mask(enum btree_id btree)
+{
+	return 1U << bch_wb_btree_idx(btree);
+}
+
+int bch2_btree_write_buffer_flush_sync(struct btree_trans *, unsigned);
 bool bch2_btree_write_buffer_flush_going_ro(struct bch_fs *);
-int bch2_btree_write_buffer_tryflush(struct btree_trans *);
+int bch2_btree_write_buffer_tryflush(struct btree_trans *, unsigned);
 
 struct wb_maybe_flush {
 	struct bkey_buf	last_flushed;
@@ -72,7 +82,8 @@ static inline int wb_maybe_flush_inc(struct wb_maybe_flush *f)
 	return 0;
 }
 
-int bch2_btree_write_buffer_maybe_flush(struct btree_trans *, struct bkey_s_c, struct wb_maybe_flush *);
+int bch2_btree_write_buffer_maybe_flush(struct btree_trans *, unsigned,
+					struct bkey_s_c, struct wb_maybe_flush *);
 
 struct journal_keys_to_wb_btree {
 	struct btree_write_buffer_keys	*wb;	/* NULL: not yet acquired */

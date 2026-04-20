@@ -95,7 +95,11 @@ static int check_reconcile_work_one(struct btree_trans *trans,
 
 	u64 btree_want_set_mask = btree_want_set ? BIT_ULL(btree_want_set) : 0;
 	if (btrees_set != btree_want_set_mask) {
-		try(bch2_btree_write_buffer_maybe_flush(trans, data_k, last_flushed));
+		try(bch2_btree_write_buffer_maybe_flush(trans,
+				bch_wb_btree_mask(BTREE_ID_reconcile_work)|
+				bch_wb_btree_mask(BTREE_ID_reconcile_hipri)|
+				bch_wb_btree_mask(BTREE_ID_reconcile_pending),
+				data_k, last_flushed));
 
 		CLASS(printbuf, buf)();
 		prt_str(&buf, "extent should be set in ");
@@ -203,7 +207,11 @@ static int check_reconcile_work_phys_one(struct btree_trans *trans,
 
 	u64 btree_want_set_mask = btree_want_set ? BIT_ULL(btree_want_set) : 0;
 	if (btrees_set != btree_want_set_mask) {
-		try(bch2_btree_write_buffer_maybe_flush(trans, bp, last_flushed));
+		try(bch2_btree_write_buffer_maybe_flush(trans,
+				bch_wb_btree_mask(BTREE_ID_backpointers)|
+				bch_wb_btree_mask(BTREE_ID_reconcile_work_phys)|
+				bch_wb_btree_mask(BTREE_ID_reconcile_hipri_phys),
+				bp, last_flushed));
 
 		CLASS(printbuf, buf)();
 		prt_str(&buf, "backpointer should be set in ");

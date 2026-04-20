@@ -193,8 +193,21 @@ static inline int bch2_backpointers_maybe_flush(struct btree_trans *trans,
 					 struct bkey_s_c visiting_k,
 					 struct wb_maybe_flush *last_flushed)
 {
+	/*
+	 * Backpointers live in either BTREE_ID_backpointers or
+	 * BTREE_ID_stripe_backpointers — flush whichever one the bp itself
+	 * says it belongs to (the BACKPOINTER_STRIPE_PTR flag), so the
+	 * stripe_backpointers path (force-removed device) doesn't fall
+	 * through to the wrong WB. Other visiting_k kinds (e.g. alloc keys
+	 * in the bucket-accounting check) want the regular bp btree.
+	 */
+	enum btree_id btree = visiting_k.k->type == KEY_TYPE_backpointer
+		? backpointer_btree(bkey_s_c_to_backpointer(visiting_k).v)
+		: BTREE_ID_backpointers;
+
 	return !static_branch_unlikely(&bch2_backpointers_no_use_write_buffer)
-		? bch2_btree_write_buffer_maybe_flush(trans, visiting_k, last_flushed)
+		? bch2_btree_write_buffer_maybe_flush(trans, bch_wb_btree_mask(btree),
+						      visiting_k, last_flushed)
 		: 0;
 }
 
@@ -660,14 +673,15 @@ static int check_bp_exists(struct btree_trans *trans,
 			   struct bkey_s_c extent,
 			   struct bkey_i_backpointer *bp)
 {
-	CLASS(btree_iter, bp_iter)(trans, backpointer_btree(&bp->v), bp->k.p, 0);
+	enum btree_id bp_btree = backpointer_btree(&bp->v);
+	CLASS(btree_iter, bp_iter)(trans, bp_btree, bp->k.p, 0);
 	struct bkey_s_c bp_found = bkey_try(bch2_btree_iter_peek_slot(&bp_iter));
 
 	if (bp_found.k->type != KEY_TYPE_backpointer) {
-		try(bch2_btree_write_buffer_maybe_flush(trans, extent, &s->last_flushed));
+		try(bch2_btree_write_buffer_maybe_flush(trans, bch_wb_btree_mask(bp_btree), extent, &s->last_flushed));
 		try(bp_missing(trans, extent, bp, bp_found));
 	} else if (memcmp(bkey_s_c_to_backpointer(bp_found).v, &bp->v, sizeof(bp->v))) {
-		try(bch2_btree_write_buffer_maybe_flush(trans, extent, &s->last_flushed));
+		try(bch2_btree_write_buffer_maybe_flush(trans, bch_wb_btree_mask(bp_btree), extent, &s->last_flushed));
 		try(check_bp_dup(trans, s, extent, bp, bkey_s_c_to_backpointer(bp_found)));
 	}
 
@@ -913,7 +927,7 @@ static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct b
 
 			if (nr_deletes > 256)
 				return  bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
-					bch2_btree_write_buffer_flush_sync(trans) ?:
+					bch2_btree_write_buffer_flush_sync(trans, bch_wb_btree_mask(BTREE_ID_backpointers)) ?:
 					bch_err_throw(c, transaction_restart_write_buffer_flush);
 
 			need_commit = true;
@@ -1286,7 +1300,7 @@ static int check_bucket_backpointers_to_extents(struct btree_trans *trans,
 		check_one_backpointer(trans, BBPOS_MIN, BBPOS_MAX, bp, last_flushed));
 
 	return ret ?:
-		bch2_btree_write_buffer_flush_sync(trans) ?: /* make sure bad backpointers that were deleted are visible */
+		bch2_btree_write_buffer_flush_sync(trans, bch_wb_btree_mask(BTREE_ID_backpointers)) ?: /* make sure bad backpointers that were deleted are visible */
 		trans_was_restarted(trans, restart_count);
 }
 

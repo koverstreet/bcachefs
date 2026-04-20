@@ -252,7 +252,7 @@ int bch2_dev_data_drop_by_backpointers(struct bch_fs *c, struct bch_dev *ca,
 			   BIT(BTREE_ID_backpointers), 0);
 
 	for (unsigned i = 0; i < 3; i++) {
-		try(bch2_btree_write_buffer_flush_sync(trans));
+		try(bch2_btree_write_buffer_flush_sync(trans, bch_wb_btree_mask(BTREE_ID_backpointers)));
 
 		/*
 		 * Backpointers on RO devices may be updated (primarily via

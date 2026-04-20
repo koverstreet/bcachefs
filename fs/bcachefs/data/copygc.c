@@ -340,7 +340,7 @@ static int bch2_copygc(struct moving_context *ctxt,
 
 	move_buckets_wait(ctxt, buckets_in_flight, false);
 
-	ret = bch2_btree_write_buffer_tryflush(trans);
+	ret = bch2_btree_write_buffer_tryflush(trans, bch_wb_btree_mask(BTREE_ID_lru));
 	if (bch2_err_matches(ret, EROFS))
 		goto err;
 

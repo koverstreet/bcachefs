@@ -904,6 +904,8 @@ static int do_reconcile_scan_bps(struct moving_context *ctxt,
 	r->scan_start	= BBPOS(BTREE_ID_backpointers, POS(s.dev, 0));
 	r->scan_end	= BBPOS(BTREE_ID_backpointers, POS(s.dev, U64_MAX));
 
+	bch2_btree_write_buffer_flush_sync(trans, bch_wb_btree_mask(BTREE_ID_backpointers));
+
 	return backpointer_scan_for_each(trans, iter, BTREE_ID_backpointers,
 					 POS(s.dev, 0), POS(s.dev, U64_MAX),
 				  last_flushed, NULL, bp, ({
@@ -1250,7 +1252,8 @@ static CLOSURE_CALLBACK(do_reconcile_phys_thread)
 
 		bch2_trans_begin(trans);
 
-		struct bkey_s_c k = next_reconcile_entry(trans, &work, &work_pos, POS(thr->dev, U64_MAX));
+		struct bkey_s_c k = next_reconcile_entry(trans, &work, &work_pos,
+							 POS(thr->dev, U64_MAX));
 		if (bkey_err(k) ||
 		    !k.k ||
 		    k.k->p.inode != thr->dev)
@@ -1468,10 +1471,19 @@ static int do_reconcile_phase(struct reconcile_pass *p, u32 kick)
 {
 	struct btree_trans *trans = p->ctxt->trans;
 	struct bch_fs_reconcile *r = &trans->c->reconcile;
+	struct reconcile_phase phase = reconcile_phases[r->phase];
 
-	bch2_btree_write_buffer_flush_sync(trans);
+	/*
+	 * The phys/normal phases read write-buffered btrees: flush the
+	 * relevant WB once per phase so the loop sees current state. The
+	 * scan/btree phases read BTREE_ID_reconcile_scan, which isn't
+	 * write-buffered.
+	 */
+	if (phase.type == RECONCILE_PHASE_phys ||
+	    phase.type == RECONCILE_PHASE_normal)
+		try(bch2_btree_write_buffer_flush_sync(trans, bch_wb_btree_mask(phase.btree)));
 
-	switch (reconcile_phases[r->phase].type) {
+	switch (phase.type) {
 	case RECONCILE_PHASE_scan:
 		return do_reconcile_phase_iter(p, kick, do_reconcile_scan_key);
 	case RECONCILE_PHASE_btree:

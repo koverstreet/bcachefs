@@ -712,7 +712,7 @@ static long bch2_ioctl_snapshot_tree(struct bch_fs *c, struct file *filp,
 	CLASS(btree_trans, trans)(c);
 
 	/* Flush write buffer so accounting keys are visible in the btree */
-	try(bch2_btree_write_buffer_flush_sync(trans));
+	try(bch2_btree_write_buffer_flush_sync(trans, bch_wb_btree_mask(BTREE_ID_accounting)));
 
 	int ret = for_each_btree_key(trans, iter,
 			BTREE_ID_snapshots, POS_MIN,

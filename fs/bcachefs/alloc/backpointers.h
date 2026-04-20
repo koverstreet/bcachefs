@@ -97,7 +97,7 @@ int bch2_bucket_backpointer_mod_nowritebuffer(struct btree_trans *,
 				struct bkey_i_backpointer *,
 				bool);
 
-static inline enum btree_id backpointer_btree(struct bch_backpointer *bp)
+static inline enum btree_id backpointer_btree(const struct bch_backpointer *bp)
 {
 
 	return BACKPOINTER_STRIPE_PTR(bp)

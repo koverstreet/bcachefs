@@ -488,7 +488,7 @@ STORE(bch2_fs)
 
 	if (attr == &sysfs_trigger_btree_write_buffer_flush)
 		bch2_trans_do(c,
-			      (bch2_btree_write_buffer_flush_sync(trans),
+			      (bch2_btree_write_buffer_flush_sync(trans, BCH_WB_BTREES_ALL),
 			       bch2_trans_begin(trans)));
 
 	if (attr == &sysfs_trigger_gc)

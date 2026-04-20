@@ -1434,7 +1434,8 @@ static int bch2_dev_remove_need_discard(struct bch_fs *c, struct bch_dev *ca)
 	CLASS(btree_trans, trans)(c);
 	unsigned dev_idx = ca->dev_idx;
 
-	return for_each_btree_key_commit(trans, iter,
+	return bch2_btree_write_buffer_flush_sync(trans, bch_wb_btree_mask(BTREE_ID_need_discard)) ?:
+		for_each_btree_key_commit(trans, iter,
 			BTREE_ID_need_discard, POS_MIN,
 			BTREE_ITER_intent|BTREE_ITER_prefetch, k,
 			NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
@@ -1444,6 +1445,19 @@ static int bch2_dev_remove_need_discard(struct bch_fs *c, struct bch_dev *ca)
 					       BTREE_TRIGGER_norun)
 			: 0;
 	}));
+}
+
+static int bch2_dev_remove_backpointers(struct bch_fs *c, struct bch_dev *ca)
+{
+	struct bpos start	= POS(ca->dev_idx, 0);
+	struct bpos end		= POS(ca->dev_idx, U64_MAX);
+
+	CLASS(btree_trans, trans)(c);
+	bch2_btree_write_buffer_flush_sync(trans, bch_wb_btree_mask(BTREE_ID_backpointers));
+	bch2_trans_begin(trans);
+	int ret = bch2_btree_delete_range_trans(trans, BTREE_ID_backpointers, start, end,
+						BTREE_TRIGGER_norun);
+	return ret == -BCH_ERR_transaction_restart_nested ? 0 : ret;
 }
 
 int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca)
@@ -1460,8 +1474,7 @@ int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca)
 		bch2_dev_remove_need_discard(c, ca) ?:
 		bch2_btree_delete_range(c, BTREE_ID_freespace, start, end,
 					BTREE_TRIGGER_norun) ?:
-		bch2_btree_delete_range(c, BTREE_ID_backpointers, start, end,
-					BTREE_TRIGGER_norun) ?:
+		bch2_dev_remove_backpointers(c, ca) ?:
 		bch2_btree_delete_range(c, BTREE_ID_bucket_gens, start, end,
 					BTREE_TRIGGER_norun) ?:
 		bch2_btree_delete_range(c, BTREE_ID_alloc, start, end,
