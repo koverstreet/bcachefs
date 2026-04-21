@@ -39,6 +39,7 @@ static CLOSURE_CALLBACK(bch2_dio_read_complete)
 	closure_type(dio, struct dio_read, cl);
 
 	dio->req->ki_complete(dio->req, dio->ret);
+	async_object_list_del(dio->rbio.c, rbio, dio->rbio.list_idx);
 	bio_check_or_release(&dio->rbio.bio, dio->should_dirty);
 }
 
@@ -55,10 +56,12 @@ static void bch2_direct_IO_read_endio(struct bio *bio)
 
 static void bch2_direct_IO_read_split_endio(struct bio *bio)
 {
+	struct bch_read_bio *rbio = to_rbio(bio);
 	struct dio_read *dio = bio->bi_private;
 	bool should_dirty = dio->should_dirty;
 
 	bch2_direct_IO_read_endio(bio);
+	async_object_list_del(rbio->c, rbio, rbio->list_idx);
 	bio_check_or_release(bio, should_dirty);
 }
 
@@ -184,6 +187,7 @@ start:
 		closure_sync(&dio->cl);
 		closure_debug_destroy(&dio->cl);
 		ret = dio->ret;
+		async_object_list_del(c, rbio, dio->rbio.list_idx);
 		bio_check_or_release(&dio->rbio.bio, dio->should_dirty);
 		return ret;
 	} else {

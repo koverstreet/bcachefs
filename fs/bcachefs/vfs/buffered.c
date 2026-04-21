@@ -38,6 +38,7 @@ static void bch2_readpages_end_io(struct bio *bio)
 	bio_for_each_folio_all(fi, bio)
 		folio_end_read(fi.folio, !rbio->ret);
 
+	async_object_list_del(rbio->c, rbio, rbio->list_idx);
 	bio_put(bio);
 }
 
@@ -385,6 +386,8 @@ int bch2_read_single_folio(struct folio *folio, struct address_space *mapping)
 	wait_for_completion(&done);
 
 	ret = bch2_err_class(rbio->ret);
+
+	async_object_list_del(rbio->c, rbio, rbio->list_idx);
 	bio_put(&rbio->bio);
 
 	if (ret < 0)

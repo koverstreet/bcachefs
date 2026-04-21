@@ -114,6 +114,8 @@ static void move_read_endio(struct bio *bio)
 	struct data_update *u = container_of(bio, struct data_update, rbio.bio);
 	struct moving_context *ctxt = u->ctxt;
 
+	async_object_list_del(u->op.c, rbio, u->rbio.list_idx);
+
 	atomic_sub(u->k.k->k.size, &ctxt->read_sectors);
 	atomic_dec(&ctxt->read_ios);
 	u->read_done = true;

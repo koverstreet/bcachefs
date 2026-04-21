@@ -4,6 +4,7 @@
 
 #include "btree/bkey_buf.h"
 #include "btree/iter.h"
+#include "debug/async_objs.h"
 #include "extents_types.h"
 #include "data/reflink.h"
 
@@ -166,9 +167,8 @@ static inline struct bch_read_bio *rbio_init_fragment(struct bio *bio,
 	rbio->opts		= orig->opts;
 	rbio->failed		= failed;
 	rbio->err_report	= orig->err_report;
-#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
-	rbio->list_idx	= 0;
-#endif
+	async_object_list_add(orig->c, rbio, rbio, &rbio->list_idx);
+
 	return rbio;
 }
 
@@ -188,9 +188,8 @@ static inline struct bch_read_bio *rbio_init(struct bio *bio,
 	rbio->err_report	= NULL;
 	rbio->opts		= opts;
 	rbio->bio.bi_end_io	= end_io;
-#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
-	rbio->list_idx	= 0;
-#endif
+	async_object_list_add(c, rbio, rbio, &rbio->list_idx);
+
 	return rbio;
 }
 

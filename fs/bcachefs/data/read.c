@@ -1244,8 +1244,6 @@ static inline struct bch_read_bio *read_extent_rbio_alloc(struct btree_trans *tr
 				bch2_read_bio_to_text_atomic(&buf, rbio));
 	}
 
-	async_object_list_add(c, rbio, rbio, &rbio->list_idx);
-
 	if (rbio->bounce)
 		event_inc_trace(c, data_read_bounce, buf,
 				bch2_read_bio_to_text_atomic(&buf, rbio));
