@@ -1023,9 +1023,12 @@ static int new_stripe_alloc_buckets(struct btree_trans *trans,
 		 * out and do a non ec allocation */
 		if (allocated >= need) {
 			unsigned old_nr_data = s->nr_data;
+			unsigned nr_parity_gotten = 0;
+			for (unsigned i = s->nr_data; i < s->nr_data + s->nr_parity; i++)
+				nr_parity_gotten += test_bit(i, s->blocks_gotten);
 			unsigned new_nr_data = bitmap_weight(s->blocks_gotten, BCH_BKEY_PTRS_MAX)
-				- s->nr_parity;
-			unsigned new_nr_blocks = new_nr_data + s->nr_parity;
+				- nr_parity_gotten;
+			unsigned new_nr_blocks = new_nr_data + nr_parity_gotten;
 
 			for (unsigned i = new_nr_data; i < old_nr_data; i++)
 				BUG_ON(s->blocks[i]);
@@ -1033,15 +1036,15 @@ static int new_stripe_alloc_buckets(struct btree_trans *trans,
 			/* Shift parity blocks/ptrs/bitmaps down */
 			memmove(s->blocks + new_nr_data,
 				s->blocks + old_nr_data,
-				s->nr_parity * sizeof(s->blocks[0]));
+				nr_parity_gotten * sizeof(s->blocks[0]));
 			memmove(v->ptrs + new_nr_data,
 				v->ptrs + old_nr_data,
-				s->nr_parity * sizeof(v->ptrs[0]));
+				nr_parity_gotten * sizeof(v->ptrs[0]));
 
 			for (unsigned i = 0; i < s->nr_parity; i++)
 				__clear_bit(old_nr_data + i, s->blocks_gotten);
 
-			for (unsigned i = 0; i < s->nr_parity; i++)
+			for (unsigned i = 0; i < nr_parity_gotten; i++)
 				__set_bit(new_nr_data + i, s->blocks_gotten);
 
 			/* Zero tail */
@@ -1051,7 +1054,9 @@ static int new_stripe_alloc_buckets(struct btree_trans *trans,
 			       (BCH_BKEY_PTRS_MAX - new_nr_blocks) * sizeof(v->ptrs[0]));
 
 			s->nr_data = new_nr_data;
+			s->nr_parity = nr_parity_gotten;
 			v->nr_blocks = new_nr_blocks;
+			v->nr_redundant = nr_parity_gotten;
 			ret = 0;
 
 			struct bch_devs_list d = {};
