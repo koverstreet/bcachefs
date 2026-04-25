@@ -676,6 +676,7 @@ static int bch2_btree_write_buffer_journal_flush(struct journal *j,
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	CLASS(btree_trans, trans)(c);
+	trans->locking_wait.priority = 1;
 	bool did_work = false;
 
 	return btree_write_buffer_flush_seq(trans, seq, &did_work, WB_FLUSH_journal_pin);
@@ -702,6 +703,7 @@ bool bch2_btree_write_buffer_flush_going_ro(struct bch_fs *c)
 		return false;
 
 	CLASS(btree_trans, trans)(c);
+	trans->locking_wait.priority = 1;
 	bool did_work = false;
 	btree_write_buffer_flush_seq(trans, journal_cur_seq(&c->journal), &did_work,
 				     WB_FLUSH_sync);
