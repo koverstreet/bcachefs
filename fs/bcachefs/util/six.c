@@ -255,56 +255,93 @@ static inline void six_lock_prune_tombstones(struct six_lock *lock)
 		__six_lock_prune_tombstones(lock);
 }
 
+static inline void six_lock_wakeup_waiter(struct six_lock *lock,
+					  struct six_lock_wait_fifo *wf,
+					  struct six_lock_waiter *w, u16 iter)
+{
+	struct task_struct *task;
+
+	/*
+	 * Similar to percpu_rwsem_wake_function(), we need to guard
+	 * against the wakee noticing w->lock_acquired, returning, and
+	 * then exiting before we do the wakeup:
+	 */
+	task = get_task_struct(w->task);
+	fifo_entry(wf, iter) = NULL;
+	lock->wait_list_tombstones++;
+	/*
+	 * The release barrier here ensures the ordering of the fifo
+	 * entry removal before setting w->lock_acquired; @w is on the
+	 * stack of the thread doing the waiting and will be reused
+	 * after it sees w->lock_acquired with no other locking:
+	 * pairs with smp_load_acquire() in six_lock_slowpath()
+	 */
+	smp_store_release(&w->lock_acquired, true);
+	wake_up_process(task);
+	put_task_struct(task);
+}
+
 static void __six_lock_wakeup(struct six_lock *lock, enum six_lock_type lock_type)
 {
 	struct six_lock_waiter *w;
-	struct task_struct *task;
-	bool saw_one;
 	u16 iter;
 	int ret;
 again:
 	ret = 0;
-	saw_one = false;
 	raw_spin_lock(&lock->wait_lock);
 	struct six_lock_wait_fifo *wf = rcu_dereference_protected(lock->wait_fifo,
 						lockdep_is_held(&lock->wait_lock));
 
-	fifo_for_each_entry(w, wf, iter) {
-		if (!w)
-			continue;
-
-		if (w->lock_want != lock_type)
-			continue;
-
-		if (saw_one && lock_type != SIX_LOCK_read)
-			goto unlock;
-		saw_one = true;
-
-		ret = __do_six_trylock(lock, lock_type, w->task, false);
-		if (ret <= 0)
-			goto unlock;
-
+	if (lock_type != SIX_LOCK_read) {
 		/*
-		 * Similar to percpu_rwsem_wake_function(), we need to guard
-		 * against the wakee noticing w->lock_acquired, returning, and
-		 * then exiting before we do the wakeup:
+		 * For intent/write: find the highest-priority matching waiter.
+		 * Ties are broken by FIFO order (first match wins), so default
+		 * priority 0 preserves pure FIFO wakeup semantics.
 		 */
-		task = get_task_struct(w->task);
-		fifo_entry(wf, iter) = NULL;
-		lock->wait_list_tombstones++;
-		/*
-		 * The release barrier here ensures the ordering of the
-		 * __list_del before setting w->lock_acquired; @w is on the
-		 * stack of the thread doing the waiting and will be reused
-		 * after it sees w->lock_acquired with no other locking:
-		 * pairs with smp_load_acquire() in six_lock_slowpath()
-		 */
-		smp_store_release(&w->lock_acquired, true);
-		wake_up_process(task);
-		put_task_struct(task);
+		struct six_lock_waiter *best = NULL;
+		u16 best_iter = 0;
+		unsigned nr_matches = 0;
+
+		fifo_for_each_entry(w, wf, iter) {
+			if (!w || w->lock_want != lock_type)
+				continue;
+			nr_matches++;
+			if (!best || w->priority > best->priority) {
+				best = w;
+				best_iter = iter;
+			}
+		}
+
+		if (best) {
+			ret = __do_six_trylock(lock, lock_type, best->task, false);
+			if (ret > 0) {
+				six_lock_wakeup_waiter(lock, wf, best, best_iter);
+
+				if (nr_matches == 1)
+					six_clear_bitmask(lock, SIX_LOCK_WAITING_read << lock_type);
+			}
+		} else {
+			six_clear_bitmask(lock, SIX_LOCK_WAITING_read << lock_type);
+		}
+	} else {
+		bool saw_one = false;
+
+		fifo_for_each_entry(w, wf, iter) {
+			if (!w || w->lock_want != lock_type)
+				continue;
+
+			saw_one = true;
+
+			ret = __do_six_trylock(lock, lock_type, w->task, false);
+			if (ret <= 0)
+				goto unlock;
+
+			six_lock_wakeup_waiter(lock, wf, w, iter);
+		}
+
+		if (!saw_one)
+			six_clear_bitmask(lock, SIX_LOCK_WAITING_read << lock_type);
 	}
-
-	six_clear_bitmask(lock, SIX_LOCK_WAITING_read << lock_type);
 unlock:
 	six_lock_prune_tombstones(lock);
 	raw_spin_unlock(&lock->wait_lock);

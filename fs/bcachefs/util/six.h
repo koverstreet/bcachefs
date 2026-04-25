@@ -121,6 +121,21 @@
  *   Also, six_lock_waiter contains a timestamp, and waiters on a waitlist will
  *   have timestamps in strictly ascending order - this is so the timestamp can
  *   be used as a cursor for lock graph traverse.
+ *
+ * Wakeup priority:
+ *
+ *   For intent and write locks, the wakeup path selects the highest-priority
+ *   waiter from the waitlist rather than strictly the first (FIFO) entry.
+ *   When all waiters have the default priority (0), the first matching entry
+ *   wins -- identical to pure FIFO ordering.
+ *
+ *   This allows critical infrastructure threads (e.g. the write buffer flush
+ *   thread, whose progress is required for journal reclaim) to take locks
+ *   ahead of a large number of background workers, preventing priority
+ *   inversion under heavy concurrency.
+ *
+ *   Read lock wakeups are unaffected: all waiting readers are woken
+ *   unconditionally, since read locks do not conflict with each other.
  */
 
 #include <linux/lockdep.h>
@@ -140,6 +155,8 @@ struct six_lock_waiter {
 	enum six_lock_type	lock_want;
 	bool			lock_acquired;
 	u64			start_time;
+	/* 0 = default (FIFO order); higher values win in wakeup selection */
+	u8			priority;
 };
 
 /*

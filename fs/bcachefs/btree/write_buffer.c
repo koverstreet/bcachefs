@@ -805,6 +805,13 @@ static int bch2_btree_write_buffer_flush_thread(void *arg)
 		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 			guard(mutex)(&wb->flushing.lock);
 			CLASS(btree_trans, trans)(c);
+			/*
+			 * WB flush must win btree lock contention against
+			 * background workers: journal reclaim depends on WB
+			 * flush making progress, and a thundering herd of
+			 * reconcile/move workers can starve it.
+			 */
+			trans->locking_wait.priority = 1;
 			do {
 				bch2_trans_unlock_long(trans);
 				bch2_btree_write_buffer_flush_locked(trans, WB_FLUSH_thread);
