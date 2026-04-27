@@ -626,7 +626,6 @@ static noinline int bch2_read_retry_nodecode(struct btree_trans *trans,
 	if (ret)
 		rbio->ret = ret;
 
-	BUG_ON(atomic_read(&rbio->bio.__bi_remaining) != 1);
 	return ret;
 }
 
