@@ -654,6 +654,20 @@ static int __btree_node_reclaim_checks(struct bch_fs *c, struct btree *b,
 
 	lockdep_assert_held(&bc->lock);
 
+	/*
+	 * Stale entry: prep for the lockless live[] conversion. Once the
+	 * live lists are walked without bc->lock, shrinker / cannibalize
+	 * can pick up a node whose cache_state still says CLEAN/DIRTY but
+	 * has already been hash-removed (hash_val=0) or data-freed
+	 * (data=NULL) by another path. Bail and let that path finish.
+	 *
+	 * For non-hashed states (FREEABLE/FREED/NONE) hash_val=0 / data=NULL
+	 * is expected, so the check skips itself.
+	 */
+	if (btree_node_state_hashed(b->cache_state) &&
+	    (!b->hash_val || !b->data))
+		return btree_node_noreclaim(c, flags, BCH_BTREE_CACHE_NOT_FREED_stale);
+
 	if (btree_node_permanent(b))
 		return btree_node_noreclaim(c, flags, BCH_BTREE_CACHE_NOT_FREED_permanent);
 
@@ -681,10 +695,6 @@ static int __btree_node_reclaim_checks(struct bch_fs *c, struct btree *b,
 	return 0;
 }
 
-/*
- * this version is for btree nodes that have already been freed (we're not
- * reaping a real btree node)
- */
 static int btree_node_reclaim(struct bch_fs *c, struct btree *b,
 			      enum btree_node_reclaim_flags flags)
 {

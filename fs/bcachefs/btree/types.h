@@ -190,7 +190,8 @@ enum btree_node_sibling {
 	x(noevict)				\
 	x(write_blocked)			\
 	x(will_make_reachable)			\
-	x(access_bit)
+	x(access_bit)				\
+	x(stale)
 
 enum bch_btree_cache_not_freed_reasons {
 #define x(n) BCH_BTREE_CACHE_NOT_FREED_##n,
