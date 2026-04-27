@@ -1630,6 +1630,7 @@ void bch2_fs_btree_cache_exit(struct bch_fs *c)
 		WARN_ON(bc->live[1].nr_clean);
 		WARN_ON(bc->live[1].nr_dirty);
 		WARN_ON(bc->nr_freeable);
+		WARN_ON(atomic_long_read(&bc->nr_in_flight));
 
 		darray_exit(&bc->roots_extra);
 	}
