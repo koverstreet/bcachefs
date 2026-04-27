@@ -687,24 +687,36 @@ void bch2_btree_init_next(struct btree_trans *trans, struct btree *b)
 
 static bool __bch2_btree_flush_all(struct bch_fs *c, unsigned flag)
 {
-	struct bucket_table *tbl;
-	struct rhash_head *pos;
-	struct btree *b;
-	unsigned i;
 	bool ret = false;
 
 	if (!c->btree.cache.table_init_done)
 		return false;
-restart:
-	rcu_read_lock();
-	for_each_cached_btree(b, c, tbl, i, pos)
-		if (test_bit(flag, &b->flags)) {
-			rcu_read_unlock();
-			wait_on_bit_io(&b->flags, flag, TASK_UNINTERRUPTIBLE);
-			ret = true;
-			goto restart;
-		}
-	rcu_read_unlock();
+
+	/*
+	 * Walk the rhashtable and pick a node still flagged; drop the rcu
+	 * read lock and wait for the bit to clear, then re-walk. We don't
+	 * want to hold rcu_read_lock across an arbitrarily-long wait.
+	 */
+	while (true) {
+		struct bucket_table *tbl;
+		struct rhash_head *pos;
+		struct btree *waiting = NULL, *b;
+		unsigned i;
+
+		rcu_read_lock();
+		for_each_cached_btree(b, c, tbl, i, pos)
+			if (test_bit(flag, &b->flags)) {
+				waiting = b;
+				break;
+			}
+		rcu_read_unlock();
+
+		if (!waiting)
+			break;
+
+		wait_on_bit_io(&waiting->flags, flag, TASK_UNINTERRUPTIBLE);
+		ret = true;
+	}
 
 	return ret;
 }
