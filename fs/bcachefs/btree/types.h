@@ -19,6 +19,7 @@
 
 #include "util/darray.h"
 #include "util/printbuf.h"
+#include "util/fast_list.h"
 #include "util/six.h"
 
 struct open_bucket;
@@ -85,8 +86,8 @@ enum btree_node_cache_state {
 	BTREE_NODE_CACHE_NONE,		/* off all lists; not in cache (kzalloc default) */
 	BTREE_NODE_CACHE_FREED,		/* on bc->freed_{pcpu,nonpcpu}; no data buffer */
 	BTREE_NODE_CACHE_FREEABLE,	/* on bc->freeable; has data; not hashed */
-	BTREE_NODE_CACHE_CLEAN,		/* on bc->live[pinned].clean; hashed; has data */
-	BTREE_NODE_CACHE_DIRTY,		/* on bc->live[pinned].dirty; hashed; has data */
+	BTREE_NODE_CACHE_CLEAN,		/* on bc->clean_list; hashed; has data */
+	BTREE_NODE_CACHE_DIRTY,		/* on bc->dirty_list; hashed; has data */
 };
 
 struct btree {
@@ -154,7 +155,18 @@ struct btree {
 
 	struct open_buckets	ob;
 
-	/* lru list */
+	/*
+	 * Slots in bc->clean_list / bc->dirty_list (fast_lists), reserved at
+	 * __btree_node_mem_alloc() and held for the lifetime of the struct
+	 * btree (released on kfree). A node is on at most one of clean_list /
+	 * dirty_list at a time, tracked by whether the corresponding slot
+	 * contains this node or NULL.
+	 *
+	 * The list_head below is used for the freeable / freed_pcpu /
+	 * freed_nonpcpu lists, which remain list_head based.
+	 */
+	unsigned		cache_clean_idx;
+	unsigned		cache_dirty_idx;
 	struct list_head	list;
 
 	enum btree_node_cache_state cache_state;
@@ -192,8 +204,8 @@ struct btree_cache_list {
 	struct shrinker		*shrink;
 	size_t			nr_clean;
 	size_t			nr_dirty;
-	struct list_head	clean;
-	struct list_head	dirty;
+	size_t			scan_pos_clean;	/* clock-arm into bc->clean_list */
+	size_t			scan_pos_dirty;	/* clock-arm into bc->dirty_list */
 };
 
 static inline size_t btree_cache_list_nr(const struct btree_cache_list *l)
@@ -235,6 +247,8 @@ struct bch_fs_btree_cache {
 	struct list_head	freeable;
 	struct list_head	freed_pcpu;
 	struct list_head	freed_nonpcpu;
+	struct fast_list	clean_list;	/* shared between pinned buckets */
+	struct fast_list	dirty_list;	/* shared between pinned buckets */
 	struct btree_cache_list	live[2];
 
 	size_t			nr_vmalloc;
