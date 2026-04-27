@@ -138,7 +138,15 @@ static void btree_node_write_work(struct work_struct *work)
 
 	CLASS(btree_trans, trans)(c);
 
-	if (!wbio->wbio.first_btree_write || wbio->wbio.failed.nr) {
+	/*
+	 * btree_node_write_update_key commits through the journal; on a dead
+	 * journal that commit fails with journal_shutdown and there's no
+	 * point burning lockrestart_do cycles trying. Skip the update — the
+	 * read lock + __btree_node_write_done step below still runs so
+	 * BTREE_NODE_write_in_flight clears and flushers/cancellers drain.
+	 */
+	if (!bch2_journal_error(&c->journal) &&
+	    (!wbio->wbio.first_btree_write || wbio->wbio.failed.nr)) {
 		int ret = lockrestart_do(trans, btree_node_write_update_key(trans, wbio, b));
 		if (ret)
 			set_btree_node_noevict(b);
