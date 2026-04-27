@@ -1562,6 +1562,16 @@ void bch2_fs_btree_cache_exit(struct bch_fs *c)
 	shrinker_free(bc->live[1].shrink);
 	shrinker_free(bc->live[0].shrink);
 
+	/*
+	 * btree_node_write_work clears BTREE_NODE_write_in_flight before
+	 * releasing its read lock on the node, so flush_all_writes returning
+	 * doesn't guarantee the lock is unheld. Drain the workqueue so the
+	 * walks below can rely on trylock succeeding without racing with
+	 * still-finishing post-write work.
+	 */
+	if (c->btree.write_complete_wq)
+		drain_workqueue(c->btree.write_complete_wq);
+
 	/* vfree() can allocate memory: */
 	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 		guard(mutex)(&bc->lock);
