@@ -75,9 +75,11 @@ static void __btree_node_write_done(struct bch_fs *c, struct btree *b, u64 start
 		}
 	} while (!try_cmpxchg(&b->flags, &old, new));
 
-	if (new & (1U << BTREE_NODE_write_in_flight))
+	if (new & (1U << BTREE_NODE_write_in_flight)) {
+		/* Re-arm: bit stays set across the new write, no counter change. */
 		__bch2_btree_node_write(c, b, BTREE_WRITE_ALREADY_STARTED|type);
-	else {
+	} else {
+		atomic_long_dec(&c->btree.cache.nr_in_flight);
 		bch2_btree_node_write_done_clean(c, b);
 		smp_mb__after_atomic();
 		wake_up_bit(&b->flags, BTREE_NODE_write_in_flight);
@@ -336,6 +338,8 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b, unsigned flags)
 		new |=  (1 << BTREE_NODE_just_written);
 		new ^=  (1 << BTREE_NODE_write_idx);
 	} while (!try_cmpxchg_acquire(&b->flags, &old, new));
+
+	atomic_long_inc(&c->btree.cache.nr_in_flight);
 
 	if (new & (1U << BTREE_NODE_need_write))
 		return;

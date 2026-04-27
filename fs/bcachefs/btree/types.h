@@ -240,6 +240,9 @@ struct bch_fs_btree_cache {
 	size_t			nr_reserve;
 	size_t			nr_by_btree[BTREE_ID_NR];
 
+	/* Number of nodes with BTREE_NODE_write_in_flight set. */
+	atomic_long_t		nr_in_flight;
+
 	/* shrinker stats */
 	size_t			nr_freed;
 	u64			not_freed[BCH_BTREE_CACHE_NOT_FREED_REASONS_NR];
