@@ -243,6 +243,7 @@ static void __btree_node_free(struct btree_trans *trans, struct btree *b)
 	BUG_ON(b->ob.nr);
 	BUG_ON(!list_empty(&b->write_blocked));
 
+	clear_btree_node_permanent(b);
 	clear_btree_node_noevict(b);
 }
 
