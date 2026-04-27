@@ -16,6 +16,8 @@ void bch2_btree_node_mem_free(struct bch_fs *, struct btree *);
 
 int bch2_btree_node_transition_state(struct bch_fs_btree_cache *, struct btree *,
 				     enum btree_node_cache_state);
+int bch2_btree_node_transition_state_locked(struct bch_fs_btree_cache *, struct btree *,
+					    enum btree_node_cache_state);
 
 void bch2_node_pin(struct bch_fs *, struct btree *);
 void bch2_btree_cache_unpin(struct bch_fs *);

@@ -41,5 +41,6 @@ static inline void btree_node_write_if_need(struct btree_trans *trans, struct bt
 
 void bch2_btree_write_stats_to_text(struct printbuf *, struct bch_fs *);
 bool bch2_btree_flush_all_writes(struct bch_fs *);
+void bch2_btree_cancel_all_writes(struct bch_fs *);
 
 #endif /* _BCACHEFS_BTREE_WRITE_H */

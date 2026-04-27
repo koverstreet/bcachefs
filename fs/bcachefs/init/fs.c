@@ -346,6 +346,21 @@ static void __bch2_fs_read_only(struct bch_fs *c)
 		}
 	} while (clean_passes < 2);
 
+	/*
+	 * On a dead journal the clean-shutdown loop above can't make dirty
+	 * btree nodes clean: journal_flush_all_pins doesn't push them out,
+	 * and __bch2_btree_node_write skips submission for journal_error, so
+	 * BTREE_NODE_dirty stays set on every node that hadn't been written
+	 * yet. The loop terminates (everything no-ops) but live[].dirty is
+	 * still populated. Force-cancel: drop dirty bits + transition DIRTY →
+	 * CLEAN, then drain any interior updates btree_node_write_update_key
+	 * may have kicked off before the journal died.
+	 */
+	if (bch2_journal_error(&c->journal)) {
+		bch2_btree_cancel_all_writes(c);
+		bch2_btree_interior_updates_flush(c);
+	}
+
 	bch_verbose(c, "flushing journal and stopping allocators complete, journal seq %llu",
 		    journal_cur_seq(&c->journal));
 

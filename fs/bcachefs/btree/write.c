@@ -775,6 +775,48 @@ bool bch2_btree_flush_all_writes(struct bch_fs *c)
 	return __bch2_btree_flush_all(c, BTREE_NODE_write_in_flight);
 }
 
+/*
+ * Force-complete in-flight btree writes when a clean shutdown can't finish
+ * (journal in error / emergency RO).
+ *
+ * The clean-shutdown loop in __bch2_fs_read_only relies on dirty nodes being
+ * written out through the normal journal-flush path; when the journal is dead
+ * those writes can't make progress and dirty nodes are stuck. Walk live[].dirty
+ * (the only place dirty nodes can live — see the invariant assertion in
+ * bch2_btree_node_transition_state_locked) and:
+ *
+ *   - clear BTREE_NODE_dirty so __btree_node_write_done's cmpxchg, when an
+ *     in-flight write of one of these nodes finishes, won't re-arm the write
+ *   - transition DIRTY → CLEAN under bc->lock so subsequent code that walks
+ *     the live lists doesn't keep seeing them as dirty
+ *
+ * Then wait for any actual in-flight writes to drain. btree_node_write_work
+ * fast-paths on bch2_journal_error() so even on a dead journal write_in_flight
+ * gets cleared (synchronously via the !rearm branch of __btree_node_write_done).
+ *
+ * Caller must guarantee bch2_journal_error() is set so the work fast-paths
+ * and so no new writes are submitted concurrently.
+ */
+void bch2_btree_cancel_all_writes(struct bch_fs *c)
+{
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
+
+	if (!bc->table_init_done)
+		return;
+
+	scoped_guard(mutex, &bc->lock) {
+		for (unsigned i = 0; i < ARRAY_SIZE(bc->live); i++) {
+			struct btree *b, *t;
+			list_for_each_entry_safe(b, t, &bc->live[i].dirty, list) {
+				clear_btree_node_dirty(b);
+				bch2_btree_node_transition_state_locked(bc, b, BTREE_NODE_CACHE_CLEAN);
+			}
+		}
+	}
+
+	bch2_btree_flush_all_writes(c);
+}
+
 static const char * const bch2_btree_write_types[] = {
 #define x(t, n) [n] = #t,
 	BCH_BTREE_WRITE_TYPES()

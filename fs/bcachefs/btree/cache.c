@@ -371,8 +371,8 @@ static inline bool btree_node_state_has_buffer(enum btree_node_cache_state state
 	       state == BTREE_NODE_CACHE_FREEABLE;
 }
 
-static int bch2_btree_node_transition_state_locked(struct bch_fs_btree_cache *bc, struct btree *b,
-						   enum btree_node_cache_state new)
+int bch2_btree_node_transition_state_locked(struct bch_fs_btree_cache *bc, struct btree *b,
+					    enum btree_node_cache_state new)
 {
 	enum btree_node_cache_state old = b->cache_state;
 	bool pinned = btree_node_pinned(b);
@@ -389,6 +389,14 @@ static int bch2_btree_node_transition_state_locked(struct bch_fs_btree_cache *bc
 	BUG_ON((btree_node_state_has_buffer(old) ||
 		btree_node_state_has_buffer(new)) &&
 	       !b->data);
+	/*
+	 * BTREE_NODE_dirty is meaningful only while a node is hashed (CLEAN /
+	 * DIRTY); once unhashed (FREEABLE / FREED) it must already be clear.
+	 * The dirty bit is what makes the cache_state DIRTY, so a FREEABLE
+	 * node with the bit set is an inconsistent state — and consumers that
+	 * need to scrub dirty nodes can rely on walking only live[].dirty.
+	 */
+	EBUG_ON(!btree_node_state_hashed(new) && btree_node_dirty(b));
 
 	if (old == new)
 		return 0;
