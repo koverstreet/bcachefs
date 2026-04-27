@@ -791,12 +791,15 @@ bool bch2_btree_flush_all_writes(struct bch_fs *c)
  *
  *   - clear BTREE_NODE_dirty so __btree_node_write_done's cmpxchg, when an
  *     in-flight write of one of these nodes finishes, won't re-arm the write
- *   - transition DIRTY → CLEAN under bc->lock so subsequent code that walks
- *     the live lists doesn't keep seeing them as dirty
+ *   - settle cache_state from the bits via btree_node_live_state(): nodes
+ *     with write_in_flight still set stay DIRTY (the transition is a no-op),
+ *     nodes with neither bit set move to CLEAN
  *
  * Then wait for any actual in-flight writes to drain. btree_node_write_work
  * fast-paths on bch2_journal_error() so even on a dead journal write_in_flight
- * gets cleared (synchronously via the !rearm branch of __btree_node_write_done).
+ * gets cleared (synchronously via the !rearm branch of __btree_node_write_done),
+ * which then calls bch2_btree_node_write_done_clean to complete the
+ * DIRTY → CLEAN transition.
  *
  * Caller must guarantee bch2_journal_error() is set so the work fast-paths
  * and so no new writes are submitted concurrently.
@@ -813,7 +816,7 @@ void bch2_btree_cancel_all_writes(struct bch_fs *c)
 			struct btree *b, *t;
 			list_for_each_entry_safe(b, t, &bc->live[i].dirty, list) {
 				clear_btree_node_dirty(b);
-				bch2_btree_node_transition_state_locked(bc, b, BTREE_NODE_CACHE_CLEAN);
+				bch2_btree_node_transition_state_locked(bc, b, btree_node_live_state(b));
 			}
 		}
 	}

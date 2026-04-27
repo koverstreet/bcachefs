@@ -85,13 +85,20 @@ static inline enum btree_node_cache_state btree_node_cache_state(struct btree *b
 	return b->cache_state;
 }
 
-/* CLEAN or DIRTY based on the dirty flag — for transitions that re-attach
- * a live node without altering its dirty status (e.g. unhash/rehash for
- * key updates).
+/*
+ * The hashed (live) cache state derived from b's flag bits. A node belongs on
+ * live[].dirty whenever there's pending work — either BTREE_NODE_dirty (needs
+ * a write) or BTREE_NODE_write_in_flight (one is outstanding); otherwise it
+ * belongs on live[].clean.
+ *
+ * Use this anywhere you need to compute the right cache_state from the
+ * current bits — passing it to bch2_btree_node_transition_state_locked() is a
+ * no-op when the node is already in the right state, so callers don't need
+ * "do we need to transition?" conditionals.
  */
 static inline enum btree_node_cache_state btree_node_live_state(const struct btree *b)
 {
-	return btree_node_dirty(b)
+	return (btree_node_dirty(b) || btree_node_write_in_flight(b))
 		? BTREE_NODE_CACHE_DIRTY
 		: BTREE_NODE_CACHE_CLEAN;
 }
