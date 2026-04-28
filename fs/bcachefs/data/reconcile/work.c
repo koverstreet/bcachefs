@@ -898,8 +898,6 @@ static int do_reconcile_scan_bps(struct moving_context *ctxt,
 	r->scan_start	= BBPOS(BTREE_ID_backpointers, POS(s.dev, 0));
 	r->scan_end	= BBPOS(BTREE_ID_backpointers, POS(s.dev, U64_MAX));
 
-	bch2_btree_write_buffer_flush_sync(trans);
-
 	return backpointer_scan_for_each(trans, iter, BTREE_ID_backpointers,
 					 POS(s.dev, 0), POS(s.dev, U64_MAX),
 				  last_flushed, NULL, bp, ({
@@ -1057,8 +1055,6 @@ static int do_reconcile_scan(struct moving_context *ctxt,
 	 */
 	*sectors_scanned += 1;
 	bch2_move_stats_exit(&r->scan_stats, c);
-
-	bch2_btree_write_buffer_flush_sync(trans);
 	return 0;
 }
 
@@ -1411,7 +1407,10 @@ static int do_reconcile_phase_phys(struct reconcile_pass *p)
 
 static int do_reconcile_phase(struct reconcile_pass *p, u32 kick)
 {
-	struct bch_fs_reconcile *r = &p->ctxt->trans->c->reconcile;
+	struct btree_trans *trans = p->ctxt->trans;
+	struct bch_fs_reconcile *r = &trans->c->reconcile;
+
+	bch2_btree_write_buffer_flush_sync(trans);
 
 	switch (reconcile_phases[r->phase].type) {
 	case RECONCILE_PHASE_scan:
@@ -1448,7 +1447,6 @@ static int do_reconcile(struct moving_context *ctxt)
 	bkey_init(&pending_cookie.k);
 
 	bch2_moving_ctxt_flush_all(ctxt);
-	bch2_btree_write_buffer_flush_sync(trans);
 
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
 	wb_maybe_flush_init(&last_flushed);
