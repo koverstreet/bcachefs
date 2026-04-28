@@ -1221,6 +1221,7 @@ static noinline int inval_bucket_key(struct btree_trans *trans, struct bkey_s_c 
 
 #define eval_state(_a, expr)		({ const struct bch_alloc_v4 *a = _a; expr; })
 #define statechange_to(expr)		(!eval_state(old_a, expr) && eval_state(new_a, expr))
+#define statechange_from(expr)		(eval_state(old_a, expr) && !eval_state(new_a, expr))
 #define statechange(expr)		(eval_state(old_a, expr) != eval_state(new_a, expr))
 
 int bch2_trigger_alloc(struct btree_trans *trans,
@@ -1352,8 +1353,6 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 			WARN_ON(BCH_ALLOC_V4_NEED_DISCARD(new_a));
 			BUG_ON(old_a->data_type != BCH_DATA_need_discard &&
 			       old_a->data_type != BCH_DATA_need_gc_gens);
-			BUG_ON(old_a->data_type == BCH_DATA_need_discard &&
-			       !(flags & BTREE_TRIGGER_is_discard));
 
 			new_a->journal_seq_nonempty = new_a->journal_seq_empty = 0;
 
@@ -1370,6 +1369,13 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 			 */
 			if (!new_a->journal_seq_nonempty)
 				new_a->journal_seq_nonempty = transaction_seq;
+		}
+
+		if (statechange_from(a->data_type == BCH_DATA_need_discard)) {
+			if (data_type_is_empty(new_a->data_type))
+				BUG_ON(!(flags & BTREE_TRIGGER_is_discard));
+			else
+				BUG_ON(!bch2_bucket_is_open_safe(c, new.k->p.inode, new.k->p.offset));
 		}
 
 		if (statechange_to(a->data_type == BCH_DATA_need_discard)) {
