@@ -735,7 +735,6 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 			six_unlock_write(&b->c.lock);
 			six_unlock_intent(&b->c.lock);
 			freed++;
-			bc->nr_freed++;
 		}
 	}
 	list_for_each_entry_safe(b, t, &list->clean, list) {
@@ -752,7 +751,6 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 			bch2_btree_node_transition_state_locked(bc, b, BTREE_NODE_CACHE_FREED);
 
 			freed++;
-			bc->nr_freed++;
 
 			six_unlock_write(&b->c.lock);
 			six_unlock_intent(&b->c.lock);
@@ -765,6 +763,9 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 		}
 	}
 out:
+	bc->nr_freed		+= freed;
+	bc->nr_requested	+= nr;
+
 	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_cache_scan], start_time);
 
 	event_inc_trace(c, btree_cache_scan, buf,
@@ -1768,7 +1769,8 @@ void bch2_btree_cache_to_text(struct printbuf *out, const struct bch_fs_btree_ca
 
 	prt_newline(out);
 	prt_printf(out, "counters since mount:\n");
-	prt_printf(out, "freed:\t%zu\n", bc->nr_freed);
+	prt_printf(out, "requested:\t%zu\n",	bc->nr_requested);
+	prt_printf(out, "freed:\t%zu\n",	bc->nr_freed);
 	prt_printf(out, "not freed:\n");
 
 	for (unsigned i = 0; i < ARRAY_SIZE(bc->not_freed); i++)

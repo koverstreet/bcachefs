@@ -245,6 +245,7 @@ struct bch_fs_btree_cache {
 
 	/* shrinker stats */
 	size_t			nr_freed;
+	size_t			nr_requested;
 	u64			not_freed[BCH_BTREE_CACHE_NOT_FREED_REASONS_NR];
 
 	/*
