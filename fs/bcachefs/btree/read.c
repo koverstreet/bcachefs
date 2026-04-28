@@ -960,7 +960,7 @@ static void btree_node_read_work(struct work_struct *work)
 		if ((failed.nr || btree_node_need_rewrite(b)) &&
 		    c->recovery.current_pass != BCH_RECOVERY_PASS_scan_for_btree_nodes) {
 			prt_printf(&buf, " (rewriting node)");
-			bch2_btree_node_rewrite_async(c, b);
+			bch2_async_btree_op(c, b, ASYNC_BTREE_rewrite);
 		}
 
 		prt_newline(&buf);
@@ -974,6 +974,20 @@ static void btree_node_read_work(struct work_struct *work)
 	async_object_list_del(c, btree_read_bio, rb->list_idx);
 	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_read],
 			       rb->start_time);
+
+	if (!ret &&
+	    !static_branch_unlikely(&bch2_btree_node_merging_disabled) &&
+	    (!bpos_eq(b->data->min_key, POS_MIN) ||
+	     !bpos_eq(b->key.k.p, SPOS_MAX)) &&
+	    b->nr.live_u64s < c->btree.foreground_merge_threshold / 2) {
+		/* Ensure very empty btree nodes get merged, in case they're
+		 * being read but never written to - but with a very low
+		 * threshold, or __bch2_foreground_maybe_merge() will
+		 * recursively kick off more merge attempts as it reads sibling
+		 * nodes:
+		 */
+		bch2_async_btree_op(c, b, ASYNC_BTREE_merge_no_read);
+	}
 
 	bio_put(&rb->bio);
 	clear_btree_node_read_in_flight(b);

@@ -2451,14 +2451,14 @@ int bch2_btree_node_rewrite_key(struct btree_trans *trans,
 static int bch2_btree_node_merge_key(struct btree_trans *trans,
 				     enum btree_id btree, unsigned level,
 				     struct bkey_i *k,
-				     enum bch_trans_commit_flags flags)
+				     enum btree_iter_update_trigger_flags flags)
 {
-	CLASS(btree_node_iter, iter)(trans, btree, k->k.p, level + 1, level, 0);
+	CLASS(btree_node_iter, iter)(trans, btree, k->k.p, level + 1, level, flags);
 	struct btree *b = errptr_try(bch2_btree_iter_peek_node(&iter));
 
 	bool found = b && btree_ptr_hash_val(&b->key) == btree_ptr_hash_val(k);
 	return found
-		? bch2_foreground_maybe_merge(trans, iter.path, level, flags, 0, NULL)
+		? bch2_foreground_maybe_merge(trans, iter.path, level, 0, 0, NULL)
 		: -ENOENT;
 }
 
@@ -2484,7 +2484,7 @@ struct async_btree_rewrite {
 	struct list_head	list;
 	enum btree_id		btree_id;
 	unsigned		level;
-	bool			merge;
+	enum async_btree_op	op;
 	struct bkey_buf		key;
 };
 
@@ -2494,9 +2494,10 @@ static void async_btree_node_rewrite_work(struct work_struct *work)
 		container_of(work, struct async_btree_rewrite, work);
 	struct bch_fs *c = a->c;
 
-	int ret = bch2_trans_do(c, !a->merge
+	int ret = bch2_trans_do(c, a->op == ASYNC_BTREE_rewrite
 		? bch2_btree_node_rewrite_key(trans, a->btree_id, a->level, a->key.k, 0)
-		: bch2_btree_node_merge_key(trans, a->btree_id, a->level, a->key.k, 0));
+		: bch2_btree_node_merge_key(trans, a->btree_id, a->level, a->key.k,
+					    a->op == ASYNC_BTREE_merge_no_read ? BTREE_ITER_nofill : 0));
 	if (!bch2_err_matches(ret, ENOENT) &&
 	    !bch2_err_matches(ret, EROFS))
 		bch_err_fn_ratelimited(c, ret);
@@ -2511,7 +2512,8 @@ static void async_btree_node_rewrite_work(struct work_struct *work)
 	kfree(a);
 }
 
-static void __bch2_btree_node_rewrite_async(struct bch_fs *c, struct btree *b, bool merge)
+void bch2_async_btree_op(struct bch_fs *c, struct btree *b,
+				enum async_btree_op op)
 {
 	struct async_btree_rewrite *a = kzalloc(sizeof(*a), GFP_NOFS);
 	if (!a)
@@ -2520,7 +2522,7 @@ static void __bch2_btree_node_rewrite_async(struct bch_fs *c, struct btree *b, b
 	a->c		= c;
 	a->btree_id	= b->c.btree_id;
 	a->level	= b->c.level;
-	a->merge	= merge;
+	a->op		= op;
 	INIT_WORK(&a->work, async_btree_node_rewrite_work);
 
 	bch2_bkey_buf_init(&a->key);
@@ -2533,7 +2535,7 @@ static void __bch2_btree_node_rewrite_async(struct bch_fs *c, struct btree *b, b
 		    enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_node_rewrite)) {
 			list_add(&a->list, &c->btree.node_rewrites.list);
 			now = true;
-		} else if (!test_bit(BCH_FS_may_go_rw, &c->flags) && !merge) {
+		} else if (!test_bit(BCH_FS_may_go_rw, &c->flags)) {
 			list_add(&a->list, &c->btree.node_rewrites.pending);
 			pending = true;
 		}
@@ -2547,16 +2549,6 @@ static void __bch2_btree_node_rewrite_async(struct bch_fs *c, struct btree *b, b
 		bch2_bkey_buf_exit(&a->key);
 		kfree(a);
 	}
-}
-
-void bch2_btree_node_rewrite_async(struct bch_fs *c, struct btree *b)
-{
-	__bch2_btree_node_rewrite_async(c, b, false);
-}
-
-void bch2_btree_node_merge_async(struct bch_fs *c, struct btree *b)
-{
-	__bch2_btree_node_rewrite_async(c, b, true);
 }
 
 void bch2_async_btree_node_rewrites_flush(struct bch_fs *c)

@@ -1281,7 +1281,7 @@ static int merge_btree_node_one(struct btree_trans *trans,
 
 	try(bch2_progress_update_iter(trans, progress, iter));
 
-	if (!btree_node_needs_merge(trans, b, 0)) {
+	if (!btree_node_needs_merge(trans->c, b, 0)) {
 		if (bpos_eq(b->key.k.p, SPOS_MAX))
 			return 1;
 

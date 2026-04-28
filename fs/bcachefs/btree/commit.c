@@ -891,7 +891,7 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 				struct btree_path *path = trans->paths + i->path;
 				struct btree *b = path->l[i->level].b;
 
-				if (unlikely(btree_node_needs_merge(trans, b, u64s_delta))) {
+				if (unlikely(btree_node_needs_merge(c, b, u64s_delta))) {
 					flags = btree_update_set_watermark_hipri(flags);
 
 					try(bch2_foreground_maybe_merge(trans, i->path, i->level,

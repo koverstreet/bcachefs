@@ -150,13 +150,13 @@ int __bch2_foreground_maybe_merge(struct btree_trans *, btree_path_idx_t,
 				  unsigned, enum bch_trans_commit_flags,
 				  u64 *, enum btree_node_sibling);
 
-static inline bool btree_node_needs_merge(struct btree_trans *trans, struct btree *b, int d)
+static inline bool btree_node_needs_merge(struct bch_fs *c, struct btree *b, int d)
 {
 	if (static_branch_unlikely(&bch2_btree_node_merging_disabled))
 		return false;
 
 	return (int) min(b->sib_u64s[0], b->sib_u64s[1]) + d <=
-		(int) trans->c->btree.foreground_merge_threshold;
+		(int) c->btree.foreground_merge_threshold;
 }
 
 static inline int bch2_foreground_maybe_merge(struct btree_trans *trans,
@@ -172,7 +172,7 @@ static inline int bch2_foreground_maybe_merge(struct btree_trans *trans,
 
 	EBUG_ON(!btree_node_locked(path, level));
 
-	if (likely(!btree_node_needs_merge(trans, b, u64s_delta)))
+	if (likely(!btree_node_needs_merge(trans->c, b, u64s_delta)))
 		return 0;
 
 	return  __bch2_foreground_maybe_merge(trans, path_idx, level, flags, merge_count, btree_prev_sib) ?:
@@ -191,8 +191,13 @@ int bch2_btree_node_rewrite_pos(struct btree_trans *,
 				enum bch_trans_commit_flags,
 				enum bch_write_flags);
 
-void bch2_btree_node_rewrite_async(struct bch_fs *, struct btree *);
-void bch2_btree_node_merge_async(struct bch_fs *, struct btree *);
+enum async_btree_op {
+	ASYNC_BTREE_rewrite,
+	ASYNC_BTREE_merge,
+	ASYNC_BTREE_merge_no_read,
+};
+
+void bch2_async_btree_op(struct bch_fs *, struct btree *, enum async_btree_op);
 
 int bch2_btree_node_update_key(struct btree_trans *, struct btree_iter *,
 			       struct btree *, struct bkey_i *,

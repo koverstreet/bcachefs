@@ -249,8 +249,8 @@ static inline int wb_flush_one(struct btree_trans *trans,
 	bch2_btree_insert_key_leaf(trans, path, &wb->k, wb->journal_seq);
 	(*fast)++;
 
-	if (unlikely(btree_node_needs_merge(trans, b, 0)))
-		bch2_btree_node_merge_async(trans->c, b);
+	if (unlikely(btree_node_needs_merge(trans->c, b, 0)))
+		bch2_async_btree_op(trans->c, b, ASYNC_BTREE_merge);
 
 	return 0;
 }
