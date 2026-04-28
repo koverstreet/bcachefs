@@ -75,6 +75,37 @@ static void btree_merge_node_put(struct btree_merge_node n)
 DEFINE_DARRAY_NAMED_FREE_ITEM(darray_merge_node, struct btree_merge_node,
 			      btree_merge_node_put);
 
+/*
+ * Verify each pair of consecutive source nodes is contiguous: the
+ * successor of prev's max_key must equal next's min_key. Anything
+ * else is btree topology corruption and we bail before committing
+ * anything.
+ */
+static int btree_merge_topology_check(struct bch_fs *c, darray_merge_node *srcs)
+{
+	for (struct btree_merge_node *s = srcs->data + 1; s < srcs->data + srcs->nr; s++) {
+		struct btree *prev = s[-1].b, *next = s[0].b;
+
+		if (bpos_eq(bpos_successor(prev->data->max_key), next->data->min_key))
+			continue;
+
+		CLASS(bch_log_msg, msg)(c);
+
+		prt_str(&msg.m, "btree node merge: end of prev node doesn't match start of next node\n");
+
+		prt_printf(&msg.m, "prev ends at   ");
+		bch2_bpos_to_text(&msg.m, prev->data->max_key);
+		prt_newline(&msg.m);
+
+		prt_printf(&msg.m, "next starts at ");
+		bch2_bpos_to_text(&msg.m, next->data->min_key);
+		prt_newline(&msg.m);
+
+		return __bch2_topology_error(c, &msg.m);
+	}
+	return 0;
+}
+
 static int btree_node_topology_err(struct bch_fs *c, struct btree *b, struct printbuf *out)
 {
 	prt_printf(out, "in parent node:\n");
@@ -2229,26 +2260,9 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 		BUG_ON(darray_push(&srcs, ((struct btree_merge_node) { trans, m, sib_path })));
 	}
 
-	for (struct btree_merge_node *s = srcs.data + 1; s < srcs.data + srcs.nr; s++) {
-		struct btree *prev = s[-1].b, *next = s[0].b;
-
-		if (!bpos_eq(bpos_successor(prev->data->max_key), next->data->min_key)) {
-			CLASS(bch_log_msg, msg)(c);
-
-			prt_str(&msg.m, "btree node merge: end of prev node doesn't match start of next node\n");
-
-			prt_printf(&msg.m, "prev ends at   ");
-			bch2_bpos_to_text(&msg.m, prev->data->max_key);
-			prt_newline(&msg.m);
-
-			prt_printf(&msg.m, "next starts at ");
-			bch2_bpos_to_text(&msg.m, next->data->min_key);
-			prt_newline(&msg.m);
-
-			ret = __bch2_topology_error(c, &msg.m);
-			goto err;
-		}
-	}
+	ret = btree_merge_topology_check(c, &srcs);
+	if (ret)
+		goto err;
 
 	bch2_bkey_format_init(&new_s);
 	bch2_bkey_format_add_pos(&new_s, srcs.data[0].b->data->min_key);
