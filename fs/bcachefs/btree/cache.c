@@ -84,6 +84,7 @@
  */
 
 #include "bcachefs.h"
+#include "backpressure.h"
 
 #include "btree/bbpos.h"
 #include "btree/bkey_buf.h"
@@ -98,6 +99,7 @@
 #include "init/error.h"
 
 #include "journal/journal.h"
+#include "journal/reclaim.h"
 
 #include "sb/counters.h"
 
@@ -309,6 +311,29 @@ static inline bool __btree_node_pinned(struct bch_fs_btree_cache *bc, struct btr
 		bbpos_cmp(bc->pinned_nodes_end, pos) >= 0);
 }
 
+/*
+ * Recompute backpressure for the btree node cache from current dirty/live
+ * counts and publish it; if the level rose, kick journal reclaim. Called
+ * from bch2_btree_node_transition_state_locked, which is the single point
+ * that mutates live[].nr_clean/nr_dirty for hashed-state transitions.
+ * Caller holds bc->lock so the read is consistent.
+ */
+static void btree_node_cache_pressure_update(struct bch_fs *c)
+{
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
+	size_t live = btree_cache_list_nr(&bc->live[0]) +
+		      btree_cache_list_nr(&bc->live[1]);
+	size_t dirty = bc->live[0].nr_dirty + bc->live[1].nr_dirty;
+	enum bch_backpressure_level new_level = live
+		? dirty * BCH_BACKPRESSURE_LEVEL_NR / live
+		: BCH_BACKPRESSURE_LEVEL_none;
+	enum bch_backpressure_level old =
+		bch2_backpressure_fs_set(c, BCH_BACKPRESSURE_FS_btree_node_cache,
+					 new_level);
+	if (new_level > old)
+		journal_reclaim_kick(&c->journal);
+}
+
 void bch2_node_pin(struct bch_fs *c, struct btree *b)
 {
 	struct bch_fs_btree_cache *bc = &c->btree.cache;
@@ -475,6 +500,8 @@ int bch2_btree_node_transition_state_locked(struct bch_fs_btree_cache *bc, struc
 	closure_wake_up(&bc->nr_in_flight_wait);
 
 	b->cache_state = new;
+	btree_node_cache_pressure_update(container_of(bc, struct bch_fs,
+						      btree.cache));
 	return ret;
 }
 

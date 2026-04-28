@@ -20,6 +20,18 @@
 
 #include "journal/reclaim.h"
 
+static void btree_node_writes_pressure_update(struct bch_fs *c)
+{
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
+	size_t cache_size = btree_cache_list_nr(&bc->live[0]) +
+			    btree_cache_list_nr(&bc->live[1]);
+	size_t threshold = max_t(size_t, cache_size / 10, 64);
+	size_t in_flight = atomic_long_read(&bc->nr_in_flight_inner);
+
+	bch2_backpressure_fs_set(c, BCH_BACKPRESSURE_FS_btree_node_writes,
+				 in_flight * BCH_BACKPRESSURE_LEVEL_NR / threshold);
+}
+
 static void __btree_node_write_done(struct bch_fs *c, struct btree *b)
 {
 	struct btree_write *w = btree_prev_write(b);
@@ -68,10 +80,17 @@ static void __btree_node_write_done(struct bch_fs *c, struct btree *b)
 	} while (!try_cmpxchg(&b->flags, &old, new));
 
 	if (new & (1U << BTREE_NODE_write_in_flight)) {
-		/* Re-arm: bit stays set across the new write, no counter change. */
-		__bch2_btree_node_write(c, b, BTREE_WRITE_already_started|type);
+		/*
+		 * Re-arm: write_in_flight stays set across the new write, no
+		 * counter change there. write_in_flight_inner was cleared in
+		 * endio and is re-set above, so inc to track the new bio.
+		 */
+		atomic_long_inc(&c->btree.cache.nr_in_flight_inner);
+		btree_node_writes_pressure_update(c);
+		__bch2_btree_node_write(c, b, BTREE_WRITE_ALREADY_STARTED|type);
 	} else {
 		atomic_long_dec(&c->btree.cache.nr_in_flight);
+		btree_node_writes_pressure_update(c);
 		bch2_btree_node_write_done_clean(c, b);
 		smp_mb__after_atomic();
 		wake_up_bit(&b->flags, BTREE_NODE_write_in_flight);
@@ -226,6 +245,8 @@ static void btree_node_write_endio(struct bio *bio)
 	closure_wake_up(&c->btree.cache.nr_in_flight_wait);
 
 	clear_btree_node_write_in_flight_inner(b);
+	atomic_long_dec(&c->btree.cache.nr_in_flight_inner);
+	btree_node_writes_pressure_update(c);
 	smp_mb__after_atomic();
 	wake_up_bit(&b->flags, BTREE_NODE_write_in_flight_inner);
 	INIT_WORK(&wb->work, btree_node_write_work);
@@ -336,6 +357,8 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b, unsigned flags)
 	} while (!try_cmpxchg_acquire(&b->flags, &old, new));
 
 	atomic_long_inc(&c->btree.cache.nr_in_flight);
+	atomic_long_inc(&c->btree.cache.nr_in_flight_inner);
+	btree_node_writes_pressure_update(c);
 
 	if (new & (1U << BTREE_NODE_need_write))
 		return;

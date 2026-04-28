@@ -244,8 +244,15 @@ struct bch_fs_btree_cache {
 
 	/* Number of nodes with BTREE_NODE_write_in_flight set. */
 	atomic_long_t		nr_in_flight;
-	atomic_long_t		nr_in_flight_inner;
 	struct closure_waitlist	nr_in_flight_wait;
+
+	/*
+	 * Number of nodes with BTREE_NODE_write_in_flight_inner set: bios
+	 * submitted to the device, not yet endio'd. This is the signal
+	 * BCH_BACKPRESSURE_FS_btree_node_writes uses (vs nr_in_flight, which
+	 * also covers re-arm windows where the bit is between bios).
+	 */
+	atomic_long_t		nr_in_flight_inner;
 
 	/* shrinker stats */
 	size_t			nr_freed;

@@ -259,7 +259,7 @@ static inline u64 __dev_buckets_free(struct bch_dev *ca,
 				     enum bch_watermark watermark)
 {
 	return max_t(s64, 0,
-		     usage.buckets[BCH_DATA_free]-
+		     usage.buckets[BCH_DATA_free] -
 		     ca->nr_open_buckets -
 		     bch2_dev_buckets_reserved(ca, watermark));
 }

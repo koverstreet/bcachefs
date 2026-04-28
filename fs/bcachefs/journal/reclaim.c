@@ -91,6 +91,31 @@ void bch2_journal_set_watermark(struct journal *j)
 	mod_bit(JOURNAL_low_on_pin,	&j->flags, low_on_pin);
 	mod_bit(JOURNAL_low_on_wb,	&j->flags, low_on_wb);
 
+	/*
+	 * Mirror the same signals into the new backpressure framework. Running
+	 * in parallel with the existing journal flag/event-trace path until the
+	 * framework's consumers are wired up and validated.
+	 */
+	u64 space_total = j->space[journal_space_total].total;
+	u64 space_used = space_total - j->space[journal_space_clean].total;
+	bch2_backpressure_fs_set(c, BCH_BACKPRESSURE_FS_journal_space,
+		space_total
+		? space_used * BCH_BACKPRESSURE_LEVEL_NR / space_total
+		: BCH_BACKPRESSURE_LEVEL_none);
+
+	size_t pin_used = j->pin.size - fifo_free(&j->pin);
+	bch2_backpressure_fs_set(c, BCH_BACKPRESSURE_FS_journal_pin,
+		j->pin.size
+		? pin_used * BCH_BACKPRESSURE_LEVEL_NR / j->pin.size
+		: BCH_BACKPRESSURE_LEVEL_none);
+
+	size_t wb_nr, wb_sz;
+	bch2_btree_write_buffer_fill(c, &wb_nr, &wb_sz);
+	bch2_backpressure_fs_set(c, BCH_BACKPRESSURE_FS_btree_write_buffer,
+		wb_sz
+		? wb_nr * BCH_BACKPRESSURE_LEVEL_NR / wb_sz
+		: BCH_BACKPRESSURE_LEVEL_none);
+
 	swap(watermark, j->watermark);
 	if (watermark > j->watermark)
 		journal_wake(j);

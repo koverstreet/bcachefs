@@ -7,6 +7,7 @@ endif
 obj-$(CONFIG_BCACHEFS_FS)	+= bcachefs.o
 
 bcachefs-y		:=			\
+	backpressure.o				\
 	alloc/accounting.o			\
 	alloc/background.o			\
 	alloc/backpointers.o			\

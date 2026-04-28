@@ -12,6 +12,7 @@
  */
 
 #include "bcachefs.h"
+#include "backpressure.h"
 
 #include "btree/cache.h"
 #include "btree/iter.h"
@@ -30,6 +31,26 @@
 static inline bool btree_uses_pcpu_readers(enum btree_id id)
 {
 	return id == BTREE_ID_subvolumes;
+}
+
+/*
+ * Recompute backpressure for the key cache from the current dirty/keys
+ * counts and publish it; if the level rose, kick journal reclaim so it
+ * starts draining. Called from every nr_dirty / nr_keys mutation —
+ * cheap on the no-change path (set_fs returns after one cmpxchg miss).
+ */
+static void key_cache_pressure_update(struct bch_fs *c)
+{
+	size_t nr_dirty = atomic_long_read(&c->btree.key_cache.nr_dirty);
+	size_t nr_keys = atomic_long_read(&c->btree.key_cache.nr_keys);
+	enum bch_backpressure_level new_level = nr_keys
+		? nr_dirty * BCH_BACKPRESSURE_LEVEL_NR / nr_keys
+		: BCH_BACKPRESSURE_LEVEL_none;
+	enum bch_backpressure_level old =
+		bch2_backpressure_fs_set(c, BCH_BACKPRESSURE_FS_btree_key_cache,
+					 new_level);
+	if (new_level > old)
+		journal_reclaim_kick(&c->journal);
 }
 
 static struct kmem_cache *bch2_key_cache;
@@ -92,16 +113,17 @@ static bool bkey_cached_lock_for_evict(struct bkey_cached *ck)
 	return true;
 }
 
-static bool bkey_cached_evict(struct bch_fs_btree_key_cache *c,
+static bool bkey_cached_evict(struct bch_fs_btree_key_cache *bc,
 			      struct bkey_cached *ck)
 {
-	bool ret = !rhashtable_remove_fast(&c->table, &ck->hash,
+	bool ret = !rhashtable_remove_fast(&bc->table, &ck->hash,
 				      bch2_btree_key_cache_params);
 	if (ret) {
 		memset(&ck->key, ~0, sizeof(ck->key));
-		atomic_long_dec(&c->nr_keys);
+		atomic_long_dec(&bc->nr_keys);
+		key_cache_pressure_update(container_of(bc, struct bch_fs,
+						       btree.key_cache));
 	}
-
 	return ret;
 }
 
@@ -320,6 +342,7 @@ static int btree_key_cache_create(struct btree_trans *trans,
 		goto err;
 
 	atomic_long_inc(&bc->nr_keys);
+	key_cache_pressure_update(c);
 	six_unlock_write(&ck->c.lock);
 
 	enum six_lock_type lock_want = __btree_lock_want(ck_path, 0);
@@ -522,6 +545,7 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 		if (test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
 			clear_bit(BKEY_CACHED_DIRTY, &ck->flags);
 			atomic_long_dec(&c->btree.key_cache.nr_dirty);
+			key_cache_pressure_update(c);
 		}
 	} else {
 		struct btree_path *path = btree_iter_path(trans, &c_iter);
@@ -537,6 +561,7 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 		if (test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
 			clear_bit(BKEY_CACHED_DIRTY, &ck->flags);
 			atomic_long_dec(&c->btree.key_cache.nr_dirty);
+			key_cache_pressure_update(c);
 		}
 
 		mark_btree_node_locked_noreset(path, 0, BTREE_NODE_UNLOCKED);
@@ -718,7 +743,6 @@ bool bch2_btree_insert_key_cached(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	struct bkey_cached *ck = (void *) (trans->paths + insert_entry->path)->l[0].b;
 	struct bkey_i *insert = insert_entry->k;
-	bool kick_reclaim = false;
 
 	BUG_ON(insert->k.u64s > ck->u64s);
 	BUG_ON(bkey_deleted(&insert->k));
@@ -729,9 +753,7 @@ bool bch2_btree_insert_key_cached(struct btree_trans *trans,
 		EBUG_ON(test_bit(BCH_FS_clean_shutdown, &c->flags));
 		set_bit(BKEY_CACHED_DIRTY, &ck->flags);
 		atomic_long_inc(&c->btree.key_cache.nr_dirty);
-
-		if (bch2_nr_btree_keys_need_flush(c))
-			kick_reclaim = true;
+		key_cache_pressure_update(c);
 	}
 
 	/*
@@ -752,9 +774,6 @@ bool bch2_btree_insert_key_cached(struct btree_trans *trans,
 	}
 	bch2_journal_pin_add(&c->journal, trans->journal_res.seq,
 			     &ck->journal, bch2_btree_key_cache_journal_flush);
-
-	if (kick_reclaim)
-		journal_reclaim_kick(&c->journal);
 	return true;
 }
 
@@ -772,6 +791,7 @@ void bch2_btree_key_cache_drop(struct btree_trans *trans,
 	if (test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
 		clear_bit(BKEY_CACHED_DIRTY, &ck->flags);
 		atomic_long_dec(&c->btree.key_cache.nr_dirty);
+		key_cache_pressure_update(c);
 		bch2_journal_pin_drop(&c->journal, &ck->journal);
 	}
 

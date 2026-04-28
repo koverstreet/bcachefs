@@ -150,6 +150,14 @@ static void bch2_open_bucket_hash_remove(struct bch_fs *c, struct open_bucket *o
 	ob->hash = 0;
 }
 
+static inline void bch2_open_bucket_backpressure_set(struct bch_fs *c)
+{
+	bch2_backpressure_fs_set(c, BCH_BACKPRESSURE_FS_open_buckets,
+				 (OPEN_BUCKETS_COUNT - c->allocator.open_buckets_nr_free) *
+				 BCH_BACKPRESSURE_LEVEL_NR /
+				 OPEN_BUCKETS_COUNT);
+}
+
 void __bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
 {
 	struct bch_dev *ca = ob_dev(c, ob);
@@ -177,6 +185,8 @@ void __bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
 		c->allocator.open_buckets_nr_free++;
 		ca->nr_open_buckets--;
 	}
+
+	bch2_open_bucket_backpressure_set(c);
 
 	closure_wake_up(&c->allocator.open_buckets_wait);
 }
@@ -311,6 +321,8 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c,
 
 	ca->nr_open_buckets++;
 	bch2_open_bucket_hash_add(c, ob);
+
+	bch2_open_bucket_backpressure_set(c);
 
 	track_event_change(&c->times[BCH_TIME_blocked_allocate_open_bucket], false);
 	track_event_change(&c->times[BCH_TIME_blocked_allocate], false);
@@ -604,6 +616,42 @@ static bool req_alloc_should_bail(struct bch_fs *c, struct alloc_request *req)
 	       req_dev_sizes_mismatched(c, req);
 }
 
+/*
+ * Read fresh usage for @ca, compute available buckets, kick the workers that
+ * reduce per-device pressure (discard, gc_gens, invalidate), and refresh the
+ * per-device backpressure state for callers that observe it. Returns avail.
+ */
+static u64 bch2_backpressure_allocator_check(struct bch_fs *c,
+					     struct bch_dev *ca,
+					     struct alloc_request *req)
+{
+	bch2_dev_usage_read_fast(ca, &req->usage);
+	u64 avail = __dev_buckets_free(ca, req->usage, req->watermark);
+
+	bool need_discard = req->usage.buckets[BCH_DATA_need_discard] >
+		min(avail, ca->mi.nbuckets >> 7);
+	bool need_invalidate = should_invalidate_buckets(ca, req->usage);
+	bool need_copygc = !bch2_copygc_dev_wait_amount(ca);
+
+	if (need_discard)
+		bch2_do_discards_async(c);
+
+	if (req->usage.buckets[BCH_DATA_need_gc_gens] > avail)
+		bch2_gc_gens_async(c);
+
+	if (need_invalidate)
+		bch2_dev_do_invalidates(ca);
+
+	bch2_backpressure_dev_set(ca, BCH_BACKPRESSURE_DEV_discards,
+		need_discard ? BCH_BACKPRESSURE_LEVEL_lo : BCH_BACKPRESSURE_LEVEL_none);
+	bch2_backpressure_dev_set(ca, BCH_BACKPRESSURE_DEV_invalidates,
+		need_invalidate ? BCH_BACKPRESSURE_LEVEL_lo : BCH_BACKPRESSURE_LEVEL_none);
+	bch2_backpressure_dev_set(ca, BCH_BACKPRESSURE_DEV_copygc,
+		need_copygc ? BCH_BACKPRESSURE_LEVEL_lo : BCH_BACKPRESSURE_LEVEL_none);
+
+	return avail;
+}
+
 /**
  * bch2_bucket_alloc_trans - allocate a single bucket from a specific device
  * @trans:	transaction object
@@ -624,18 +672,7 @@ static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
 	memset(&req->counters, 0, sizeof(req->counters));
 again:
 	u32 wake_counter_snapshot = atomic_read(&ca->alloc_wake_counter);
-	bch2_dev_usage_read_fast(ca, &req->usage);
-	u64 avail = __dev_buckets_free(ca, req->usage, req->watermark);
-
-	if (req->usage.buckets[BCH_DATA_need_discard] >
-	    min(avail, ca->mi.nbuckets >> 7))
-		bch2_do_discards_async(c);
-
-	if (req->usage.buckets[BCH_DATA_need_gc_gens] > avail)
-		bch2_gc_gens_async(c);
-
-	if (should_invalidate_buckets(ca, req->usage))
-		bch2_dev_do_invalidates(ca);
+	u64 avail = bch2_backpressure_allocator_check(c, ca, req);
 
 	if (!avail) {
 		if (req->watermark > BCH_WATERMARK_normal &&

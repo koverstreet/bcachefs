@@ -24,19 +24,34 @@ static inline enum btree_id bch_wb_btree_to_btree_id(enum bch_wb_btree idx)
 	return bch_wb_btree_to_btree_id_tbl[idx];
 }
 
+static inline void bch2_btree_write_buffer_fill(struct bch_fs *c,
+						size_t *nr, size_t *sz)
+{
+	*nr = 0;
+	*sz = 0;
+	for (unsigned i = 0; i < BCH_WB_BTREE_NR; i++) {
+		struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer[i];
+		*nr += wb->inc.keys.nr + wb->flushing.keys.nr;
+		*sz += wb->inc.keys.size;
+	}
+}
+
 static inline bool bch_wb_btree_should_flush(struct bch_fs_btree_write_buffer *wb)
 {
 	return wb->inc.keys.nr + wb->flushing.keys.nr > wb->inc.keys.size / 4;
 }
 
+static inline bool bch2_btree_write_buffer_should_flush(struct bch_fs *c)
+{
+	size_t nr, sz;
+	bch2_btree_write_buffer_fill(c, &nr, &sz);
+	return nr > sz / 4;
+}
+
 static inline bool bch2_btree_write_buffer_must_wait(struct bch_fs *c)
 {
-	size_t nr = 0, sz = 0;
-	for (unsigned i = 0; i < BCH_WB_BTREE_NR; i++) {
-		struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer[i];
-		nr += wb->inc.keys.nr + wb->flushing.keys.nr;
-		sz += wb->inc.keys.size;
-	}
+	size_t nr, sz;
+	bch2_btree_write_buffer_fill(c, &nr, &sz);
 	return nr > sz * 3 / 4;
 }
 

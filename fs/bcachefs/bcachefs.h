@@ -54,6 +54,7 @@
 #include <linux/zstd.h>
 #include <linux/unicode.h>
 
+#include "backpressure.h"
 #include "bcachefs_format.h"
 #include "errcode.h"
 #include "opts.h"
@@ -385,7 +386,11 @@ BCH_DEBUG_PARAMS_ALL()
 	  "Nocow lock contention")					\
 	x(blocked_discard_journal_flush,				\
 	  "Blocked: discard worker waiting for journal flush "		\
-	  "to advance rewind_seq and release buckets")
+	  "to advance rewind_seq and release buckets")			\
+	BCH_BACKPRESSURE_FS_TYPES(BCH_TIME_STATS_BACKPRESSURE_x)
+
+#define BCH_TIME_STATS_BACKPRESSURE_x(_name, _desc)			\
+	x(blocked_##_name, _desc)
 
 enum bch_time_stats {
 #define x(name, ...) BCH_TIME_##name,
@@ -520,6 +525,9 @@ struct bch_dev {
 	 * this waiter and it re-parks without the full alloc retry.
 	 */
 	atomic_t		alloc_wake_counter;
+
+	/* Per-device backpressure state (allocator: discards/invalidates/copygc) */
+	struct bch_backpressure	backpressure;
 
 	unsigned		nr_open_buckets;
 	unsigned		nr_partial_buckets;
@@ -673,6 +681,7 @@ struct bch_fs {
 
 	/* Counts outstanding writes, for clean transition to read-only */
 	struct enumerated_ref	writes;
+	struct bch_backpressure	backpressure;
 
 	/*
 	 * Analagous to c->writes, for asynchronous ops that don't necessarily
