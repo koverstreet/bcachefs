@@ -1525,6 +1525,56 @@ int bch2_fs_btree_cache_init(struct bch_fs *c)
 	return 0;
 }
 
+/*
+ * Diagnostic for the cache_exit teardown trylocks: if the trylock fails
+ * something else is still holding intent or write on a node we expect to
+ * be quiesced. Dump everything that might identify the holder before we
+ * BUG, since there's no other forensic output for this case.
+ */
+static noinline __cold void btree_cache_exit_locked_dump(struct bch_fs *c,
+							 struct btree *b,
+							 const char *what)
+{
+	struct six_lock_count counts = six_lock_counts(&b->c.lock);
+	struct task_struct *owner = READ_ONCE(b->c.lock.owner);
+
+	CLASS(bch_log_msg, msg)(c);
+	prt_printf(&msg.m, "%s on %s node at cache_exit\n", what,
+		   b->cache_state == BTREE_NODE_CACHE_FREEABLE ? "freeable" : "live");
+	prt_printf(&msg.m, "btree=%u level=%u cache_state=%u flags=0x%lx hash_val=0x%llx\n",
+		   b->c.btree_id, b->c.level, b->cache_state, b->flags, b->hash_val);
+	prt_printf(&msg.m, "lock state=0x%x read=%u intent=%u write=%u (recurse intent=%u write=%u)\n",
+		   atomic_read(&b->c.lock.state),
+		   counts.n[SIX_LOCK_read],
+		   counts.n[SIX_LOCK_intent],
+		   counts.n[SIX_LOCK_write],
+		   b->c.lock.intent_lock_recurse,
+		   b->c.lock.write_lock_recurse);
+	if (owner)
+		bch2_prt_task_backtrace(&msg.m, owner, 0, GFP_NOWAIT);
+	else
+		prt_printf(&msg.m, "owner not recorded");
+}
+
+static void btree_cache_exit_drain_node(struct bch_fs *c,
+					struct bch_fs_btree_cache *bc,
+					struct btree *b)
+{
+	BUG_ON(btree_node_read_in_flight(b) || btree_node_write_in_flight(b));
+	if (unlikely(!six_trylock_intent(&b->c.lock))) {
+		btree_cache_exit_locked_dump(c, b, "intent held");
+		BUG();
+	}
+	if (unlikely(!six_trylock_write(&b->c.lock))) {
+		btree_cache_exit_locked_dump(c, b, "write held");
+		BUG();
+	}
+	bch2_btree_node_transition_state_locked(bc, b, BTREE_NODE_CACHE_FREED);
+	six_unlock_write(&b->c.lock);
+	six_unlock_intent(&b->c.lock);
+	cond_resched();
+}
+
 void bch2_fs_btree_cache_exit(struct bch_fs *c)
 {
 	struct bch_fs_btree_cache *bc = &c->btree.cache;
@@ -1554,28 +1604,13 @@ void bch2_fs_btree_cache_exit(struct bch_fs *c)
 			};
 			for (unsigned j = 0; j < ARRAY_SIZE(heads); j++)
 				list_for_each_entry_safe(b, t, heads[j], list) {
-					BUG_ON(btree_node_read_in_flight(b) ||
-					       btree_node_write_in_flight(b));
-					BUG_ON(!six_trylock_intent(&b->c.lock));
-					BUG_ON(!six_trylock_write(&b->c.lock));
 					clear_btree_node_permanent(b);
-					bch2_btree_node_transition_state_locked(bc, b, BTREE_NODE_CACHE_FREED);
-					six_unlock_write(&b->c.lock);
-					six_unlock_intent(&b->c.lock);
-					cond_resched();
+					btree_cache_exit_drain_node(c, bc, b);
 				}
 		}
 
-		list_for_each_entry_safe(b, t, &bc->freeable, list) {
-			BUG_ON(btree_node_read_in_flight(b) ||
-			       btree_node_write_in_flight(b));
-			BUG_ON(!six_trylock_intent(&b->c.lock));
-			BUG_ON(!six_trylock_write(&b->c.lock));
-			bch2_btree_node_transition_state_locked(bc, b, BTREE_NODE_CACHE_FREED);
-			six_unlock_write(&b->c.lock);
-			six_unlock_intent(&b->c.lock);
-			cond_resched();
-		}
+		list_for_each_entry_safe(b, t, &bc->freeable, list)
+			btree_cache_exit_drain_node(c, bc, b);
 
 		BUG_ON(!bch2_journal_error(&c->journal) &&
 		       (bc->live[0].nr_dirty || bc->live[1].nr_dirty));
