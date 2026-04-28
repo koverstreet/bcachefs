@@ -1497,7 +1497,7 @@ static int do_reconcile(struct moving_context *ctxt)
 			 */
 			if (reconcile_phase_is_pending(r->phase) &&
 			    bkey_deleted(&pending_cookie.k))
-				break;
+				goto out;
 
 			ret = do_reconcile_phase(&pass, kick);
 			if (ret)
@@ -1519,7 +1519,6 @@ static int do_reconcile(struct moving_context *ctxt)
 			break;
 	}
 out:
-
 	if (!ret && !bkey_deleted(&pending_cookie.k))
 		try(bch2_clear_reconcile_needs_scan(trans,
 				pending_cookie.k.p, pending_cookie.v.cookie));
