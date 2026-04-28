@@ -148,7 +148,7 @@ int bch2_btree_increase_depth(struct btree_trans *, btree_path_idx_t, unsigned);
 
 int __bch2_foreground_maybe_merge(struct btree_trans *, btree_path_idx_t,
 				  unsigned, enum bch_trans_commit_flags,
-				  u64 *, enum btree_node_sibling);
+				  u64 *);
 
 static inline bool btree_node_needs_merge(struct bch_fs *c, struct btree *b, int d)
 {
@@ -175,8 +175,7 @@ static inline int bch2_foreground_maybe_merge(struct btree_trans *trans,
 	if (likely(!btree_node_needs_merge(trans->c, b, u64s_delta)))
 		return 0;
 
-	return  __bch2_foreground_maybe_merge(trans, path_idx, level, flags, merge_count, btree_prev_sib) ?:
-		__bch2_foreground_maybe_merge(trans, path_idx, level, flags, merge_count, btree_next_sib);
+	return __bch2_foreground_maybe_merge(trans, path_idx, level, flags, merge_count);
 }
 
 int bch2_btree_node_get_iter(struct btree_trans *, struct btree_iter *, struct btree *);

@@ -1588,8 +1588,8 @@ static bool key_deleted_in_insert(struct keylist *insert_keys, struct bpos pos)
 }
 
 /*
- * btree_merge_node: src/dst representation shared by __btree_split_node and
- * the foreground merge code, so that 1->2 split / 2->1 / 3->1 / 3->2 / N->M
+ * btree_merge_node: src/dst representation shared by btree_pack_into_dsts
+ * and the foreground merge code, so that 1->2 split / 2->1 / 3->1 / 3->2 / N->M
  * variants share one shape. Ownership: every entry's path is put by the
  * destructor on scope exit, but the destructor only runs for darrays declared
  * with CLASS() — short-lived stack darrays (e.g. the splitter's single-source
@@ -1607,56 +1607,125 @@ struct btree_merge_node {
 	struct btree		*b;
 	btree_path_idx_t	path_idx;
 	u16			live_u64s;
+	struct bkey_format	format;
+	struct bpos		max_key;
 };
 
 static void btree_merge_node_put(struct btree_merge_node n)
 {
-	bch2_path_put(n.trans, n.path_idx, true);
+	if (n.path_idx)
+		bch2_path_put(n.trans, n.path_idx, true);
 }
 
 DEFINE_DARRAY_NAMED_FREE_ITEM(darray_merge_node, struct btree_merge_node,
 			      btree_merge_node_put);
 
 /*
- * Pack live keys from one or more source nodes into two destination nodes,
- * splitting the keyspace at @n1_target_u64s u64s. Caller pre-allocates
- * dsts->data[i].b and pushes them to @dsts. Used by:
- *   - btree_split (1 src, 2 dsts, split at live_u64s * 3/5)
- *
- * For interior nodes the split point is shifted forward past any candidate
- * pivot key that is deleted-in-journal or deleted-in-insert_keys, since the
- * pivot becomes the parent's reference and the parent can't point at a
- * deleted key.
+ * Splitter's first-pass: pick split point at running u64s >= @n1_target_u64s,
+ * with journal-delete-aware shift for interior nodes (pivot keys become
+ * parent references and can't point at to-be-deleted keys), and accumulate
+ * per-dst formats. Caller pre-allocates dsts->data[i].b and pushes them to
+ * @dsts; this populates @dsts entries' .format and .max_key so
+ * btree_pack_into_dsts() can read them directly. Falls back to
+ * @fallback_format on a per-dst basis if the tight format would overflow the
+ * node buf.
  */
-static void __btree_split_node(struct btree_update *as,
-			       struct btree_trans *trans,
-			       darray_merge_node *srcs,
-			       darray_merge_node *dsts,
-			       struct keylist *insert_keys,
-			       unsigned n1_target_u64s,
-			       struct bkey_format *fallback_format)
+static void compute_split_layout(struct btree_trans *trans,
+				 darray_merge_node *srcs,
+				 darray_merge_node *dsts,
+				 struct keylist *insert_keys,
+				 unsigned n1_target_u64s,
+				 struct bkey_format *fallback_format)
 {
+	struct bkey_format_state state[2];
+	struct { unsigned nr_keys, val_u64s; } counts[2];
 	struct bkey_packed *k;
-	struct bpos n1_pos = POS_MIN;
 	struct btree_node_iter iter;
-	struct bset *bsets[2];
-	struct bkey_format_state format[2];
-	struct bkey_packed *out[2];
-	struct bkey uk;
-	unsigned u64s, n1_u64s = n1_target_u64s;
-	struct { unsigned nr_keys, val_u64s; } nr_keys[2];
+	struct bpos n1_pos = POS_MIN;
+	unsigned u64s = 0, n1_u64s = n1_target_u64s;
 	struct btree *first_b = srcs->data[0].b;
-	struct btree *last_b = srcs->data[srcs->nr - 1].b;
-	u64 max_seq = 0;
-	int i;
 
 	BUG_ON(dsts->nr != 2);
-	memset(&nr_keys, 0, sizeof(nr_keys));
+	memset(counts, 0, sizeof(counts));
+	bch2_bkey_format_init(&state[0]);
+	bch2_bkey_format_init(&state[1]);
+
+	darray_for_each(*srcs, s) {
+		struct btree *src_b = s->b;
+
+		for_each_btree_node_key(src_b, k, &iter) {
+			if (bkey_deleted(k))
+				continue;
+
+			struct bkey uk = bkey_unpack_key(src_b, k);
+
+			bool shifted = src_b->c.level &&
+				u64s < n1_u64s &&
+				u64s + k->u64s >= n1_u64s &&
+				(bch2_key_deleted_in_journal(trans, src_b->c.btree_id, src_b->c.level, uk.p) ||
+				 key_deleted_in_insert(insert_keys, uk.p));
+			if (shifted)
+				n1_u64s += k->u64s;
+
+			unsigned i = u64s >= n1_u64s;
+			u64s += k->u64s;
+			if (!i && !shifted)
+				n1_pos = uk.p;
+			bch2_bkey_format_add_key(&state[i], &uk);
+			counts[i].nr_keys++;
+			counts[i].val_u64s += bkeyp_val_u64s(&src_b->format, k);
+		}
+	}
+
+	bch2_bkey_format_add_pos(&state[0], first_b->data->min_key);
+	bch2_bkey_format_add_pos(&state[0], n1_pos);
+	bch2_bkey_format_add_pos(&state[1], bpos_successor(n1_pos));
+	bch2_bkey_format_add_pos(&state[1], darray_last(*srcs).b->data->max_key);
+
+	dsts->data[0].max_key = n1_pos;
+	dsts->data[1].max_key = darray_last(*srcs).b->data->max_key;
+
+	for (unsigned i = 0; i < 2; i++) {
+		struct bkey_format f = bch2_bkey_format_done(&state[i]);
+		size_t est = counts[i].nr_keys * f.key_u64s + counts[i].val_u64s;
+
+		dsts->data[i].format =
+			__vstruct_bytes(struct btree_node, est) > btree_buf_bytes(first_b)
+			? *fallback_format
+			: f;
+	}
+}
+
+/*
+ * Pack core: take dsts whose .format and .max_key were populated by the
+ * caller (compute_split_layout for split, compute_merge for merge) and pack
+ * every src key into the appropriate dst, partitioning by key.p vs
+ * dsts[0].max_key. dsts[i].b must be allocated.
+ */
+static void btree_pack_into_dsts(struct btree_update *as,
+				 struct btree_trans *trans,
+				 darray_merge_node *srcs,
+				 darray_merge_node *dsts)
+{
+	struct btree *first_b = srcs->data[0].b;
+	struct bset *bsets[2];
+	struct bkey_packed *out[2];
+	struct bkey_packed *k;
+	struct btree_node_iter iter;
+	struct bpos pivot = dsts->data[0].max_key;
+	u64 max_seq = 0;
+
+	BUG_ON(dsts->nr != 2);
 
 	darray_for_each(*srcs, s)
 		max_seq = max(max_seq, BTREE_NODE_SEQ(s->b->data));
 
-	for (i = 0; i < 2; i++) {
+	btree_set_min(dsts->data[0].b, first_b->data->min_key);
+	btree_set_max(dsts->data[0].b, dsts->data[0].max_key);
+	btree_set_min(dsts->data[1].b, bpos_successor(pivot));
+	btree_set_max(dsts->data[1].b, dsts->data[1].max_key);
+
+	for (unsigned i = 0; i < 2; i++) {
 		struct btree *n = dsts->data[i].b;
 
 		BUG_ON(n->nsets != 1);
@@ -1665,72 +1734,11 @@ static void __btree_split_node(struct btree_update *as,
 		out[i] = bsets[i]->start;
 
 		SET_BTREE_NODE_SEQ(n->data, max_seq + 1);
-		bch2_bkey_format_init(&format[i]);
-	}
 
-	/* First pass: pick split point, accumulate per-dst formats */
-	u64s = 0;
-	darray_for_each(*srcs, s) {
-		struct btree *src_b = s->b;
-
-		for_each_btree_node_key(src_b, k, &iter) {
-			if (bkey_deleted(k))
-				continue;
-
-			uk = bkey_unpack_key(src_b, k);
-
-			if (src_b->c.level &&
-			    u64s < n1_u64s &&
-			    u64s + k->u64s >= n1_u64s &&
-			    (bch2_key_deleted_in_journal(trans, src_b->c.btree_id, src_b->c.level, uk.p) ||
-			     key_deleted_in_insert(insert_keys, uk.p)))
-				n1_u64s += k->u64s;
-
-			i = u64s >= n1_u64s;
-			u64s += k->u64s;
-			if (!i)
-				n1_pos = uk.p;
-			bch2_bkey_format_add_key(&format[i], &uk);
-
-			nr_keys[i].nr_keys++;
-			nr_keys[i].val_u64s += bkeyp_val_u64s(&src_b->format, k);
-		}
-	}
-
-	btree_set_min(dsts->data[0].b, first_b->data->min_key);
-	btree_set_max(dsts->data[0].b, n1_pos);
-	btree_set_min(dsts->data[1].b, bpos_successor(n1_pos));
-	btree_set_max(dsts->data[1].b, last_b->data->max_key);
-
-	for (i = 0; i < 2; i++) {
-		struct btree *n = dsts->data[i].b;
-
-		bch2_bkey_format_add_pos(&format[i], n->data->min_key);
-		bch2_bkey_format_add_pos(&format[i], n->data->max_key);
-
-		n->data->format = bch2_bkey_format_done(&format[i]);
-
-		/*
-		 * If the per-dst tightest format would still overflow the
-		 * node buf — happens when unpacked keys with wide field
-		 * values force format[i] to be wider than the source(s)
-		 * already packed under — fall back to a format we know packs
-		 * all keys we'll see. For single-src split, b->format works
-		 * because the keys live there. For multi-src merge, the
-		 * caller passes the union format from compute_merge() (built
-		 * by add_key over every src's keys), which packs everything
-		 * by construction.
-		 */
-		unsigned est = nr_keys[i].nr_keys * n->data->format.key_u64s +
-			nr_keys[i].val_u64s;
-		if (__vstruct_bytes(struct btree_node, est) > btree_buf_bytes(first_b))
-			n->data->format = *fallback_format;
-
+		n->data->format = dsts->data[i].format;
 		btree_node_set_format(n, n->data->format);
 	}
 
-	/* Second pass: pack keys into output buffers */
-	u64s = 0;
 	darray_for_each(*srcs, s) {
 		struct btree *src_b = s->b;
 
@@ -1738,8 +1746,8 @@ static void __btree_split_node(struct btree_update *as,
 			if (bkey_deleted(k))
 				continue;
 
-			i = u64s >= n1_u64s;
-			u64s += k->u64s;
+			struct bkey uk = bkey_unpack_key(src_b, k);
+			unsigned i = bpos_le(uk.p, pivot) ? 0 : 1;
 
 			struct btree *n = dsts->data[i].b;
 
@@ -1756,7 +1764,7 @@ static void __btree_split_node(struct btree_update *as,
 		}
 	}
 
-	for (i = 0; i < 2; i++) {
+	for (unsigned i = 0; i < 2; i++) {
 		struct btree *n = dsts->data[i].b;
 
 		bsets[i]->u64s = cpu_to_le16((u64 *) out[i] - bsets[i]->_data);
@@ -1891,8 +1899,9 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 			.data = &split_src, .nr = 1, .size = 1,
 		};
 
-		__btree_split_node(as, trans, &split_srcs, &dsts, keys,
-				   (b->nr.live_u64s * 3) / 5, &b->format);
+		compute_split_layout(trans, &split_srcs, &dsts, keys,
+				     (b->nr.live_u64s * 3) / 5, &b->format);
+		btree_pack_into_dsts(as, trans, &split_srcs, &dsts);
 
 		if (keys) {
 			ret =   btree_split_insert_keys(as, trans, path, dsts.data[0].b, keys) ?:
@@ -2300,7 +2309,7 @@ static int btree_merge_topology_check(struct bch_fs *c, darray_merge_node *srcs)
 /*
  * Try to fetch @pivot's sibling on side @sib and push it onto @dst:
  *   1. Skip if pivot is at the btree boundary on this side
- *   2. Skip if pivot->sib_u64s[sib] (cached estimate) exceeds threshold
+ *   2. Skip if pivot->sib_u64s[sib] (cached estimate) exceeds @threshold
  *   3. Get + traverse a path at the sibling's position. Try nofill first;
  *      on miss, look up the evicted-size hash table via the parent's
  *      now-locked iter. If we get an estimate, push with @b NULL and
@@ -2314,6 +2323,11 @@ static int btree_merge_topology_check(struct bch_fs *c, darray_merge_node *srcs)
  * so future calls bail cheaply at step 2.
  *
  * Capacity in @dst must already be reserved by the caller.
+ *
+ * Returns:
+ *   0       on push or any skip
+ *   < 0     real error (trans restart from path traverse); path
+ *           is put before returning
  */
 static int btree_merge_push_pos(struct btree_trans *trans,
 				darray_merge_node *dst,
@@ -2419,37 +2433,302 @@ static int btree_merge_push_pos(struct btree_trans *trans,
 	return 0;
 }
 
-/*
- * Stamp pivot->sib_u64s[sib] with the merged-size estimate after a failed
- * merge attempt, applying hysteresis so that subsequent self-shrinkage by
- * commit.c eventually drops the cache below threshold and lets the merge
- * be retried.
- */
-static void merge_fail_reset_sib_u64s(struct bch_fs *c, struct btree *pivot,
-				      enum btree_node_sibling sib, size_t total)
+static size_t merge_node_u64s_and_format(darray_merge_node *nodes, struct bkey_format *new_f)
 {
-	if (total > BTREE_FOREGROUND_MERGE_HYSTERESIS(c))
-		total -= (total - BTREE_FOREGROUND_MERGE_HYSTERESIS(c)) / 2;
+	bool have_all = true;
+	darray_for_each(*nodes, s)
+		if (!s->b)
+			have_all = false;
 
-	total = min(total, btree_max_u64s(c));
-	total = min(total, (size_t) U16_MAX - 1);
-	pivot->sib_u64s[sib] = total;
+	size_t total_u64s = 0;
+	if (have_all) {
+		struct bkey_format_state new_s;
+		bch2_bkey_format_init(&new_s);
+		bch2_bkey_format_add_pos(&new_s, nodes->data[0].b->data->min_key);
+		darray_for_each(*nodes, s)
+			__bch2_btree_calc_format(&new_s, s->b);
+		bch2_bkey_format_add_pos(&new_s, darray_last(*nodes).b->data->max_key);
+		*new_f = bch2_bkey_format_done(&new_s);
+
+		darray_for_each(*nodes, s)
+			total_u64s += btree_node_u64s_with_format(s->b->nr, &s->b->format, new_f);
+	} else {
+		darray_for_each(*nodes, s)
+			total_u64s += s->live_u64s;
+	}
+	return total_u64s;
+}
+
+static void merge_fail_reset_sib_u64s_at(struct bch_fs *c, struct btree *b,
+					 enum btree_node_sibling sib,
+					 unsigned sib_live_u64s)
+{
+	unsigned sib_u64s = b->nr.live_u64s + sib_live_u64s;
+
+	if (sib_u64s > BTREE_FOREGROUND_MERGE_HYSTERESIS(c))
+		sib_u64s -= (sib_u64s - BTREE_FOREGROUND_MERGE_HYSTERESIS(c)) / 2;
+
+	sib_u64s = min(sib_u64s, (unsigned) U16_MAX - 1);
+
+	b->sib_u64s[sib] = sib_u64s;
+}
+
+static void merge_fail_reset_sib_u64s(struct bch_fs *c, struct btree *b,
+				      struct btree_merge_node *s)
+{
+	if (s->b == b)
+		return;
+
+	/*
+	 * For deferred srcs (b == NULL), use the path's pos to determine
+	 * which side it's on — pos was set to bpos_predecessor/successor of
+	 * the pivot's keyspace at bch2_path_get time, so it never overlaps.
+	 */
+	enum btree_node_sibling sib = s->b
+		? (bpos_lt(s->b->key.k.p, b->key.k.p) ? btree_prev_sib : btree_next_sib)
+		: (bpos_lt(s->trans->paths[s->path_idx].pos, b->data->min_key) ? btree_prev_sib : btree_next_sib);
+
+	merge_fail_reset_sib_u64s_at(c, b, sib, s->live_u64s);
+}
+
+/*
+ * Per-candidate scratch for find_balanced_split's iteration. After the best
+ * candidate is picked, its pivot/format pair is committed onto the dsts
+ * entries' .max_key/.format and this struct is discarded.
+ */
+struct merge_layout {
+	struct bpos		pivot;
+	struct bkey_format	format[2];
+	size_t			size[2];
+};
+
+/*
+ * Walk every src key once, partition by key.p <= @pivot, accumulate add_key
+ * into format[0]/format[1], add boundary positions for each dst's range,
+ * and finalize. @out->size[i] is the byte-equivalent live u64s under the
+ * predicted per-dst format.
+ */
+static void predict_split(darray_merge_node *srcs, struct bpos pivot,
+			  struct merge_layout *out)
+{
+	struct bkey_format_state state[2];
+	struct { unsigned nr_keys, val_u64s; } counts[2];
+	struct bkey_packed *k;
+	struct btree_node_iter iter;
+
+	memset(counts, 0, sizeof(counts));
+	bch2_bkey_format_init(&state[0]);
+	bch2_bkey_format_init(&state[1]);
+
+	darray_for_each(*srcs, s) {
+		for_each_btree_node_key(s->b, k, &iter) {
+			if (bkey_deleted(k))
+				continue;
+
+			struct bkey uk = bkey_unpack_key(s->b, k);
+			unsigned i = bpos_le(uk.p, pivot) ? 0 : 1;
+
+			bch2_bkey_format_add_key(&state[i], &uk);
+			counts[i].nr_keys++;
+			counts[i].val_u64s += bkeyp_val_u64s(&s->b->format, k);
+		}
+	}
+
+	bch2_bkey_format_add_pos(&state[0], srcs->data[0].b->data->min_key);
+	bch2_bkey_format_add_pos(&state[0], pivot);
+	bch2_bkey_format_add_pos(&state[1], bpos_successor(pivot));
+	bch2_bkey_format_add_pos(&state[1], darray_last(*srcs).b->data->max_key);
+
+	out->pivot = pivot;
+	for (unsigned i = 0; i < 2; i++) {
+		out->format[i] = bch2_bkey_format_done(&state[i]);
+		out->size[i] = counts[i].nr_keys * out->format[i].key_u64s +
+			       counts[i].val_u64s;
+	}
+}
+
+/*
+ * Try a small set of candidate pivots and commit the one minimizing the
+ * larger of the two predicted dst sizes onto @dsts:
+ *   1. End of srcs[0]   — dst0 takes src[0] only
+ *   2. End of srcs[nr-2] — dst1 takes the last src only
+ *   3. Mid-stream at total_live / 2 — the unstructured fallback
+ *
+ * Natural breaks (1 and 2) keep per-dst format ranges narrow; mid-stream is
+ * the safety net. Pushes 2 entries onto @dsts (b == NULL placeholders) with
+ * .format and .max_key set. Returns true if best fits below @split_thresh,
+ * false if every candidate produced an oversize dst — caller should bail
+ * and not push anything else onto @dsts.
+ */
+static bool find_balanced_split(darray_merge_node *srcs,
+				darray_merge_node *dsts,
+				size_t split_thresh)
+{
+	struct bpos candidates[3];
+	unsigned nr_candidates = 0;
+
+	candidates[nr_candidates++] = srcs->data[0].b->data->max_key;
+	if (srcs->nr >= 3)
+		candidates[nr_candidates++] = srcs->data[srcs->nr - 2].b->data->max_key;
+
+	size_t total_live = 0;
+	darray_for_each(*srcs, s)
+		total_live += s->b->nr.live_u64s;
+
+	size_t target = total_live / 2;
+	size_t curr = 0;
+	struct bkey_packed *k;
+	struct btree_node_iter iter;
+	darray_for_each(*srcs, s) {
+		bool found = false;
+		for_each_btree_node_key(s->b, k, &iter) {
+			if (bkey_deleted(k))
+				continue;
+			curr += k->u64s;
+			if (curr >= target) {
+				struct bkey uk = bkey_unpack_key(s->b, k);
+				candidates[nr_candidates++] = uk.p;
+				found = true;
+				break;
+			}
+		}
+		if (found)
+			break;
+	}
+
+	struct merge_layout best = {};
+	bool have_best = false;
+
+	for (unsigned i = 0; i < nr_candidates; i++) {
+		struct merge_layout cand;
+		predict_split(srcs, candidates[i], &cand);
+
+		/*
+		 * A candidate that piles every key onto one side scores worst
+		 * = nr_keys * format.key_u64s on the populated side, but worst
+		 * = 0 on the empty side — and an empty-side dst trips the
+		 * !bsets[i]->u64s assert in btree_pack_into_dsts. Reject before
+		 * the min-worst comparison, otherwise it'd beat a balanced
+		 * candidate whose far side inherited a wide format from the
+		 * trailing src's max_key.
+		 */
+		if (!cand.size[0] || !cand.size[1])
+			continue;
+
+		size_t cand_worst = max(cand.size[0], cand.size[1]);
+		size_t best_worst = have_best ? max(best.size[0], best.size[1]) : SIZE_MAX;
+
+		if (cand_worst < best_worst) {
+			best = cand;
+			have_best = true;
+		}
+	}
+
+	if (!have_best || max(best.size[0], best.size[1]) > split_thresh)
+		return false;
+
+	BUG_ON(darray_push(dsts, ((struct btree_merge_node) {
+		.format = best.format[0],
+		.max_key = best.pivot,
+	})));
+	BUG_ON(darray_push(dsts, ((struct btree_merge_node) {
+		.format = best.format[1],
+		.max_key = darray_last(*srcs).b->data->max_key,
+	})));
+	return true;
+}
+
+/*
+ * Decide how many dsts the merge should produce and, if @dsts is non-NULL
+ * (have-all mode: every src has ->b set), populate @dsts entries with the
+ * per-dst format and max_key the pack core will read.
+ *
+ * Returns nr_dsts. Returns srcs->nr (the bail signal) if either the merge
+ * cannot fit in fewer dsts than srcs, or — in have-all mode — find_balanced_split
+ * found no candidate pivot whose worst dst stays under split_thresh.
+ */
+static unsigned compute_merge(struct bch_fs *c, struct btree *b,
+			      darray_merge_node *srcs,
+			      darray_merge_node *dsts,
+			      struct bkey_format *new_f)
+{
+	size_t total_u64s = merge_node_u64s_and_format(srcs, new_f);
+	/*
+	 * Choose dst count: one node if everything packs into max, two nodes
+	 * (pack via btree_pack_into_dsts) if 3 srcs overflow but fit in 2x max.
+	 * Anything else falls through to the bail check below.
+	 *
+	 * Strict less-than: bch2_btree_node_format_fits() and the write path
+	 * both treat btree_max_u64s as an open upper bound (the +8 varint slop
+	 * in btree_node_write tips a node packed at exact-max into overflow).
+	 */
+	unsigned nr_dsts = max(1, DIV_ROUND_UP(total_u64s,
+					       BTREE_FOREGROUND_MERGE_HIGHER_THRESHOLD(c)));
+
+	if (nr_dsts >= srcs->nr) {
+		if (srcs->nr == 3) {
+			struct btree_merge_node *remove =
+				srcs->data[0].live_u64s > darray_last(*srcs).live_u64s
+				? srcs->data : &darray_last(*srcs);
+
+			merge_fail_reset_sib_u64s(c, b, remove);
+			btree_merge_node_put(*remove);
+			darray_remove_item(srcs, remove);
+
+			total_u64s = merge_node_u64s_and_format(srcs, new_f);
+
+			nr_dsts = max(1, DIV_ROUND_UP(total_u64s, btree_max_u64s(c) / 2));
+		}
+	}
+
+	if (nr_dsts >= srcs->nr) {
+		darray_for_each(*srcs, s)
+			merge_fail_reset_sib_u64s(c, b, s);
+		return nr_dsts;
+	}
+
+	if (!dsts)
+		return nr_dsts;
+
+	if (nr_dsts == 1) {
+		BUG_ON(darray_push(dsts, ((struct btree_merge_node) {
+			.format	 = *new_f,
+			.max_key = darray_last(*srcs).b->data->max_key,
+		})));
+	} else if (!find_balanced_split(srcs, dsts, BTREE_SPLIT_THRESHOLD(c))) {
+		/*
+		 * 2-way split is infeasible (no candidate keeps both sides
+		 * non-empty under split_thresh). Empty trailing srcs can force
+		 * total_u64s above HIGHER_THRESHOLD via format bloat from a
+		 * POS_MAX max_key, even though the actual key count fits in a
+		 * single node. If it does fit, fall through to a 1-dst merge
+		 * rather than abandon the consolidation.
+		 */
+		if (__vstruct_bytes(struct btree_node, total_u64s) <
+		    btree_buf_bytes(b)) {
+			nr_dsts = 1;
+			BUG_ON(darray_push(dsts, ((struct btree_merge_node) {
+				.format	 = *new_f,
+				.max_key = darray_last(*srcs).b->data->max_key,
+			})));
+		} else {
+			darray_for_each(*srcs, s)
+				merge_fail_reset_sib_u64s(c, b, s);
+			return srcs->nr;
+		}
+	}
+
+	return nr_dsts;
 }
 
 int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 				  btree_path_idx_t path,
 				  unsigned level,
 				  enum bch_trans_commit_flags flags,
-				  u64 *merge_count,
-				  enum btree_node_sibling sib)
+				  u64 *merge_count)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_update *as = NULL;
-	struct bkey_format_state new_s;
-	struct bkey_format new_f;
-	struct bkey_i delete;
-	struct btree *b, *parent;
-	size_t total_u64s;
 	enum btree_id btree = trans->paths[path].btree_id;
 	u64 start_time = local_clock();
 	int ret = 0;
@@ -2480,51 +2759,33 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 		flags |= BCH_TRANS_COMMIT_journal_reclaim;
 	}
 
-	b = trans->paths[path].l[level].b;
+	struct btree *b = trans->paths[path].l[level].b;
+
+	if (bpos_eq(b->data->min_key, POS_MIN))
+		b->sib_u64s[btree_prev_sib] = U16_MAX;
+	if (bpos_eq(b->data->max_key, SPOS_MAX))
+		b->sib_u64s[btree_next_sib] = U16_MAX;
 
 	/*
 	 * Push srcs in left-to-right order so srcs is naturally sorted: prev
 	 * sibling first (if merging left), then caller's node, then next
 	 * sibling (if merging right). The caller's path takes an extra ref so
 	 * the destructor can put it uniformly with helper-acquired paths.
-	 *
-	 * btree_merge_push_pos handles boundary, sib_u64s gating, and (on
-	 * cache miss) evicted-size hash lookup — pushing the sibling with
-	 * b == NULL when only an estimate is available, deferring the real
-	 * read until the estimate-based gate below has passed.
 	 */
-	if (sib == btree_prev_sib) {
-		ret = btree_merge_push_pos(trans, &srcs, btree, level, path, sib);
-		if (ret)
-			goto err;
-	}
+	try(btree_merge_push_pos(trans, &srcs, btree, level, path, btree_prev_sib));
 
 	__btree_path_get(trans, trans->paths + path, true);
 	BUG_ON(darray_push(&srcs, ((struct btree_merge_node) {
 		trans, b, path, b->nr.live_u64s,
 	})));
 
-	if (sib == btree_next_sib) {
-		ret = btree_merge_push_pos(trans, &srcs, btree, level, path, sib);
-		if (ret)
-			goto err;
-	}
+	try(btree_merge_push_pos(trans, &srcs, btree, level, path, btree_next_sib));
 
-	if (srcs.nr == 1) {
-		ret = 0;
-		goto out;
-	}
-
-	/*
-	 * Estimate-based gate: sum live_u64s (real for in-cache srcs, cached
-	 * estimate for deferred ones) and bail without paying for the sibling
-	 * read if we're already over threshold.
-	 */
-	size_t total_est = 0;
-	darray_for_each(srcs, s)
-		total_est += s->live_u64s;
+	if (srcs.nr == 1)
+		return 0;
 
 	event_inc_trace(c, btree_node_merge_attempt, buf, ({
+		unsigned total_u64s = 0;
 		darray_for_each(srcs, s) {
 			if (s->b)
 				bch2_btree_pos_to_text(&buf, c, s->b);
@@ -2533,24 +2794,44 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 			prt_printf(&buf, "\nlive u64s %u (%zu%% full)\n",
 				   s->live_u64s,
 				   s->live_u64s * 100 / btree_max_u64s(c));
+			total_u64s += s->live_u64s;
 		}
-		prt_printf(&buf, "estimated total %zu threshold %u\n",
-			   total_est, c->btree.foreground_merge_threshold);
+
+		prt_printf(&buf, "Pivot sib_u64s %u %u threshold %u\n",
+			   b->sib_u64s[btree_prev_sib],
+			   b->sib_u64s[btree_next_sib],
+			   c->btree.foreground_merge_threshold);
+		bch2_btree_pos_to_text(&buf, c, b);
+
+		prt_printf(&buf, "\ntotal_u64s %u per-node max %zu nr_dsts %un",
+			   total_u64s, BTREE_FOREGROUND_MERGE_HIGHER_THRESHOLD(c),
+			   max_t(unsigned, 1,
+				 DIV_ROUND_UP(total_u64s, BTREE_FOREGROUND_MERGE_HIGHER_THRESHOLD(c))));
 	}));
 
-	if (total_est > c->btree.foreground_merge_threshold) {
-		merge_fail_reset_sib_u64s(c, b, sib, total_est);
+	struct bkey_format new_f;
+	unsigned nr_dsts = compute_merge(c, b, &srcs, NULL, &new_f);
+	if (nr_dsts >= srcs.nr)
 		goto out;
-	}
 
 	/*
-	 * Estimate said the merge will fit — fill any deferred srcs (b == NULL)
-	 * before the precise format-aware checks below. On parent mismatch
-	 * post-fill, poison the cached sib_u64s and bail.
+	 * Estimate-based gate said the merge will fit — fill (or re-traverse)
+	 * any srcs whose path isn't currently should_be_locked. Deferred srcs
+	 * pushed without a real read fall here; so do any srcs whose locks
+	 * may have been dropped since push (a !should_be_locked path won't
+	 * get relocked by unlock/relock cycles).
+	 *
+	 * On parent-identity mismatch, poison that side's cached estimate
+	 * and drop the src — saves us the bch2_btree_update_start cost that
+	 * the post-update_start recheck would otherwise discover.
 	 */
-	darray_for_each(srcs, s) {
-		if (s->b)
+	for (unsigned i = 0; i < srcs.nr;) {
+		struct btree_merge_node *s = &srcs.data[i];
+
+		if (trans->paths[s->path_idx].should_be_locked) {
+			i++;
 			continue;
+		}
 
 		ret = bch2_btree_path_traverse(trans, s->path_idx, 0);
 		if (ret)
@@ -2561,45 +2842,43 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 
 		if (btree_node_parent(trans->paths + s->path_idx, s->b) !=
 		    trans->paths[path].l[level + 1].b) {
-			b->sib_u64s[sib] = U16_MAX;
-			ret = 0;
-			goto out;
+			enum btree_node_sibling bad =
+				bpos_lt(s->b->data->max_key, b->data->min_key)
+				? btree_prev_sib
+				: btree_next_sib;
+			b->sib_u64s[bad] = U16_MAX;
+			btree_merge_node_put(*s);
+			darray_remove_item(&srcs, s);
+			continue;
 		}
 
 		btree_path_set_should_be_locked(trans, trans->paths + s->path_idx);
+		i++;
 	}
 
+	try(btree_merge_topology_check(c, &srcs));
+
+	if (srcs.nr == 1)
+		goto out;
+
 	/*
-	 * Post deferred-fill, every src must have ->b set so the precise
-	 * format-aware path below sees real keys. The estimate-only fallback
-	 * (sum of live_u64s) doesn't account for format growth on repack and
-	 * would let an infeasible merge through, blowing up later in
-	 * __btree_split_node or sort_into.
+	 * Post deferred-fill, every surviving src must have ->b set so that
+	 * compute_merge() / merge_node_u64s_and_format() takes the precise
+	 * format-aware path. The estimate-only fallback (sum of live_u64s)
+	 * doesn't account for format growth on repack and would let an
+	 * infeasible merge through, blowing up later in btree_pack_into_dsts
+	 * or sort_into.
 	 */
 	darray_for_each(srcs, s)
 		BUG_ON(!s->b);
 
-	ret = btree_merge_topology_check(c, &srcs);
-	if (ret)
-		goto err;
-
-	bch2_bkey_format_init(&new_s);
-	bch2_bkey_format_add_pos(&new_s, srcs.data[0].b->data->min_key);
-	darray_for_each(srcs, s)
-		__bch2_btree_calc_format(&new_s, s->b);
-	bch2_bkey_format_add_pos(&new_s, srcs.data[srcs.nr - 1].b->data->max_key);
-	new_f = bch2_bkey_format_done(&new_s);
-
-	total_u64s = 0;
-	darray_for_each(srcs, s)
-		total_u64s += btree_node_u64s_with_format(s->b->nr, &s->b->format, &new_f);
-
-	if (total_u64s > c->btree.foreground_merge_threshold) {
-		merge_fail_reset_sib_u64s(c, b, sib, total_u64s);
+	nr_dsts = compute_merge(c, b, &srcs, &dsts, &new_f);
+	if (nr_dsts >= srcs.nr)
 		goto out;
-	}
 
-	as = bch2_btree_update_start(trans, trans->paths + path, level, false,
+	BUG_ON(nr_dsts > 2);
+
+	as = bch2_btree_update_start(trans, trans->paths + path, level, nr_dsts == 2,
 				     0, BCH_TRANS_COMMIT_no_enospc|flags, 0);
 	ret = PTR_ERR_OR_ZERO(as);
 	if (ret) {
@@ -2611,13 +2890,20 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 	 * update_start upgraded path's locks to cover parent nodes; re-read
 	 * parent and re-verify all srcs still share it. The earlier check in
 	 * btree_merge_push_pos() was racy because parents weren't locked.
+	 *
+	 * On mismatch, identify which side the bad sibling is on by bpos
+	 * comparison and poison just that side's cached estimate.
 	 */
-	parent = btree_node_parent(trans->paths + path, b);
+	struct btree *parent = btree_node_parent(trans->paths + path, b);
 	darray_for_each(srcs, s) {
 		if (s->path_idx == path)
 			continue;
 		if (btree_node_parent(trans->paths + s->path_idx, s->b) != parent) {
-			b->sib_u64s[sib] = U16_MAX;
+			enum btree_node_sibling bad_sib =
+				bpos_lt(s->b->data->max_key, b->data->min_key)
+					? btree_prev_sib
+					: btree_next_sib;
+			b->sib_u64s[bad_sib] = U16_MAX;
 			bch2_btree_update_free(as, trans);
 			as = NULL;
 			ret = 0;
@@ -2634,9 +2920,20 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 			goto err_free_update;
 	}
 
-	/* Allocate destination nodes. For now: 2->1 only, single dst. */
-	{
-		struct btree *n = bch2_btree_node_alloc(as, trans, level);
+	/*
+	 * Allocate destination nodes: 1 for plain N->1, 2 for the 3->2 case.
+	 * compute_merge() already populated dsts entries with their per-dst
+	 * format and max_key — here we just attach trans + a freshly allocated
+	 * btree node to each. path_idx is filled in after the pack since each
+	 * dst's key.k.p (== max_key) is set inside btree_set_max().
+	 */
+	darray_for_each(dsts, d) {
+		d->trans = trans;
+		d->b = bch2_btree_node_alloc(as, trans, level);
+	}
+
+	if (nr_dsts == 1) {
+		struct btree *n = dsts.data[0].b;
 		u64 max_seq = 0;
 
 		darray_for_each(srcs, s)
@@ -2644,42 +2941,79 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 		SET_BTREE_NODE_SEQ(n->data, max_seq + 1);
 
 		btree_set_min(n, srcs.data[0].b->data->min_key);
-		btree_set_max(n, srcs.data[srcs.nr - 1].b->data->max_key);
+		btree_set_max(n, dsts.data[0].max_key);
 
-		n->data->format = new_f;
-		btree_node_set_format(n, new_f);
+		n->data->format = dsts.data[0].format;
+		btree_node_set_format(n, n->data->format);
 
 		darray_for_each(srcs, s)
 			bch2_btree_sort_into(c, n, s->b);
 
-		bch2_btree_build_aux_trees(n);
-		bch2_btree_update_add_new_node(as, n);
-
 		ret = bch2_btree_node_check_topology(trans, n);
 		BUG_ON(ret);
 
-		btree_path_idx_t new_path = bch2_path_get_unlocked_mut(trans, btree,
-								       n->c.level, n->key.k.p, false);
-		six_lock_increment(&n->c.lock, SIX_LOCK_intent);
-		mark_btree_node_locked(trans, trans->paths + new_path, n->c.level, BTREE_NODE_WRITE_LOCKED);
-		bch2_btree_path_level_init(trans, trans->paths + new_path, n);
-
-		BUG_ON(darray_push(&dsts, ((struct btree_merge_node) { trans, n, new_path })));
+		btree_node_reset_sib_u64s(n);
+	} else {
+		btree_pack_into_dsts(as, trans, &srcs, &dsts);
 	}
 
 	/*
-	 * parent_keys: emit a delete for each src except the last, then an
-	 * insert for each dst. The last dst's max_key equals the last src's
-	 * max_key by construction, so the parent's slot for that src is
-	 * replaced by the last dst's key.
+	 * Diagnostic: each dst's packed content must fit in btree_buf_bytes
+	 * with room for the +8 varint slop in btree_node_write. Mirrors
+	 * bch2_btree_node_format_fits()'s strict-less-than check.
 	 */
-	bkey_init(&delete.k);
-	for (size_t i = 0; i + 1 < srcs.nr; i++) {
-		delete.k.p = srcs.data[i].b->key.k.p;
-		bch2_keylist_add(&as->parent_keys, &delete);
-	}
 	darray_for_each(dsts, d)
-		bch2_keylist_add(&as->parent_keys, &d->b->key);
+		BUG_ON(__vstruct_bytes(struct btree_node, d->b->data->u64s) >=
+		       btree_buf_bytes(d->b));
+
+	darray_for_each(dsts, d) {
+		bch2_btree_build_aux_trees(d->b);
+		bch2_btree_update_add_new_node(as, d->b);
+
+		d->path_idx = bch2_path_get_unlocked_mut(trans, btree,
+							 d->b->c.level, d->b->key.k.p, false);
+		six_lock_increment(&d->b->c.lock, SIX_LOCK_intent);
+		mark_btree_node_locked(trans, trans->paths + d->path_idx,
+				       d->b->c.level, BTREE_NODE_WRITE_LOCKED);
+		bch2_btree_path_level_init(trans, trans->paths + d->path_idx, d->b);
+	}
+
+	/*
+	 * Conceptually: every src becomes a delete, every dst becomes a new
+	 * key, sorted and deduped (a new key at the same .p as a delete
+	 * subsumes the delete). For N -> 1 the last src's .p equals the dst's
+	 * .p (the dst's max_key was set to the last src's max_key), so the
+	 * last src's delete is the only one that gets dropped.
+	 *
+	 * Both parent_keys (the in-memory parent update) and new_nodes (the
+	 * journal record) need each surviving delete; emit them together.
+	 */
+	struct btree_merge_node *src = srcs.data;
+	struct btree_merge_node *dst = dsts.data;
+	while (src || dst) {
+		if (src && dst && bpos_eq(src->b->key.k.p, dst->b->key.k.p)) {
+			bch2_btree_update_add_node(c, &as->new_nodes, dst->b);
+			bch2_keylist_add(&as->parent_keys, &dst->b->key);
+			src++;
+			dst++;
+		} else if (src && (dst ? bpos_lt(src->b->key.k.p, dst->b->key.k.p) : true)) {
+			struct bkey_i delete;
+			bkey_init(&delete.k);
+			delete.k.p = src->b->key.k.p;
+			bch2_keylist_add(&as->parent_keys, &delete);
+			bch2_btree_update_add_key(&as->new_nodes, level, &delete);
+			src++;
+		} else {
+			bch2_btree_update_add_node(c, &as->new_nodes, dst->b);
+			bch2_keylist_add(&as->parent_keys, &dst->b->key);
+			dst++;
+		}
+
+		if (src == srcs.data + srcs.nr)
+			src = NULL;
+		if (dst == dsts.data + dsts.nr)
+			dst = NULL;
+	}
 
 	bch2_trans_verify_paths(trans);
 
@@ -2699,14 +3033,13 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 	darray_for_each(dsts, d) {
 		bch2_btree_update_get_open_buckets(as, d->b);
 		bch2_btree_node_write_trans(trans, d->b, SIX_LOCK_write, 0);
-		bch2_btree_update_add_key(&as->new_nodes, d->b->c.level, &delete);
-		bch2_btree_update_add_node(c, &as->new_nodes, d->b);
 	}
 
 	darray_for_each(srcs, s)
 		bch2_btree_node_free_inmem(trans, trans->paths + s->path_idx, s->b);
 
-	bch2_trans_node_add(trans, trans->paths + path, dsts.data[0].b);
+	darray_for_each(dsts, d)
+		bch2_trans_node_add(trans, trans->paths + d->path_idx, d->b);
 
 	bch2_trans_verify_paths(trans);
 

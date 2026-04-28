@@ -341,9 +341,9 @@ inline void bch2_btree_insert_key_leaf(struct btree_trans *trans,
 	u64s_added = (int) bset_u64s(t) - old_u64s;
 
 	if (b->sib_u64s[0] != U16_MAX && live_u64s_added < 0)
-		b->sib_u64s[0] = max(0, (int) b->sib_u64s[0] + live_u64s_added);
+		b->sib_u64s[0] = max(b->nr.live_u64s, (int) b->sib_u64s[0] + live_u64s_added);
 	if (b->sib_u64s[1] != U16_MAX && live_u64s_added < 0)
-		b->sib_u64s[1] = max(0, (int) b->sib_u64s[1] + live_u64s_added);
+		b->sib_u64s[1] = max(b->nr.live_u64s, (int) b->sib_u64s[1] + live_u64s_added);
 
 	if (u64s_added > live_u64s_added &&
 	    bch2_maybe_compact_whiteouts(c, b))
