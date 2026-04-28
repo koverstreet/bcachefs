@@ -2226,7 +2226,6 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 	struct bkey_format new_f;
 	struct bkey_i delete;
 	struct btree *b, *parent;
-	struct bpos sib_pos;
 	size_t total_u64s;
 	enum btree_id btree = trans->paths[path].btree_id;
 	u64 start_time = local_clock();
@@ -2266,30 +2265,40 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 		return 0;
 	}
 
-	sib_pos = sib == btree_prev_sib
-		? bpos_predecessor(b->data->min_key)
-		: bpos_successor(b->data->max_key);
-
 	parent = btree_node_parent(trans->paths + path, b);
 
-	ret = btree_merge_push_pos(trans, &srcs, btree, level, sib_pos, parent);
-	if (ret < 0)
-		goto err;
-	if (ret) {
-		b->sib_u64s[sib] = U16_MAX;
-		ret = 0;
-		goto out;
+	/*
+	 * Push srcs in left-to-right order so srcs is naturally sorted: prev
+	 * sibling first (if merging left), then caller's node, then next
+	 * sibling (if merging right). The caller's path takes an extra ref so
+	 * the destructor can put it uniformly with helper-acquired paths.
+	 */
+	if (sib == btree_prev_sib) {
+		ret = btree_merge_push_pos(trans, &srcs, btree, level,
+					   bpos_predecessor(b->data->min_key), parent);
+		if (ret < 0)
+			goto err;
+		if (ret) {
+			b->sib_u64s[sib] = U16_MAX;
+			ret = 0;
+			goto out;
+		}
 	}
 
-	/*
-	 * Sibling is pushed; add caller's path. Take an extra ref so the
-	 * destructor can put it uniformly with the helper-acquired paths.
-	 */
 	__btree_path_get(trans, trans->paths + path, true);
 	BUG_ON(darray_push(&srcs, ((struct btree_merge_node) { trans, b, path })));
 
-	if (sib == btree_next_sib)
-		swap(srcs.data[0], srcs.data[1]);
+	if (sib == btree_next_sib) {
+		ret = btree_merge_push_pos(trans, &srcs, btree, level,
+					   bpos_successor(b->data->max_key), parent);
+		if (ret < 0)
+			goto err;
+		if (ret) {
+			b->sib_u64s[sib] = U16_MAX;
+			ret = 0;
+			goto out;
+		}
+	}
 
 	ret = btree_merge_topology_check(c, &srcs);
 	if (ret)
