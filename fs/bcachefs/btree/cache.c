@@ -1121,6 +1121,7 @@ static inline void btree_check_header(struct bch_fs *c, struct btree *b)
 static struct btree *__bch2_btree_node_get(struct btree_trans *trans, struct btree_path *path,
 					   const struct bkey_i *k, unsigned level,
 					   enum six_lock_type lock_type,
+					   enum btree_iter_update_trigger_flags flags,
 					   unsigned long trace_ip)
 {
 	struct bch_fs *c = trans->c;
@@ -1132,6 +1133,9 @@ static struct btree *__bch2_btree_node_get(struct btree_trans *trans, struct btr
 retry:
 	b = btree_cache_find(bc, k);
 	if (unlikely(!b)) {
+		if (unlikely(flags & BTREE_ITER_nofill))
+			return ERR_PTR(bch_err_throw(c, no_btree_node_nofill));
+
 		/*
 		 * We must have the parent locked to call bch2_btree_node_fill(),
 		 * else we could read in a btree node from disk that's been
@@ -1237,6 +1241,7 @@ retry:
 struct btree *bch2_btree_node_get(struct btree_trans *trans, struct btree_path *path,
 				  const struct bkey_i *k, unsigned level,
 				  enum six_lock_type lock_type,
+				  enum btree_iter_update_trigger_flags flags,
 				  unsigned long trace_ip)
 {
 	struct bch_fs *c = trans->c;
@@ -1256,7 +1261,7 @@ struct btree *bch2_btree_node_get(struct btree_trans *trans, struct btree_path *
 	if (unlikely(!c->opts.btree_node_mem_ptr_optimization ||
 		     !b ||
 		     b->hash_val != btree_ptr_hash_val(k)))
-		return __bch2_btree_node_get(trans, path, k, level, lock_type, trace_ip);
+		return __bch2_btree_node_get(trans, path, k, level, lock_type, flags, trace_ip);
 
 	if (btree_node_read_locked(path, level + 1))
 		btree_node_unlock(trans, path, level + 1);
@@ -1272,7 +1277,7 @@ struct btree *bch2_btree_node_get(struct btree_trans *trans, struct btree_path *
 		     race_fault())) {
 		six_unlock_type(&b->c.lock, lock_type);
 		if (bch2_btree_node_relock(trans, path, level + 1))
-			return __bch2_btree_node_get(trans, path, k, level, lock_type, trace_ip);
+			return __bch2_btree_node_get(trans, path, k, level, lock_type, flags, trace_ip);
 
 		event_inc_trace(c, trans_restart_btree_node_reused, buf, ({
 			prt_printf(&buf, "%s\n", trans->fn);
@@ -1283,7 +1288,7 @@ struct btree *bch2_btree_node_get(struct btree_trans *trans, struct btree_path *
 
 	if (unlikely(btree_node_read_in_flight(b))) {
 		six_unlock_type(&b->c.lock, lock_type);
-		return __bch2_btree_node_get(trans, path, k, level, lock_type, trace_ip);
+		return __bch2_btree_node_get(trans, path, k, level, lock_type, flags, trace_ip);
 	}
 
 	prefetch(b->aux_data);

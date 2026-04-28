@@ -1159,7 +1159,7 @@ static __always_inline int btree_path_down(struct btree_trans *trans,
 		return btree_node_gap_err(trans, path, &trans->btree_path_down);
 
 	b = bch2_btree_node_get(trans, path, &trans->btree_path_down,
-				level, lock_type, trace_ip);
+				level, lock_type, flags, trace_ip);
 	ret = PTR_ERR_OR_ZERO(b);
 	if (unlikely(ret))
 		return ret;

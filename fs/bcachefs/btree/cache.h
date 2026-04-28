@@ -37,7 +37,9 @@ struct btree *bch2_btree_node_mem_alloc(struct btree_trans *, bool);
 
 struct btree *bch2_btree_node_get(struct btree_trans *, struct btree_path *,
 				  const struct bkey_i *, unsigned,
-				  enum six_lock_type, unsigned long);
+				  enum six_lock_type,
+				  enum btree_iter_update_trigger_flags,
+				  unsigned long);
 
 struct btree *bch2_btree_node_get_noiter(struct btree_trans *, const struct bkey_i *,
 					 enum btree_id, unsigned, bool);
