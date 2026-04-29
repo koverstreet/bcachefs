@@ -288,6 +288,7 @@ void bch2_fs_btree_exit(struct bch_fs *c)
 	bch2_fs_btree_key_cache_exit(&c->btree.key_cache);
 	bch2_fs_btree_iter_exit(c);
 	bch2_fs_btree_interior_update_exit(c);
+	bch2_fs_btree_evicted_size_exit(c);
 	bch2_fs_btree_cache_exit(c);
 
 	if (c->btree.read_complete_wq)
@@ -350,6 +351,7 @@ int bch2_fs_btree_init_rw(struct bch_fs *c)
 
 	try(bch2_fs_btree_interior_update_init(c));
 	try(bch2_fs_btree_write_buffer_init(c));
+	try(bch2_fs_btree_evicted_size_init(c));
 
 	return 0;
 }

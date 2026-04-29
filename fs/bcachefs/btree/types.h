@@ -785,6 +785,25 @@ enum btree_node_rewrite_reason {
 
 /* Filesystem-level btree state: */
 
+/*
+ * Sidecar cache: when a btree node is evicted (transitioned out of the in-cache
+ * hash table) we stash its live_u64s here, keyed by btree_ptr_hash_val. The
+ * merge gate uses this as a cheap "what would be the combined size?" estimate
+ * for siblings that aren't currently in cache, before paying for a real read.
+ *
+ * Fixed-size, no chaining: insert overwrites whatever's in the slot. Lookup
+ * verifies the stored hash matches the request; collisions naturally degrade
+ * to "no info" and the caller falls back to reading the sibling. Sized at
+ * ~capacity/1000/btree_node_size entries, which keeps memory tiny.
+ */
+struct btree_evicted_size {
+	u64					mask;	/* table size - 1 (power of 2) */
+	u64					*entries;
+};
+
+#define BTREE_EVICTED_SIZE_HASH_BITS	48
+#define BTREE_EVICTED_SIZE_HASH_MASK	((1ULL << BTREE_EVICTED_SIZE_HASH_BITS) - 1)
+
 struct bch_fs_btree {
 	u16					foreground_merge_threshold;
 
@@ -807,6 +826,7 @@ struct bch_fs_btree {
 	struct journal_entry_res		root_journal_res;
 
 	struct bch_fs_btree_cache		cache;
+	struct btree_evicted_size		evicted_size;
 	struct bch_fs_btree_key_cache		key_cache;
 	/*
 	 * One per BTREE_IS_write_buffer btree (indexed by BCH_WB_BTREE_*, see

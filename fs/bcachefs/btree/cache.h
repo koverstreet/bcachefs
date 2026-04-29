@@ -53,6 +53,40 @@ void bch2_fs_btree_cache_exit(struct bch_fs *);
 int bch2_fs_btree_cache_init(struct bch_fs *);
 void bch2_fs_btree_cache_init_early(struct bch_fs_btree_cache *);
 
+int bch2_fs_btree_evicted_size_init(struct bch_fs *);
+void bch2_fs_btree_evicted_size_exit(struct bch_fs *);
+
+static inline u64 btree_evicted_size_pack(u64 hash, u16 live_u64s)
+{
+	return ((hash & BTREE_EVICTED_SIZE_HASH_MASK) << 16) | live_u64s;
+}
+
+static inline void bch2_btree_evicted_size_record(struct bch_fs *c,
+						  u64 hash, u16 live_u64s)
+{
+	struct btree_evicted_size *e = &c->btree.evicted_size;
+
+	if (e->entries)
+		WRITE_ONCE(e->entries[hash & e->mask],
+			   btree_evicted_size_pack(hash, live_u64s));
+}
+
+static inline bool bch2_btree_evicted_size_lookup(struct bch_fs *c, u64 hash,
+						  u16 *out)
+{
+	struct btree_evicted_size *e = &c->btree.evicted_size;
+
+	if (!e->entries)
+		return false;
+
+	u64 entry = READ_ONCE(e->entries[hash & e->mask]);
+	if ((entry >> 16) != (hash & BTREE_EVICTED_SIZE_HASH_MASK))
+		return false;
+
+	*out = (u16) entry;
+	return true;
+}
+
 static inline u64 btree_ptr_hash_val(const struct bkey_i *k)
 {
 	switch (k->k.type) {

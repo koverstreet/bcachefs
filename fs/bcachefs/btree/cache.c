@@ -748,6 +748,7 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 			bc->not_freed[BCH_BTREE_CACHE_NOT_FREED_access_bit]++;
 			--touched;
 		} else if (!btree_node_reclaim(c, b, BTREE_NODE_RECLAIM_shrinker)) {
+			bch2_btree_evicted_size_record(c, b->hash_val, b->nr.live_u64s);
 			bch2_btree_node_transition_state_locked(bc, b, BTREE_NODE_CACHE_FREED);
 
 			freed++;
@@ -849,6 +850,7 @@ static struct btree *bch2_btree_node_grab(struct bch_fs *c, struct list_head *he
 	list_for_each_entry(b, head, list)
 		if (pcpu_read_locks == (b->c.lock.readers != NULL) &&
 		    !btree_node_reclaim(c, b, 0)) {
+			bch2_btree_evicted_size_record(c, b->hash_val, b->nr.live_u64s);
 			bch2_btree_node_transition_state_locked(bc, b, BTREE_NODE_CACHE_NONE);
 			return b;
 		}
@@ -878,6 +880,7 @@ static struct btree *btree_node_cannibalize(struct bch_fs *c, bool pcpu_read_loc
 					list_for_each_entry_reverse(b, heads[j], list)
 						if (pcpu_read_locks == !!b->c.lock.readers &&
 						    !btree_node_reclaim(c, b, BTREE_NODE_RECLAIM_flush	)) {
+							bch2_btree_evicted_size_record(c, b->hash_val, b->nr.live_u64s);
 							bch2_btree_node_transition_state_locked(bc, b, BTREE_NODE_CACHE_NONE);
 							return b;
 						}
@@ -1460,6 +1463,7 @@ wait_on_io:
 
 	BUG_ON(btree_node_dirty(b));
 
+	bch2_btree_evicted_size_record(c, b->hash_val, b->nr.live_u64s);
 	bch2_btree_node_transition_state(bc, b, BTREE_NODE_CACHE_FREED);
 out:
 	six_unlock_write(&b->c.lock);
@@ -1642,6 +1646,38 @@ void bch2_fs_btree_cache_exit(struct bch_fs *c)
 
 	if (bc->table_init_done)
 		rhashtable_destroy(&bc->table);
+}
+
+int bch2_fs_btree_evicted_size_init(struct bch_fs *c)
+{
+	struct btree_evicted_size *e = &c->btree.evicted_size;
+
+	/*
+	 * 128K-entry floor (1 MiB), then add one bit (double the table) for
+	 * each four doublings of the maximum possible btree node count above
+	 * 4M nodes (~1 TiB at 256K nodes). Keeps the table modest on huge
+	 * filesystems: 1 TiB → 1 MiB, 1 PiB → 4 MiB, 256 PiB → 16 MiB.
+	 */
+	u64 max_nodes = div_u64(c->capacity.capacity,
+				max_t(u64, 1, c->opts.btree_node_size >> 9));
+	unsigned bits = 17;
+	if (max_nodes > (1ULL << 22))
+		bits += (ilog2(max_nodes) - 22) / 4;
+	u64 nr = 1ULL << bits;
+
+	e->entries = kvcalloc(nr, sizeof(u64), GFP_KERNEL);
+	if (!e->entries)
+		return bch_err_throw(c, ENOMEM_fs_other_alloc);
+
+	e->mask = nr - 1;
+	return 0;
+}
+
+void bch2_fs_btree_evicted_size_exit(struct bch_fs *c)
+{
+	kvfree(c->btree.evicted_size.entries);
+	c->btree.evicted_size.entries = NULL;
+	c->btree.evicted_size.mask = 0;
 }
 
 /* Debug / text rendering */
