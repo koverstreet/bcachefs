@@ -328,6 +328,12 @@ static inline struct bpos bkey_start_pos(const struct bkey *k)
 	};
 }
 
+static inline struct bpos bpos_with_snapshot(struct bpos p, u32 snapshot)
+{
+	p.snapshot = snapshot;
+	return p;
+}
+
 /* Packed helpers */
 
 static inline unsigned bkeyp_key_u64s(const struct bkey_format *format,
