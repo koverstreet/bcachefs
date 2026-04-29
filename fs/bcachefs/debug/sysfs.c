@@ -740,6 +740,10 @@ static ssize_t bch2_btree_trans_stats_json_write(struct file *file,
 		guard(mutex)(&s->lock);
 		bch2_time_stats_reset(&s->duration);
 		bch2_time_stats_reset(&s->lock_hold_times);
+		s->nr_max_paths = 0;
+		s->max_mem = 0;
+		kfree(s->max_paths_text);
+		s->max_paths_text = NULL;
 	}
 
 	return count;
