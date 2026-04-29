@@ -53,20 +53,6 @@ static void bch2_btree_update_to_text(struct printbuf *, struct btree_update *);
 static int bch2_btree_insert_node(struct btree_update *, struct btree_trans *,
 				  btree_path_idx_t, struct btree *, struct keylist *);
 
-/*
- * A btree node together with its owned path index. Used by the merge
- * code to pass arrays of source/destination nodes around uniformly so
- * that 2->1 / 3->1 / 3->2 / N->M variants share one shape; ownership
- * is uniform — every entry's path is put by the destructor on scope
- * exit, including the caller's input path (an extra ref is taken when
- * it's pushed).
- */
-struct btree_merge_node {
-	struct btree_trans	*trans;
-	struct btree		*b;
-	btree_path_idx_t	path_idx;
-};
-
 static int btree_node_topology_err(struct bch_fs *c, struct btree *b, struct printbuf *out)
 {
 	prt_printf(out, "in parent node:\n");
@@ -1602,14 +1588,44 @@ static bool key_deleted_in_insert(struct keylist *insert_keys, struct bpos pos)
 }
 
 /*
- * Move keys from n1 (original replacement node, now lower node) to n2 (higher
- * node)
+ * btree_merge_node: src/dst representation shared by __btree_split_node and
+ * the foreground merge code, so that 1->2 split / 2->1 / 3->1 / 3->2 / N->M
+ * variants share one shape. Ownership: every entry's path is put by the
+ * destructor on scope exit, but the destructor only runs for darrays declared
+ * with CLASS() — short-lived stack darrays (e.g. the splitter's single-source
+ * wrapper) can leave path_idx zero without consequence.
+ */
+struct btree_merge_node {
+	struct btree_trans	*trans;
+	struct btree		*b;
+	btree_path_idx_t	path_idx;
+};
+
+static void btree_merge_node_put(struct btree_merge_node n)
+{
+	bch2_path_put(n.trans, n.path_idx, true);
+}
+
+DEFINE_DARRAY_NAMED_FREE_ITEM(darray_merge_node, struct btree_merge_node,
+			      btree_merge_node_put);
+
+/*
+ * Pack live keys from one or more source nodes into two destination nodes,
+ * splitting the keyspace at @n1_target_u64s u64s. Caller pre-allocates
+ * dsts->data[i].b and pushes them to @dsts. Used by:
+ *   - btree_split (1 src, 2 dsts, split at live_u64s * 3/5)
+ *
+ * For interior nodes the split point is shifted forward past any candidate
+ * pivot key that is deleted-in-journal or deleted-in-insert_keys, since the
+ * pivot becomes the parent's reference and the parent can't point at a
+ * deleted key.
  */
 static void __btree_split_node(struct btree_update *as,
 			       struct btree_trans *trans,
-			       struct btree *b,
-			       struct btree *n[2],
-			       struct keylist *insert_keys)
+			       darray_merge_node *srcs,
+			       darray_merge_node *dsts,
+			       struct keylist *insert_keys,
+			       unsigned n1_target_u64s)
 {
 	struct bkey_packed *k;
 	struct bpos n1_pos = POS_MIN;
@@ -1618,97 +1634,122 @@ static void __btree_split_node(struct btree_update *as,
 	struct bkey_format_state format[2];
 	struct bkey_packed *out[2];
 	struct bkey uk;
-	unsigned u64s, n1_u64s = (b->nr.live_u64s * 3) / 5;
+	unsigned u64s, n1_u64s = n1_target_u64s;
 	struct { unsigned nr_keys, val_u64s; } nr_keys[2];
+	struct btree *first_b = srcs->data[0].b;
+	struct btree *last_b = srcs->data[srcs->nr - 1].b;
+	u64 max_seq = 0;
 	int i;
 
+	BUG_ON(dsts->nr != 2);
 	memset(&nr_keys, 0, sizeof(nr_keys));
 
-	for (i = 0; i < 2; i++) {
-		BUG_ON(n[i]->nsets != 1);
+	darray_for_each(*srcs, s)
+		max_seq = max(max_seq, BTREE_NODE_SEQ(s->b->data));
 
-		bsets[i] = btree_bset_first(n[i]);
+	for (i = 0; i < 2; i++) {
+		struct btree *n = dsts->data[i].b;
+
+		BUG_ON(n->nsets != 1);
+
+		bsets[i] = btree_bset_first(n);
 		out[i] = bsets[i]->start;
 
-		SET_BTREE_NODE_SEQ(n[i]->data, BTREE_NODE_SEQ(b->data) + 1);
+		SET_BTREE_NODE_SEQ(n->data, max_seq + 1);
 		bch2_bkey_format_init(&format[i]);
 	}
 
+	/* First pass: pick split point, accumulate per-dst formats */
 	u64s = 0;
-	for_each_btree_node_key(b, k, &iter) {
-		if (bkey_deleted(k))
-			continue;
+	darray_for_each(*srcs, s) {
+		struct btree *src_b = s->b;
 
-		uk = bkey_unpack_key(b, k);
+		for_each_btree_node_key(src_b, k, &iter) {
+			if (bkey_deleted(k))
+				continue;
 
-		if (b->c.level &&
-		    u64s < n1_u64s &&
-		    u64s + k->u64s >= n1_u64s &&
-		    (bch2_key_deleted_in_journal(trans, b->c.btree_id, b->c.level, uk.p) ||
-		     key_deleted_in_insert(insert_keys, uk.p)))
-			n1_u64s += k->u64s;
+			uk = bkey_unpack_key(src_b, k);
 
-		i = u64s >= n1_u64s;
-		u64s += k->u64s;
-		if (!i)
-			n1_pos = uk.p;
-		bch2_bkey_format_add_key(&format[i], &uk);
+			if (src_b->c.level &&
+			    u64s < n1_u64s &&
+			    u64s + k->u64s >= n1_u64s &&
+			    (bch2_key_deleted_in_journal(trans, src_b->c.btree_id, src_b->c.level, uk.p) ||
+			     key_deleted_in_insert(insert_keys, uk.p)))
+				n1_u64s += k->u64s;
 
-		nr_keys[i].nr_keys++;
-		nr_keys[i].val_u64s += bkeyp_val_u64s(&b->format, k);
+			i = u64s >= n1_u64s;
+			u64s += k->u64s;
+			if (!i)
+				n1_pos = uk.p;
+			bch2_bkey_format_add_key(&format[i], &uk);
+
+			nr_keys[i].nr_keys++;
+			nr_keys[i].val_u64s += bkeyp_val_u64s(&src_b->format, k);
+		}
 	}
 
-	btree_set_min(n[0], b->data->min_key);
-	btree_set_max(n[0], n1_pos);
-	btree_set_min(n[1], bpos_successor(n1_pos));
-	btree_set_max(n[1], b->data->max_key);
+	btree_set_min(dsts->data[0].b, first_b->data->min_key);
+	btree_set_max(dsts->data[0].b, n1_pos);
+	btree_set_min(dsts->data[1].b, bpos_successor(n1_pos));
+	btree_set_max(dsts->data[1].b, last_b->data->max_key);
 
 	for (i = 0; i < 2; i++) {
-		bch2_bkey_format_add_pos(&format[i], n[i]->data->min_key);
-		bch2_bkey_format_add_pos(&format[i], n[i]->data->max_key);
+		struct btree *n = dsts->data[i].b;
 
-		n[i]->data->format = bch2_bkey_format_done(&format[i]);
+		bch2_bkey_format_add_pos(&format[i], n->data->min_key);
+		bch2_bkey_format_add_pos(&format[i], n->data->max_key);
 
-		unsigned u64s = nr_keys[i].nr_keys * n[i]->data->format.key_u64s +
+		n->data->format = bch2_bkey_format_done(&format[i]);
+
+		unsigned est = nr_keys[i].nr_keys * n->data->format.key_u64s +
 			nr_keys[i].val_u64s;
-		if (__vstruct_bytes(struct btree_node, u64s) > btree_buf_bytes(b))
-			n[i]->data->format = b->format;
+		if (__vstruct_bytes(struct btree_node, est) > btree_buf_bytes(first_b))
+			n->data->format = first_b->format;
 
-		btree_node_set_format(n[i], n[i]->data->format);
+		btree_node_set_format(n, n->data->format);
 	}
 
+	/* Second pass: pack keys into output buffers */
 	u64s = 0;
-	for_each_btree_node_key(b, k, &iter) {
-		if (bkey_deleted(k))
-			continue;
+	darray_for_each(*srcs, s) {
+		struct btree *src_b = s->b;
 
-		i = u64s >= n1_u64s;
-		u64s += k->u64s;
+		for_each_btree_node_key(src_b, k, &iter) {
+			if (bkey_deleted(k))
+				continue;
 
-		if (bch2_bkey_transform(&n[i]->format, out[i], bkey_packed(k)
-					? &b->format: &bch2_bkey_format_current, k))
-			out[i]->format = KEY_FORMAT_LOCAL_BTREE;
-		else
-			bch2_bkey_unpack(b, (void *) out[i], k);
+			i = u64s >= n1_u64s;
+			u64s += k->u64s;
 
-		out[i]->needs_whiteout = false;
+			struct btree *n = dsts->data[i].b;
 
-		btree_keys_account_key_add(&n[i]->nr, 0, out[i]);
-		out[i] = bkey_p_next(out[i]);
+			if (bch2_bkey_transform(&n->format, out[i], bkey_packed(k)
+						? &src_b->format : &bch2_bkey_format_current, k))
+				out[i]->format = KEY_FORMAT_LOCAL_BTREE;
+			else
+				bch2_bkey_unpack(src_b, (void *) out[i], k);
+
+			out[i]->needs_whiteout = false;
+
+			btree_keys_account_key_add(&n->nr, 0, out[i]);
+			out[i] = bkey_p_next(out[i]);
+		}
 	}
 
 	for (i = 0; i < 2; i++) {
+		struct btree *n = dsts->data[i].b;
+
 		bsets[i]->u64s = cpu_to_le16((u64 *) out[i] - bsets[i]->_data);
 
 		BUG_ON(!bsets[i]->u64s);
 
-		set_btree_bset_end(n[i], n[i]->set);
+		set_btree_bset_end(n, n->set);
 
-		btree_node_reset_sib_u64s(n[i]);
+		btree_node_reset_sib_u64s(n);
 
-		bch2_verify_btree_nr_keys(n[i]);
+		bch2_verify_btree_nr_keys(n);
 
-		BUG_ON(bch2_btree_node_check_topology(trans, n[i]));
+		BUG_ON(bch2_btree_node_check_topology(trans, n));
 	}
 }
 
@@ -1749,10 +1790,14 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 {
 	struct bch_fs *c = as->c;
 	struct btree *parent = btree_node_parent(trans->paths + path, b);
-	struct btree *n1, *n2 = NULL, *n3 = NULL;
-	btree_path_idx_t path1 = 0, path2 = 0;
+	struct btree *n3 = NULL;
 	u64 start_time = local_clock();
 	int ret = 0;
+
+	struct btree_merge_node dst_storage[2] = {};
+	darray_merge_node dsts = {
+		.data = dst_storage, .nr = 0, .size = 2,
+	};
 
 	bch2_verify_btree_nr_keys(b);
 	BUG_ON(!parent && !btree_node_is_root(c, b));
@@ -1761,47 +1806,56 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 	try(bch2_btree_node_check_topology(trans, b));
 
 	if (b->nr.live_u64s > BTREE_SPLIT_THRESHOLD(c)) {
-		struct btree *n[2];
-
 		trace_btree_node(c, b, btree_node_split);
 
-		n[0] = n1 = bch2_btree_node_alloc(as, trans, b->c.level);
-		n[1] = n2 = bch2_btree_node_alloc(as, trans, b->c.level);
+		BUG_ON(darray_push(&dsts, ((struct btree_merge_node) {
+			trans, bch2_btree_node_alloc(as, trans, b->c.level), 0,
+		})));
+		BUG_ON(darray_push(&dsts, ((struct btree_merge_node) {
+			trans, bch2_btree_node_alloc(as, trans, b->c.level), 0,
+		})));
 
-		__btree_split_node(as, trans, b, n, keys);
+		struct btree_merge_node split_src = { .b = b };
+		darray_merge_node split_srcs = {
+			.data = &split_src, .nr = 1, .size = 1,
+		};
+
+		__btree_split_node(as, trans, &split_srcs, &dsts, keys,
+				   (b->nr.live_u64s * 3) / 5);
 
 		if (keys) {
-			ret =   btree_split_insert_keys(as, trans, path, n1, keys) ?:
-				btree_split_insert_keys(as, trans, path, n2, keys);
+			ret =   btree_split_insert_keys(as, trans, path, dsts.data[0].b, keys) ?:
+				btree_split_insert_keys(as, trans, path, dsts.data[1].b, keys);
 			if (ret)
 				goto err;
 			BUG_ON(!bch2_keylist_empty(keys));
 		}
 
-		bch2_btree_build_aux_trees(n2);
-		bch2_btree_build_aux_trees(n1);
+		darray_for_each_reverse(dsts, d)
+			bch2_btree_build_aux_trees(d->b);
 
-		bch2_btree_update_add_new_node(as, n1);
-		bch2_btree_update_add_new_node(as, n2);
+		darray_for_each(dsts, d) {
+			bch2_btree_update_add_new_node(as, d->b);
 
-		path1 = bch2_path_get_unlocked_mut(trans, as->btree_id, n1->c.level, n1->key.k.p, false);
-		mark_btree_node_locked(trans, trans->paths + path1, n1->c.level, BTREE_NODE_WRITE_LOCKED);
-		bch2_btree_path_level_init(trans, trans->paths + path1, n1);
-
-		path2 = bch2_path_get_unlocked_mut(trans, as->btree_id, n2->c.level, n2->key.k.p, false);
-		mark_btree_node_locked(trans, trans->paths + path2, n2->c.level, BTREE_NODE_WRITE_LOCKED);
-		bch2_btree_path_level_init(trans, trans->paths + path2, n2);
+			d->path_idx = bch2_path_get_unlocked_mut(trans, as->btree_id,
+								 d->b->c.level, d->b->key.k.p, false);
+			mark_btree_node_locked(trans, trans->paths + d->path_idx,
+					       d->b->c.level, BTREE_NODE_WRITE_LOCKED);
+			bch2_btree_path_level_init(trans, trans->paths + d->path_idx, d->b);
+		}
 
 		/*
 		 * Note that on recursive parent_keys == keys, so we
 		 * can't start adding new keys to parent_keys before emptying it
 		 * out (which we did with btree_split_insert_keys() above)
 		 */
-		bch2_keylist_add(&as->parent_keys, &n1->key);
-		bch2_keylist_add(&as->parent_keys, &n2->key);
+		darray_for_each(dsts, d)
+			bch2_keylist_add(&as->parent_keys, &d->b->key);
 
 		if (!parent) {
 			/* Depth increases, make a new root */
+			btree_path_idx_t path2 = dsts.data[1].path_idx;
+
 			n3 = __btree_root_alloc(as, trans, b->c.level + 1);
 
 			bch2_btree_update_add_new_node(as, n3);
@@ -1821,24 +1875,29 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 	} else {
 		trace_btree_node(c, b, btree_node_compact);
 
-		n1 = bch2_btree_node_alloc_replacement(as, trans, b);
+		BUG_ON(darray_push(&dsts, ((struct btree_merge_node) {
+			trans, bch2_btree_node_alloc_replacement(as, trans, b), 0,
+		})));
+		struct btree_merge_node *d = &dsts.data[0];
 
 		if (keys) {
-			ret = btree_split_insert_keys(as, trans, path, n1, keys);
+			ret = btree_split_insert_keys(as, trans, path, d->b, keys);
 			if (ret)
 				goto err;
 			BUG_ON(!bch2_keylist_empty(keys));
 		}
 
-		bch2_btree_build_aux_trees(n1);
-		bch2_btree_update_add_new_node(as, n1);
+		bch2_btree_build_aux_trees(d->b);
+		bch2_btree_update_add_new_node(as, d->b);
 
-		path1 = bch2_path_get_unlocked_mut(trans, as->btree_id, n1->c.level, n1->key.k.p, false);
-		mark_btree_node_locked(trans, trans->paths + path1, n1->c.level, BTREE_NODE_WRITE_LOCKED);
-		bch2_btree_path_level_init(trans, trans->paths + path1, n1);
+		d->path_idx = bch2_path_get_unlocked_mut(trans, as->btree_id,
+							 d->b->c.level, d->b->key.k.p, false);
+		mark_btree_node_locked(trans, trans->paths + d->path_idx,
+				       d->b->c.level, BTREE_NODE_WRITE_LOCKED);
+		bch2_btree_path_level_init(trans, trans->paths + d->path_idx, d->b);
 
 		if (parent)
-			bch2_keylist_add(&as->parent_keys, &n1->key);
+			bch2_keylist_add(&as->parent_keys, &d->b->key);
 	}
 
 	/* New nodes all written, now make them visible: */
@@ -1850,7 +1909,7 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 		ret = bch2_btree_set_root(as, trans, trans->paths + path, n3);
 	} else {
 		/* Root filled up but didn't need to be split */
-		ret = bch2_btree_set_root(as, trans, trans->paths + path, n1);
+		ret = bch2_btree_set_root(as, trans, trans->paths + path, dsts.data[0].b);
 	}
 
 	if (ret)
@@ -1863,14 +1922,11 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 		bch2_btree_node_write_trans(trans, n3, SIX_LOCK_write, 0);
 		bch2_btree_update_add_node(c, &as->new_nodes, n3);
 	}
-	if (n2) {
-		bch2_btree_update_get_open_buckets(as, n2);
-		bch2_btree_node_write_trans(trans, n2, SIX_LOCK_write, 0);
-		bch2_btree_update_add_node(c, &as->new_nodes, n2);
+	darray_for_each_reverse(dsts, d) {
+		bch2_btree_update_get_open_buckets(as, d->b);
+		bch2_btree_node_write_trans(trans, d->b, SIX_LOCK_write, 0);
+		bch2_btree_update_add_node(c, &as->new_nodes, d->b);
 	}
-	bch2_btree_update_get_open_buckets(as, n1);
-	bch2_btree_node_write_trans(trans, n1, SIX_LOCK_write, 0);
-	bch2_btree_update_add_node(c, &as->new_nodes, n1);
 
 	/*
 	 * The old node must be freed (in memory) _before_ unlocking the new
@@ -1882,23 +1938,20 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 
 	if (n3)
 		bch2_trans_node_add(trans, trans->paths + path, n3);
-	if (n2)
-		bch2_trans_node_add(trans, trans->paths + path2, n2);
-	bch2_trans_node_add(trans, trans->paths + path1, n1);
+	darray_for_each_reverse(dsts, d)
+		bch2_trans_node_add(trans, trans->paths + d->path_idx, d->b);
 
 out:
-	if (path2) {
-		__bch2_btree_path_unlock(trans, trans->paths + path2);
-		bch2_path_put(trans, path2, true);
-	}
-	if (path1) {
-		__bch2_btree_path_unlock(trans, trans->paths + path1);
-		bch2_path_put(trans, path1, true);
+	darray_for_each_reverse(dsts, d) {
+		if (d->path_idx) {
+			__bch2_btree_path_unlock(trans, trans->paths + d->path_idx);
+			bch2_path_put(trans, d->path_idx, true);
+		}
 	}
 
 	bch2_trans_verify_locks(trans);
 
-	bch2_time_stats_update(&c->times[n2
+	bch2_time_stats_update(&c->times[dsts.nr == 2
 			       ? BCH_TIME_btree_node_split
 			       : BCH_TIME_btree_node_compact],
 			       start_time);
@@ -1906,9 +1959,8 @@ out:
 err:
 	if (n3)
 		bch2_btree_node_free_never_used(as, trans, n3);
-	if (n2)
-		bch2_btree_node_free_never_used(as, trans, n2);
-	bch2_btree_node_free_never_used(as, trans, n1);
+	darray_for_each_reverse(dsts, d)
+		bch2_btree_node_free_never_used(as, trans, d->b);
 	goto out;
 }
 
@@ -2128,14 +2180,6 @@ int bch2_btree_increase_depth(struct btree_trans *trans, btree_path_idx_t path, 
 	bch2_btree_update_done(as, trans);
 	return 0;
 }
-
-static void btree_merge_node_put(struct btree_merge_node n)
-{
-	bch2_path_put(n.trans, n.path_idx, true);
-}
-
-DEFINE_DARRAY_NAMED_FREE_ITEM(darray_merge_node, struct btree_merge_node,
-			      btree_merge_node_put);
 
 /*
  * Verify each pair of consecutive source nodes is contiguous: the
