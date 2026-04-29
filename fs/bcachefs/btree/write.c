@@ -133,11 +133,6 @@ static void btree_node_write_work(struct work_struct *work)
 	struct btree *b		= wbio->wbio.bio.bi_private;
 	u64 start_time		= wbio->start_time;
 
-	bch2_btree_bounce_free(c,
-		wbio->data_bytes,
-		wbio->wbio.used_mempool,
-		wbio->data);
-
 	CLASS(btree_trans, trans)(c);
 
 	/*
@@ -228,6 +223,11 @@ static void btree_node_write_endio(struct bio *bio)
 		bio_endio(&parent->bio);
 		return;
 	}
+
+	bch2_btree_bounce_free(c,
+		wb->data_bytes,
+		wb->wbio.used_mempool,
+		wb->data);
 
 	clear_btree_node_write_in_flight_inner(b);
 	smp_mb__after_atomic();
