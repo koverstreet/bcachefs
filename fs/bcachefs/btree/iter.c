@@ -2695,27 +2695,50 @@ struct bkey_s_c bch2_btree_iter_peek_max(struct btree_iter *iter, struct bpos en
 				continue;
 			}
 
-			if (!(iter->flags & BTREE_ITER_nofilter_whiteouts)) {
+			if (!(iter->flags & BTREE_ITER_nofilter_whiteouts) &&
+			    bkey_extent_whiteout(k.k)) {
 				/*
-				 * KEY_TYPE_extent_whiteout indicates that there
-				 * are no extents that overlap with this
-				 * whiteout - meaning bkey_start_pos() is
-				 * monotonically increasing when including
-				 * KEY_TYPE_extent_whiteout (not
-				 * KEY_TYPE_whiteout).
+				 * KEY_TYPE_extent_whiteout indicates that there are no extents that
+				 * overlap with this whiteout - meaning bkey_start_pos() is
+				 * monotonically increasing when including KEY_TYPE_extent_whiteout
+				 * (not KEY_TYPE_whiteout).
 				 *
-				 * Without this @end wouldn't be able to
-				 * terminate searches and we'd have to scan
-				 * through tons of whiteouts:
+				 * Without this @end wouldn't be able to terminate searches and we'd
+				 * have to scan through tons of whiteouts:
 				 */
 				if (k.k->type == KEY_TYPE_extent_whiteout &&
 				    bkey_ge(k.k->p, end))
 					goto end;
 
-				if (bkey_extent_whiteout(k.k)) {
-					search_key = bkey_successor(iter, k.k->p);
-					continue;
-				}
+				/*
+				 * Advance iter->pos incrementally, so that on transaction restart
+				 * we don't have to restart scanning over large numbers of whiteouts
+				 * from the beginning.
+				 *
+				 * Considerations:
+				 *
+				 * We currently require that iter->pos.snapshot == iter->snapshot,
+				 * so we can only update iter->pos when advancing to a new bkey, not
+				 * snapshot within a key.
+				 *
+				 * Additionally, advancing iter->pos means "we have checked that
+				 * there are no keys we will wish to return in the range that we are
+				 * advancing past". For non extent iterators, all keys (including
+				 * whiteouts) are monotonically increasing point positions - no
+				 * special considerations.
+				 *
+				 * But for extent iterators, callers use iter->pos to mean
+				 * "remaining range we are processing", meaning we cannot advance
+				 * iter->pos such that it straddles an extent we will subsequently
+				 * return - thus we only advance if we are seeing
+				 * KEY_TYPE_extent_whiteout.
+				 */
+				if (!(iter->flags & BTREE_ITER_is_extents) ||
+				    k.k->type == KEY_TYPE_extent_whiteout)
+					iter->pos = bpos_with_snapshot(k.k->p, iter->snapshot);
+
+				search_key = bkey_successor(iter, k.k->p);
+				continue;
 			}
 		}
 
@@ -2731,6 +2754,9 @@ struct bkey_s_c bch2_btree_iter_peek_max(struct btree_iter *iter, struct bpos en
 		iter->pos = k.k->p;
 	else
 		iter->pos = bkey_max(iter->pos, bkey_start_pos(k.k));
+
+	if (!(iter->flags & BTREE_ITER_all_snapshots))
+		iter->pos.snapshot = iter->snapshot;
 
 	if (unlikely(iter->flags & BTREE_ITER_all_snapshots	? bpos_gt(iter->pos, end) :
 		     iter->flags & BTREE_ITER_is_extents	? bkey_ge(iter->pos, end) :
@@ -2750,9 +2776,6 @@ out_no_locked:
 		else
 			btree_path_set_should_be_locked(trans, trans->paths + iter->update_path);
 	}
-
-	if (!(iter->flags & BTREE_ITER_all_snapshots))
-		iter->pos.snapshot = iter->snapshot;
 
 	ret = bch2_btree_iter_verify_ret(iter, k);
 	if (unlikely(ret)) {
