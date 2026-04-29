@@ -172,7 +172,6 @@ int bch2_fpunch_at(struct btree_trans *trans, struct btree_iter *iter,
 		   s64 *i_sectors_delta)
 {
 	struct bch_fs *c	= trans->c;
-	unsigned max_sectors	= KEY_SIZE_MAX & (~0 << c->block_bits);
 	struct bpos end_pos = POS(inum.inum, end);
 	struct bkey_s_c k;
 	int ret = 0, ret2 = 0;
@@ -180,9 +179,7 @@ int bch2_fpunch_at(struct btree_trans *trans, struct btree_iter *iter,
 
 	while (!ret ||
 	       bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
-		struct disk_reservation disk_res =
-			bch2_disk_reservation_init(c, 0);
-		struct bkey_i delete;
+		CLASS(disk_reservation, res)(c);
 
 		if (ret)
 			ret2 = ret;
@@ -206,16 +203,14 @@ int bch2_fpunch_at(struct btree_trans *trans, struct btree_iter *iter,
 		if (ret)
 			continue;
 
+		struct bkey_i delete;
 		bkey_init(&delete.k);
 		delete.k.p = iter->pos;
 
-		/* create the biggest key we can */
-		bch2_key_resize(&delete.k, max_sectors);
-		bch2_cut_back(end_pos, &delete);
+		bch2_key_resize(&delete.k, min(end, k.k->p.offset) - iter->pos.offset);
 
 		ret = bch2_extent_update(trans, inum, iter, &delete,
-				&disk_res, 0, i_sectors_delta, false, 0);
-		bch2_disk_reservation_put(c, &disk_res);
+				&res.r, 0, i_sectors_delta, false, 0);
 	}
 
 	return ret ?: ret2;
