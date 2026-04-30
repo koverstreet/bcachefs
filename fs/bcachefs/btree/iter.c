@@ -548,11 +548,21 @@ static void __bch2_btree_path_fix_key_modified(struct btree_path *path,
 {
 	struct btree_path_level *l = &path->l[b->c.level];
 
-	if (where != bch2_btree_node_iter_peek_all(&l->iter, l->b))
-		return;
-
-	if (bkey_iter_pos_cmp(l->b, where, &path->pos) < 0)
+	if (where == bch2_btree_node_iter_peek_all(&l->iter, l->b) &&
+	    bkey_iter_pos_cmp(l->b, where, &path->pos) < 0) {
 		bch2_btree_node_iter_advance(&l->iter, l->b);
+		return;
+	}
+
+	/*
+	 * The caller just flipped @where's deleted-ness in place (mark
+	 * deleted for an overwrite, or same-position whiteout). That's
+	 * the tiebreaker in bkey_iter_cmp(), so any iter set entry whose
+	 * bset_pos shares a key value with @where may now be out of order
+	 * — and the breakage isn't limited to data[0]. Re-sort to restore
+	 * the iter's sort invariant.
+	 */
+	bch2_btree_node_iter_sort(&l->iter, l->b);
 }
 
 void bch2_btree_path_fix_key_modified(struct btree_trans *trans,
