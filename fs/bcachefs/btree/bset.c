@@ -322,7 +322,38 @@ void __bch2_btree_node_iter_verify(struct btree_node_iter *iter,
 		p = bch2_bkey_prev_all(b, t,
 			bch2_btree_node_iter_bset_pos(iter, b, t));
 
-		BUG_ON(p && bkey_iter_cmp(b, k, p) < 0);
+		if (p && bkey_iter_cmp(b, k, p) < 0) {
+			CLASS(printbuf, buf)();
+			struct bkey uk_k = bkey_unpack_key(b, k);
+			struct bkey uk_p = bkey_unpack_key(b, p);
+
+			prt_printf(&buf, "btree node iter cross-bset rewind invariant violated:\n");
+			prt_printf(&buf, "  level %u nsets %u\n", b->c.level, b->nsets);
+			prt_printf(&buf, "  peek_all (data[0]): bset %zu offset %u key ",
+				   bch2_bkey_to_bset(b, k) - b->set, iter->data[0].k);
+			bch2_bkey_to_text(&buf, &uk_k);
+			prt_printf(&buf, " deleted=%u\n", bkey_deleted(k));
+			prt_printf(&buf, "  failing bset %zu: bset_pos offset %u",
+				   t - b->set,
+				   __btree_node_key_to_offset(b,
+					bch2_btree_node_iter_bset_pos(iter, b, t)));
+			prt_printf(&buf, " prev_all key ");
+			bch2_bkey_to_text(&buf, &uk_p);
+			prt_printf(&buf, " deleted=%u\n", bkey_deleted(p));
+
+			prt_str(&buf, "iter entries:\n");
+			btree_node_iter_for_each(iter, set) {
+				struct bkey_packed *sk = __btree_node_offset_to_key(b, set->k);
+				struct bset_tree *st = bch2_bkey_to_bset(b, sk);
+				struct bkey usk = bkey_unpack_key(b, sk);
+				prt_printf(&buf, "  set %zu k %u end %u: ",
+					   st - b->set, set->k, set->end);
+				bch2_bkey_to_text(&buf, &usk);
+				prt_printf(&buf, " deleted=%u\n", bkey_deleted(sk));
+			}
+
+			panic("%s", buf.buf);
+		}
 	}
 }
 
