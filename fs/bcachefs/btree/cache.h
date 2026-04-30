@@ -170,10 +170,10 @@ static inline unsigned btree_blocks(const struct bch_fs *c)
 	return btree_sectors(c) >> c->block_bits;
 }
 
-#define BTREE_SPLIT_THRESHOLD(c)		(btree_max_u64s(c) * 2 / 3)
+#define BTREE_SPLIT_THRESHOLD(c)		(btree_max_u64s(c) * 3 / 4)
 
 #define BTREE_FOREGROUND_MERGE_THRESHOLD(c)	(btree_max_u64s(c) * 1 / 3)
-#define BTREE_FOREGROUND_MERGE_HIGHER_THRESHOLD(c)	(btree_max_u64s(c) / 2)
+#define BTREE_FOREGROUND_MERGE_HIGHER_THRESHOLD(c)	(btree_max_u64s(c) * 3 / 5)
 #define BTREE_FOREGROUND_MERGE_HYSTERESIS(c)			\
 	(BTREE_FOREGROUND_MERGE_THRESHOLD(c) +			\
 	 (BTREE_FOREGROUND_MERGE_THRESHOLD(c) >> 2))
