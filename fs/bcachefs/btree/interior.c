@@ -1625,7 +1625,8 @@ static void __btree_split_node(struct btree_update *as,
 			       darray_merge_node *srcs,
 			       darray_merge_node *dsts,
 			       struct keylist *insert_keys,
-			       unsigned n1_target_u64s)
+			       unsigned n1_target_u64s,
+			       struct bkey_format *fallback_format)
 {
 	struct bkey_packed *k;
 	struct bpos n1_pos = POS_MIN;
@@ -1701,10 +1702,21 @@ static void __btree_split_node(struct btree_update *as,
 
 		n->data->format = bch2_bkey_format_done(&format[i]);
 
+		/*
+		 * If the per-dst tightest format would still overflow the
+		 * node buf — happens when unpacked keys with wide field
+		 * values force format[i] to be wider than the source(s)
+		 * already packed under — fall back to a format we know packs
+		 * all keys we'll see. For single-src split, b->format works
+		 * because the keys live there. For multi-src merge, the
+		 * caller passes the union format from compute_merge() (built
+		 * by add_key over every src's keys), which packs everything
+		 * by construction.
+		 */
 		unsigned est = nr_keys[i].nr_keys * n->data->format.key_u64s +
 			nr_keys[i].val_u64s;
 		if (__vstruct_bytes(struct btree_node, est) > btree_buf_bytes(first_b))
-			n->data->format = first_b->format;
+			n->data->format = *fallback_format;
 
 		btree_node_set_format(n, n->data->format);
 	}
@@ -1821,7 +1833,7 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 		};
 
 		__btree_split_node(as, trans, &split_srcs, &dsts, keys,
-				   (b->nr.live_u64s * 3) / 5);
+				   (b->nr.live_u64s * 3) / 5, &b->format);
 
 		if (keys) {
 			ret =   btree_split_insert_keys(as, trans, path, dsts.data[0].b, keys) ?:
