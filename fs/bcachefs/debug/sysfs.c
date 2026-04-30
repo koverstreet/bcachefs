@@ -765,12 +765,14 @@ static ssize_t sysfs_opt_show(struct bch_fs *c,
 	const struct bch_option *opt = bch2_opt_table + id;
 	u64 v;
 
-	if (opt->flags & OPT_FS) {
-		v = bch2_opt_get_by_id(&c->opts, id);
-	} else if ((opt->flags & OPT_DEVICE) && opt->get_member)  {
+	if (ca) {
+		if (!((opt->flags & OPT_DEVICE) && opt->get_member))
+			return bch_err_throw(c, EINVAL_sysfs_opt_not_found);
 		v = bch2_opt_from_sb(c->disk_sb.sb, id, ca->dev_idx);
 	} else {
-		return bch_err_throw(c, EINVAL_sysfs_opt_not_found);
+		if (!(opt->flags & OPT_FS))
+			return bch_err_throw(c, EINVAL_sysfs_opt_not_found);
+		v = bch2_opt_get_by_id(&c->opts, id);
 	}
 
 	bch2_opt_to_text(out, c, c->disk_sb.sb, opt, v, OPT_SHOW_FULL_LIST);
@@ -865,6 +867,18 @@ int bch2_opts_create_sysfs_files(struct kobject *kobj, unsigned type)
 		if (i->flags & OPT_HIDDEN)
 			continue;
 		if (!(i->flags & type))
+			continue;
+
+		/*
+		 * For options that are both OPT_FS and OPT_DEVICE (currently
+		 * only @discard), expose only the per-device sysfs entry: the
+		 * FS-level entry would alias to c->opts but member-backed
+		 * options have no FS-wide superblock field, so writes via the
+		 * FS path are silent no-ops and reads can't disambiguate
+		 * which scope is being shown. Mount-time @-o discard= remains
+		 * the only fs-scope handle.
+		 */
+		if (type == OPT_FS && (i->flags & OPT_DEVICE))
 			continue;
 
 		try(sysfs_create_file(kobj, &i->attr));
