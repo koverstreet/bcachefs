@@ -348,22 +348,41 @@ static void calculate_discard_sectors_to_release(struct btree_trans *trans)
 	struct bch_fs *c = trans->c;
 	struct discard_state *s = &c->discards.s;
 
+	/*
+	 * Compute the rewind-advance budget per-device: a single device
+	 * starving for free buckets needs to drive rewind advance by its own
+	 * pressure, not by the fs-wide aggregate. With an fs-wide buffer, a
+	 * comfortable fs total can mask one device's need_discard pile-up
+	 * indefinitely, leaving its discard worker iterating but finding no
+	 * journal-eligible candidates.
+	 */
 	scoped_guard(rcu)
 		for_each_rw_member_rcu(c, ca) {
 			struct bch_dev_usage u	= bch2_dev_usage_read(ca);
 			u64 sectors		= ca->mi.bucket_size;
 
-			s->r.pending_total	+= sectors * u.buckets[BCH_DATA_need_discard];
-			s->r.free		+= sectors * u.buckets[BCH_DATA_free];
-			s->r.reserve		+= sectors * bch2_dev_buckets_reserved(ca, BCH_WATERMARK_stripe);
+			u64 dev_pending		= sectors * u.buckets[BCH_DATA_need_discard];
+			u64 dev_free		= sectors * u.buckets[BCH_DATA_free];
+			u64 dev_reserve		= sectors * bch2_dev_buckets_reserved(ca, BCH_WATERMARK_stripe);
+			u64 dev_capacity	= sectors * ca->mi.nbuckets;
+			u64 dev_buffer		= dev_capacity * c->opts.journal_rewind_discard_buffer_percent / 100;
+			s64 dev_buffer_clamped	= min_t(s64, dev_buffer,
+							max_t(s64, 0,
+							      (s64) dev_free - (s64) dev_reserve * 4));
+			s64 dev_release		= (s64) dev_pending - dev_buffer_clamped;
+
+			s->r.pending_total	+= dev_pending;
+			s->r.free		+= dev_free;
+			s->r.reserve		+= dev_reserve;
+			s->r.buffer		+= dev_buffer;
+			s->r.buffer_clamped	+= dev_buffer_clamped;
+			if (dev_release > 0)
+				s->r.release	+= dev_release;
 		}
 
 	u64 seen = s->seen - s->bad_data_type - s->not_rw;
 
 	s->r.flush_wb		= seen * 2 <= s->r.pending_total && s->r.free < s->r.reserve * 2;
-	s->r.buffer		= c->capacity.capacity * c->opts.journal_rewind_discard_buffer_percent / 100;
-	s->r.buffer_clamped	= min(s->r.buffer, max(0, (s64) (s->r.free - s->r.reserve * 4)));
-	s->r.release		= s->r.pending_total - s->r.buffer_clamped;
 
 	if (s->r.release <= 0)
 		return;
