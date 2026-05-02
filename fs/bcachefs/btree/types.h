@@ -18,6 +18,7 @@
 #include "journal/types.h"
 
 #include "util/darray.h"
+#include "util/printbuf.h"
 #include "util/six.h"
 
 struct open_bucket;
@@ -611,6 +612,10 @@ struct btree_trans {
 #ifdef CONFIG_BCACHEFS_TRANS_KMALLOC_TRACE
 	darray_trans_kmalloc_trace trans_kmalloc_trace;
 #endif
+	/* Throwaway: per-trans log of split/merge/compact events, dumped on
+	 * BTREE_TRANS_MEM_MAX overflow so we can see what the trans was doing.
+	 */
+	struct printbuf		op_log;
 
 	btree_path_idx_t	nr_sorted;
 	btree_path_idx_t	nr_paths;

@@ -1952,11 +1952,11 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 		};
 
 		if (dsts.nr == 2)
-			event_inc_trace(c, btree_node_split, buf, ({
+			event_inc_trace_trans(trans, c, btree_node_split, buf, ({
 				btree_node_op_log(&buf, c, b, &srcs, &dsts);
 			}));
 		else
-			event_inc_trace(c, btree_node_compact, buf, ({
+			event_inc_trace_trans(trans, c, btree_node_compact, buf, ({
 				btree_node_op_log(&buf, c, b, &srcs, &dsts);
 			}));
 	}
@@ -3026,7 +3026,7 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 	if (ret)
 		goto err_free_new_node;
 
-	event_inc_trace(c, btree_node_merge, buf, ({
+	event_inc_trace_trans(trans, c, btree_node_merge, buf, ({
 		btree_node_op_log(&buf, c, b, &srcs, &dsts);
 	}));
 

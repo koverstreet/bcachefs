@@ -240,4 +240,24 @@ void bch2_btree_cache_to_text(struct printbuf *, const struct bch_fs_btree_cache
 #define trace_btree_node(_c, _b, event)				\
 	event_inc_trace(c, event, buf, bch2_btree_pos_to_text(&buf, c, b))
 
+/* Like event_inc_trace(), but also appends the event to trans->op_log so it
+ * shows up in the BTREE_TRANS_MEM_MAX overflow dump. Caller passes a buf
+ * name + an expression that fills the buf; the same string is fed to the
+ * trace event and to op_log.
+ */
+#define event_inc_trace_trans(_trans, _c, _name, _buf, ...)		\
+do {									\
+	CLASS(printbuf, _buf)();					\
+	printbuf_indent_add_nextline(&_buf, 2);				\
+	__VA_ARGS__;							\
+	if (_buf.buf) {							\
+		prt_printf(&(_trans)->op_log, "%s ", #_name);		\
+		prt_str(&(_trans)->op_log, _buf.buf);			\
+		prt_newline(&(_trans)->op_log);				\
+	}								\
+	if (trace_##_name##_enabled())					\
+		trace_##_name(_c, _buf.buf);				\
+	event_inc(_c, _name);						\
+} while (0)
+
 #endif /* _BCACHEFS_BTREE_CACHE_H */

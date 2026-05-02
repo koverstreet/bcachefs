@@ -3525,11 +3525,16 @@ void *__bch2_trans_kmalloc(struct btree_trans *trans, size_t size, unsigned long
 	void *p;
 
 	if (WARN_ON_ONCE(new_bytes > BTREE_TRANS_MEM_MAX)) {
-#ifdef CONFIG_BCACHEFS_TRANS_KMALLOC_TRACE
 		CLASS(bch_log_msg, msg)(c);
 		prt_printf(&msg.m, "bump allocator exceeded BTREE_TRANS_MEM_MAX (%u)\n",
 			   BTREE_TRANS_MEM_MAX);
 
+		if (trans->op_log.pos) {
+			prt_printf(&msg.m, "btree node ops in this trans:\n");
+			prt_str(&msg.m, trans->op_log.buf);
+		}
+
+#ifdef CONFIG_BCACHEFS_TRANS_KMALLOC_TRACE
 		bch2_trans_kmalloc_trace_to_text(&msg.m, &trans->trans_kmalloc_trace);
 #endif
 	}
@@ -3723,6 +3728,7 @@ u32 bch2_trans_begin(struct btree_trans *trans)
 #ifdef CONFIG_BCACHEFS_TRANS_KMALLOC_TRACE
 	trans->trans_kmalloc_trace.nr = 0;
 #endif
+	printbuf_reset(&trans->op_log);
 
 	trans_set_locked(trans, false);
 
@@ -3804,6 +3810,7 @@ struct btree_trans *__bch2_trans_get(struct bch_fs *c, unsigned fn_idx)
 	struct btree_trans *trans = bch2_trans_alloc(c);
 
 	trans->c		= c;
+	trans->op_log		= PRINTBUF;
 	trans->fn_idx		= fn_idx;
 	trans->locking_wait.task = current;
 	trans->journal_replay_not_finished =
@@ -3926,6 +3933,7 @@ void bch2_trans_put(struct btree_trans *trans)
 #ifdef CONFIG_BCACHEFS_TRANS_KMALLOC_TRACE
 	darray_exit(&trans->trans_kmalloc_trace);
 #endif
+	bch2_printbuf_exit(&trans->op_log);
 
 	unsigned long *paths_allocated = trans->paths_allocated;
 	trans->paths_allocated	= NULL;
