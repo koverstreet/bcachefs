@@ -590,56 +590,58 @@ static void __bch2_btree_node_iter_fix(struct btree_path *path,
 	unsigned offset = __btree_node_key_to_offset(b, where);
 	int shift = new_u64s - clobber_u64s;
 	unsigned old_end = t->end_offset - shift;
-	unsigned orig_iter_pos = node_iter->data[0].k;
-	bool iter_current_key_modified =
-		orig_iter_pos >= offset &&
-		orig_iter_pos <= offset + clobber_u64s;
 
 	struct btree_node_iter_set *set = btree_node_iter_set_find(node_iter, old_end);
 	if (!set) {
-		/* didn't find the bset in the iterator - might have to readd it: */
+		/*
+		 * Bset isn't tracked by the iter. If the iter is positioned
+		 * at-or-before the new key, push the bset in. Either way, fall
+		 * through to the cross-bset rewind walk below: an insert into
+		 * an untracked bset can still violate the cross-bset rewind
+		 * invariant against a tracked bset (e.g. same bpos as a
+		 * whiteout in another bset that the iter is currently parked
+		 * on), and the rewind is what catches that.
+		 */
 		if (new_u64s &&
-		    bkey_iter_pos_cmp(b, where, &path->pos) >= 0) {
+		    bkey_iter_pos_cmp(b, where, &path->pos) >= 0)
 			bch2_btree_node_iter_push(node_iter, b, where, end);
-		} else {
-			/* Iterator is after key that changed */
-			return;
-		}
 	} else {
 		set->end = t->end_offset;
 
-		/* Iterator hasn't gotten to the key that changed yet: */
-		if (set->k < offset)
-			return;
+		/*
+		 * If the iter has reached or passed the change in this bset,
+		 * adjust set->k. If it hasn't (set->k < offset), leave set->k
+		 * alone — but still fall through to the rewind walk below in
+		 * case the change introduced a cross-bset inconsistency
+		 * against another bset this iter tracks.
+		 */
+		if (set->k >= offset) {
+			if (new_u64s &&
+			    bkey_iter_pos_cmp(b, where, &path->pos) >= 0) {
+				set->k = offset;
+			} else if (set->k < offset + clobber_u64s) {
+				set->k = offset + new_u64s;
+				if (set->k == set->end)
+					bch2_btree_node_iter_set_drop(node_iter, set);
+			} else {
+				/* Iterator is after key that changed */
+				set->k = (int) set->k + shift;
+			}
 
-		if (new_u64s &&
-		    bkey_iter_pos_cmp(b, where, &path->pos) >= 0) {
-			set->k = offset;
-		} else if (set->k < offset + clobber_u64s) {
-			set->k = offset + new_u64s;
-			if (set->k == set->end)
-				bch2_btree_node_iter_set_drop(node_iter, set);
-		} else {
-			/* Iterator is after key that changed */
-			set->k = (int) set->k + shift;
-			return;
+			bch2_btree_node_iter_sort(node_iter, b);
 		}
-
-		bch2_btree_node_iter_sort(node_iter, b);
 	}
 
-	if (node_iter->data[0].k != orig_iter_pos)
-		iter_current_key_modified = true;
-
 	/*
-	 * When a new key is added, and the node iterator now points to that
-	 * key, the iterator might have skipped past deleted keys that should
-	 * come after the key the iterator now points to. We have to rewind to
-	 * before those deleted keys - otherwise
-	 * bch2_btree_node_iter_prev_all() breaks:
+	 * Inserts/removes in interior nodes can leave a btree_node_iter
+	 * inconsistent: the modified key may now sit between the iter's
+	 * current key and a passed key in another bset. Multiple paths
+	 * can share an interior node, so the path doing the modification
+	 * isn't the only iter that needs adjusting. Always rewind to catch
+	 * passed keys (in any bset) that should now come after the iter's
+	 * current key — otherwise bch2_btree_node_iter_prev_all() breaks.
 	 */
 	if (!bch2_btree_node_iter_end(node_iter) &&
-	    iter_current_key_modified &&
 	    b->c.level) {
 		struct bkey_packed *k, *k2, *p;
 
