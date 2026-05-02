@@ -41,6 +41,7 @@ struct alloc_request {
 	struct closure		*cl;
 	u8			nr_replicas;
 	u8			ec_replicas;
+	u8			ec_max_data_blocks;	/* 0 = no cap */
 	unsigned		target;
 	bool			ec:1;
 	bool			new_stripe_alloc:1;

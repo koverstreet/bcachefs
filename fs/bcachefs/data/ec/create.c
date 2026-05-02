@@ -1533,13 +1533,16 @@ struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *trans,
 		return h;
 
 	if (!h->s) {
+		unsigned active = min_t(unsigned, h->nr_active_devs, BCH_BKEY_PTRS_MAX);
+		unsigned nr_data = min_t(unsigned, active - h->redundancy,
+					 req->ec_max_data_blocks ?: ~0U);
+
 		h->s = ec_new_stripe_alloc(c,
 					   h->devs,
 					   h->watermark,
 					   h->disk_label,
 					   h->algo,
-					   min_t(unsigned, h->nr_active_devs,
-						 BCH_BKEY_PTRS_MAX) - h->redundancy,
+					   nr_data,
 					   h->redundancy,
 					   h->blocksize);
 		if (!h->s) {

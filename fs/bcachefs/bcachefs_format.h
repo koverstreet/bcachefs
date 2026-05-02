@@ -1228,6 +1228,7 @@ LE64_BITMASK(BCH_SB_REBALANCE_AC_ONLY,	struct bch_sb, flags[6], 23, 24);
 LE64_BITMASK(BCH_SB_WRITEBACK_TIMEOUT,	struct bch_sb, flags[6], 24, 40);
 LE64_BITMASK(BCH_SB_EXTENT_BP_SHIFT,	struct bch_sb, flags[6], 40, 48);
 LE64_BITMASK(BCH_SB_SCRUB_JOURNAL,	struct bch_sb, flags[6], 48, 50);
+LE64_BITMASK(BCH_SB_EC_MAX_DATA_BLOCKS,	struct bch_sb, flags[6], 50, 58);
 
 #define BCH_SB_EXTENT_BP_SHIFT_DEFAULT	10
 
