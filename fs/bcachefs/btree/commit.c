@@ -998,7 +998,7 @@ static int __bch2_trans_commit_error(struct btree_trans *trans, unsigned flags,
 		if (trans_commit_has_extents(trans))
 			flags = btree_update_set_watermark_hipri(flags);
 
-		ret = bch2_btree_split_leaf(trans, i->path, flags);
+		ret = bch2_btree_split_leaf(trans, i->path, i->k->k.u64s, flags);
 		if (!ret && trans->has_interior_updates)
 			return btree_trans_restart(trans,
 					     BCH_ERR_transaction_restart_split_with_interior_updates);

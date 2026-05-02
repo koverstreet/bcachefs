@@ -1818,7 +1818,25 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 
 	try(bch2_btree_node_check_topology(trans, b));
 
-	if (b->nr.live_u64s > BTREE_SPLIT_THRESHOLD(c)) {
+	/* If we're splitting because an insert hit btree_node_full, compact
+	 * is only useful if the failed key would actually fit afterwards.
+	 * Otherwise we'd loop: compact produces same live_u64s, retry hits
+	 * btree_node_full again. Two distinct cases:
+	 *  - parent recursion (keys != NULL): the new keys are merged into
+	 *    the post-compact bset directly, so we just need the combined
+	 *    data to fit in the buffer.
+	 *  - leaf retry (keys == NULL): the failed key arrives via trans
+	 *    restart, going into a follow-on bset on the new node. Account
+	 *    for write rounding (each bset write rounds up to block_bytes,
+	 *    so a node whose live data rounds up to fill the whole sector
+	 *    budget leaves no room for the follow-on bset).
+	 */
+	bool must_split = keys
+		? b->nr.live_u64s + bch2_keylist_u64s(keys) > btree_max_u64s(c)
+		: as->new_key_u64s &&
+		  !bch2_btree_node_compact_fits(c, b, as->new_key_u64s);
+
+	if (must_split || b->nr.live_u64s > BTREE_SPLIT_THRESHOLD(c)) {
 		struct btree_merge_node split_src = { .trans = trans, .b = b };
 		darray_merge_node split_srcs = {
 			.data = &split_src, .nr = 1, .size = 1,
@@ -2094,6 +2112,7 @@ out_unlock:
 
 int bch2_btree_split_leaf(struct btree_trans *trans,
 			  btree_path_idx_t path,
+			  unsigned new_key_u64s,
 			  enum bch_trans_commit_flags flags)
 {
 	/* btree_split & merge may both cause paths array to be reallocated */
@@ -2108,6 +2127,8 @@ int bch2_btree_split_leaf(struct btree_trans *trans,
 				     true, 0, flags, 0);
 	if (IS_ERR(as))
 		return PTR_ERR(as);
+
+	as->new_key_u64s = new_key_u64s;
 
 	ret = bch2_btree_node_lock_write(trans, trans->paths + path, &b->c);
 	if (ret)
@@ -2189,7 +2210,7 @@ int bch2_btree_increase_depth(struct btree_trans *trans, btree_path_idx_t path, 
 	struct btree *b = bch2_btree_id_root(c, trans->paths[path].btree_id)->b;
 
 	if (btree_node_fake(b))
-		return bch2_btree_split_leaf(trans, path, flags);
+		return bch2_btree_split_leaf(trans, path, 0, flags);
 
 	struct btree_update *as =
 		bch2_btree_update_start(trans, trans->paths + path, b->c.level,

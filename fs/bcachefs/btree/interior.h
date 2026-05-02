@@ -79,6 +79,12 @@ struct btree_update {
 	unsigned			update_level_start;
 	unsigned			update_level_end;
 
+	/* size of the key that triggered split_leaf (0 if N/A) — drives
+	 * the split-vs-compact decision in btree_split() so we don't loop
+	 * trying to compact a leaf that can't fit the new key.
+	 */
+	unsigned			new_key_u64s;
+
 	struct disk_reservation		disk_res;
 
 	/*
@@ -142,7 +148,8 @@ struct btree *__bch2_btree_node_alloc_replacement(struct btree_update *,
 						  struct btree *,
 						  struct bkey_format);
 
-int bch2_btree_split_leaf(struct btree_trans *, btree_path_idx_t, enum bch_trans_commit_flags);
+int bch2_btree_split_leaf(struct btree_trans *, btree_path_idx_t,
+			  unsigned, enum bch_trans_commit_flags);
 
 int bch2_btree_increase_depth(struct btree_trans *, btree_path_idx_t, unsigned);
 
@@ -350,6 +357,32 @@ static inline bool bch2_btree_node_insert_fits(struct btree *b, unsigned u64s)
 		return false;
 
 	return u64s <= bch2_btree_keys_u64s_remaining(b);
+}
+
+/*
+ * Will a new_key_u64s key fit after we compact @b down to a single sorted
+ * bset? Models __bch2_btree_node_write's space accounting exactly: each bset
+ * write rounds up to block_bytes(c), so a node whose live data rounds up to
+ * fill the entire sector budget is born exhausted post-compact - no room for
+ * a follow-on bset to land the new key, and the insert path will immediately
+ * trigger another btree_split. Caller must split in that case.
+ *
+ * +8 in each term matches the bch2_varint_decode read-past-end slack the
+ * write path adds before round_up.
+ */
+static inline bool bch2_btree_node_compact_fits(struct bch_fs *c,
+						struct btree *b,
+						unsigned new_key_u64s)
+{
+	size_t initial_bytes  = sizeof(struct btree_node) +
+				(size_t)b->nr.live_u64s * sizeof(u64) + 8;
+	size_t followon_bytes = sizeof(struct btree_node_entry) +
+				(size_t)new_key_u64s    * sizeof(u64) + 8;
+
+	size_t initial_sectors  = round_up(initial_bytes,  block_bytes(c)) >> 9;
+	size_t followon_sectors = round_up(followon_bytes, block_bytes(c)) >> 9;
+
+	return initial_sectors + followon_sectors <= btree_sectors(c);
 }
 
 static inline bool btree_bkey_and_val_eq(struct bkey_s_c l, struct bkey_s_c r)
