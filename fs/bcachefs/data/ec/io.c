@@ -21,22 +21,33 @@
 #include <linux/raid/pq.h>
 #include <linux/raid/xor.h>
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(7,1,0)
+/*
+ * 7.1 replaced xor_blocks() with xor_gen(), which handles MAX_XOR_BLOCKS
+ * chunking internally. Shim for older kernels so the caller below stays
+ * version-agnostic.
+ */
+static inline void xor_gen(void *dest, void **srcs,
+			   unsigned int src_cnt, unsigned int bytes)
+{
+	unsigned int i = 0;
+
+	while (i < src_cnt) {
+		unsigned int nr = min_t(unsigned int, src_cnt - i, MAX_XOR_BLOCKS);
+		xor_blocks(nr, bytes, dest, srcs + i);
+		i += nr;
+	}
+}
+#endif
+
 static void raid5_recov(unsigned disks, unsigned failed_idx,
 			size_t size, void **data)
 {
-	unsigned i = 2, nr;
-
 	BUG_ON(failed_idx >= disks);
 
 	swap(data[0], data[failed_idx]);
 	memcpy(data[0], data[1], size);
-
-	while (i < disks) {
-		nr = min_t(unsigned, disks - i, MAX_XOR_BLOCKS);
-		xor_blocks(nr, size, data[0], data + i);
-		i += nr;
-	}
-
+	xor_gen(data[0], data + 2, disks - 2, size);
 	swap(data[0], data[failed_idx]);
 }
 

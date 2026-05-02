@@ -21,6 +21,20 @@
 
 #include "util/util.h"
 
+/*
+ * fs/fs_parser.c marked the standard bool_names static in 7.1, so carry our
+ * own copy. Same six tokens as the original — strict, no looser parsing.
+ */
+static const struct constant_table bch2_bool_names[] = {
+	{ "0",		false },
+	{ "1",		true  },
+	{ "false",	false },
+	{ "no",		false },
+	{ "true",	true  },
+	{ "yes",	true  },
+	{ },
+};
+
 #define x(t, n, ...) [n] = #t,
 
 const char * const bch2_error_actions[] = {
@@ -406,7 +420,7 @@ int bch2_opt_parse(struct bch_fs *c,
 		if (!val)
 			val = "1";
 
-		ret = lookup_constant(bool_names, val, -BCH_ERR_option_not_bool);
+		ret = lookup_constant(bch2_bool_names, val, -BCH_ERR_option_not_bool);
 		if (ret != -BCH_ERR_option_not_bool) {
 			*res = ret;
 		} else {

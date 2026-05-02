@@ -34,7 +34,11 @@
 #include <linux/falloc.h>
 #include <linux/migrate.h>
 #include <linux/mmu_context.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,1,0)
+#include <linux/folio_batch.h>
+#else
 #include <linux/pagevec.h>
+#endif
 #include <linux/rmap.h>
 #include <linux/sched/signal.h>
 #include <linux/task_io_accounting_ops.h>

@@ -862,7 +862,7 @@ void __bch2_dev_mi_field_upgrades(struct bch_fs *c, struct bch_dev *ca, bool *wr
 	struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
 
 	if (!BCH_MEMBER_ROTATIONAL_SET(m)) {
-		SET_BCH_MEMBER_ROTATIONAL(m, !bdev_nonrot(ca->disk_sb.bdev));
+		SET_BCH_MEMBER_ROTATIONAL(m, bdev_rot(ca->disk_sb.bdev));
 		SET_BCH_MEMBER_ROTATIONAL_SET(m, true);
 		*write_sb = true;
 	}

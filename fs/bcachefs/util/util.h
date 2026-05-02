@@ -56,6 +56,17 @@ static inline struct bio_vec *bio_inline_vecs(struct bio *bio)
 }
 #endif
 
+/*
+ * 7.1 introduced bdev_rot() and removed bdev_nonrot(). Shim bdev_rot for
+ * older kernels and userspace so call sites can always use bdev_rot.
+ */
+#if !defined(__KERNEL__) || LINUX_VERSION_CODE < KERNEL_VERSION(7,1,0)
+static inline bool bdev_rot(struct block_device *bdev)
+{
+	return !bdev_nonrot(bdev);
+}
+#endif
+
 DEFINE_FREE(bio_put, struct bio *, if (_T) bio_put(_T))
 
 /*
