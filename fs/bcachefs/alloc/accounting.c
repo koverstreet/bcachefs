@@ -959,39 +959,78 @@ static int accounting_read_mem_fixups(struct btree_trans *trans)
 	struct bch_fs *c = trans->c;
 	struct bch_accounting_mem *acc = &c->accounting;
 
-	darray_for_each_reverse(acc->k, i) {
+	/*
+	 * Filter zeroed/invalid entries with an in-place forward pass.
+	 *
+	 * We previously did this reverse-iterating + darray_remove_item per
+	 * dropped entry, which is O(N*R) memmove (each remove shifts the tail
+	 * back). On large arrays the replicas table grows combinatorially with
+	 * device count, and many entries come back zero on read, so the cost
+	 * was dominating mount time on big multi-device filesystems.
+	 *
+	 * Caller (bch2_accounting_read) has already sorted acc->k; forward
+	 * filter preserves that order.
+	 */
+	struct accounting_mem_entry *src = acc->k.data;
+	struct accounting_mem_entry *dst = acc->k.data;
+	struct accounting_mem_entry *end = acc->k.data + acc->k.nr;
+	int ret = 0;
+
+	while (src < end) {
 		struct disk_accounting_pos acc_k;
-		bpos_to_disk_accounting_pos(&acc_k, i->pos);
+		bpos_to_disk_accounting_pos(&acc_k, src->pos);
 
 		u64 v[BCH_ACCOUNTING_MAX_COUNTERS];
 		memset(v, 0, sizeof(v));
 
-		for (unsigned j = 0; j < i->nr_counters; j++)
-			v[j] = percpu_u64_get(i->v[0] + j);
+		for (unsigned j = 0; j < src->nr_counters; j++)
+			v[j] = percpu_u64_get(src->v[0] + j);
 
 		/*
 		 * If the entry counters are zeroed, it should be treated as
 		 * nonexistent - it might point to an invalid device.
 		 *
-		 * Remove it, so that if it's re-added it gets re-marked in the
+		 * Drop it, so that if it's re-added it gets re-marked in the
 		 * superblock:
 		 */
-		int ret = bch2_is_zero(v, sizeof(v[0]) * i->nr_counters)
+		ret = bch2_is_zero(v, sizeof(v[0]) * src->nr_counters)
 			? -BCH_ERR_remove_disk_accounting_entry
 			: lockrestart_do(trans,
-				bch2_disk_accounting_validate_late(trans, &acc_k, v, i->nr_counters));
+				bch2_disk_accounting_validate_late(trans, &acc_k, v, src->nr_counters));
 
 		if (ret == -BCH_ERR_remove_disk_accounting_entry) {
-			free_percpu(i->v[0]);
-			free_percpu(i->v[1]);
-			darray_remove_item(&acc->k, i);
+			free_percpu(src->v[0]);
+			free_percpu(src->v[1]);
+			src++;
 			ret = 0;
 			continue;
 		}
 
+		if (dst != src)
+			*dst = *src;
+		dst++;
+		src++;
+
 		if (ret)
-			return ret;
+			break;
 	}
+
+	/*
+	 * On error: shift unprocessed tail down so the array stays a
+	 * contiguous run of valid entries. Avoids leaking percpu storage on
+	 * any retry path that reads acc->k.nr.
+	 */
+	while (src < end) {
+		if (dst != src)
+			*dst = *src;
+		dst++;
+		src++;
+	}
+
+	acc->k.nr = dst - acc->k.data;
+
+	if (ret)
+		return ret;
 
 	eytzinger0_sort(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
 			accounting_pos_cmp, NULL);
