@@ -103,6 +103,9 @@ void bch2_stripe_to_text(struct printbuf *out, struct bch_fs *c,
 	if (s.needs_reconcile)
 		prt_str(out, " needs_reconcile");
 
+	if (s.can_widen)
+		prt_printf(out, " can_widen=%u", s.can_widen);
+
 	guard(printbuf_indent)(out);
 	guard(printbuf_atomic)(out);
 	guard(rcu)();

@@ -104,11 +104,18 @@ static inline u64 stripe_lru_pos(const struct bch_stripe *s)
 	if (blocks_empty == nr_data)
 		return STRIPE_LRU_POS_EMPTY;
 
-	if (!blocks_empty)
+	/*
+	 * Score by total reusable capacity: empty data slots we can pack
+	 * fresh data into, plus can_widen blocks we can grow into when
+	 * reusing this stripe at a wider target geometry. More = picked
+	 * for reuse first.
+	 */
+	unsigned reusable = blocks_empty + s->can_widen;
+	if (!reusable)
 		return 0;
 
-	/* invert: more blocks empty = reuse first */
-	return LRU_TIME_MAX - blocks_empty;
+	/* invert: more reusable = reuse first */
+	return LRU_TIME_MAX - reusable;
 }
 
 static inline bool __bch2_ptr_matches_stripe(const struct bch_extent_ptr *stripe_ptr,
