@@ -3621,6 +3621,19 @@ u32 bch2_trans_begin(struct btree_trans *trans)
 	trans->restart_count++;
 	trans->mem_top			= 0;
 
+	/*
+	 * Long-lived trans (e.g. copygc) initialized before journal replay
+	 * finished hold a journal_keys ref and stay on the journal-overlay
+	 * iter path forever, reading stale post-replay journal_keys data.
+	 * Drop the ref + clear the flag once replay completes; subsequent
+	 * trans_begin calls see the flag already clear and skip cheaply.
+	 */
+	if (unlikely(trans->journal_replay_not_finished) &&
+	    test_bit(JOURNAL_replay_done, &trans->c->journal.flags)) {
+		bch2_journal_keys_put(trans->c);
+		trans->journal_replay_not_finished = false;
+	}
+
 	if (unlikely(trans->restarted == BCH_ERR_transaction_restart_mem_realloced)) {
 		unsigned new_bytes = trans->realloc_bytes_required;
 		EBUG_ON(new_bytes > BTREE_TRANS_MEM_MAX);
