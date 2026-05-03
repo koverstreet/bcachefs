@@ -20,11 +20,15 @@
 
 #include "journal/reclaim.h"
 
-static void bch2_btree_complete_write(struct bch_fs *c, struct btree *b,
-				      struct btree_write *w)
+static void __btree_node_write_done(struct bch_fs *c, struct btree *b)
 {
+	struct btree_write *w = btree_prev_write(b);
 	unsigned long old, new;
+	unsigned type = 0;
 
+	/* If this was the first write to a btree node, signal to the interior
+	 * update that the write is complete:
+	 */
 	old = READ_ONCE(b->will_make_reachable);
 	do {
 		new = old;
@@ -38,18 +42,6 @@ static void bch2_btree_complete_write(struct bch_fs *c, struct btree *b,
 		closure_put(&((struct btree_update *) new)->cl);
 
 	bch2_journal_pin_drop(&c->journal, &w->journal);
-}
-
-static void __btree_node_write_done(struct bch_fs *c, struct btree *b, u64 start_time)
-{
-	struct btree_write *w = btree_prev_write(b);
-	unsigned long old, new;
-	unsigned type = 0;
-
-	bch2_btree_complete_write(c, b, w);
-
-	if (start_time)
-		bch2_time_stats_update(&c->times[BCH_TIME_btree_node_write], start_time);
 
 	old = READ_ONCE(b->flags);
 	do {
@@ -131,7 +123,6 @@ static void btree_node_write_work(struct work_struct *work)
 		container_of(work, struct btree_write_bio, work);
 	struct bch_fs *c	= wbio->wbio.c;
 	struct btree *b		= wbio->wbio.bio.bi_private;
-	u64 start_time		= wbio->start_time;
 
 	CLASS(btree_trans, trans)(c);
 
@@ -175,6 +166,7 @@ static void btree_node_write_work(struct work_struct *work)
 		}
 	}
 
+	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_write], wbio->start_time);
 	async_object_list_del(c, btree_write_bio, wbio->list_idx);
 	bio_put(&wbio->wbio.bio);
 
@@ -182,7 +174,7 @@ static void btree_node_write_work(struct work_struct *work)
 		btree_path_idx_t path_idx;
 		int ret = bch2_btree_node_lock_with_path(trans, &b->c, SIX_LOCK_read, &path_idx);
 		if (!ret) {
-			__btree_node_write_done(c, b, start_time);
+			__btree_node_write_done(c, b);
 			bch2_btree_node_unlock_with_path(trans, path_idx, b->c.level);
 		}
 		ret;
@@ -541,7 +533,7 @@ err:
 	b->written += sectors_to_write;
 nowrite:
 	bch2_btree_bounce_free(c, bytes, used_mempool, data);
-	__btree_node_write_done(c, b, 0);
+	__btree_node_write_done(c, b);
 }
 
 /*
