@@ -527,7 +527,7 @@ static void stripe_new_bucket_add(struct bch_fs *c, struct ec_stripe_new_bucket 
 
 void bch2_stripe_new_buckets_add(struct bch_fs *c, struct ec_stripe_new *s)
 {
-	unsigned nr_blocks = s->nr_data + s->nr_parity;
+	unsigned nr_blocks = s->new_stripe.key.v.nr_blocks;
 
 	guard(spinlock)(&c->ec.stripes_new_lock);
 	for (unsigned i = 0; i < nr_blocks; i++) {

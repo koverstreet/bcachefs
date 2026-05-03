@@ -45,8 +45,6 @@ struct ec_stripe_new {
 
 	struct bch_devs_mask	devs;
 	enum bch_watermark	watermark;
-	u8			nr_data;
-	u8			nr_parity;
 
 	bool			have_old_stripe:1;
 
@@ -74,10 +72,24 @@ struct ec_stripe_new {
 };
 
 /*
+ * Geometry lives entirely in the on-disk bkey; ec_stripe_new derives
+ * the nr_data/nr_parity split from it.
+ */
+static inline unsigned ec_stripe_new_nr_data(const struct ec_stripe_new *s)
+{
+	return s->new_stripe.key.v.nr_blocks - s->new_stripe.key.v.nr_redundant;
+}
+
+static inline unsigned ec_stripe_new_nr_parity(const struct ec_stripe_new *s)
+{
+	return s->new_stripe.key.v.nr_redundant;
+}
+
+/*
  * Stripe block layout: data slots at [0, nr_data), parity slots at
  * [nr_data, nr_data + nr_parity). These macros name the ranges for
  * readers; pass nr_data/nr_parity directly so they work for both
- * struct ec_stripe_new (nr_data, nr_parity) and struct bch_stripe
+ * struct ec_stripe_new (via accessors) and struct bch_stripe
  * (nr_blocks - nr_redundant, nr_redundant).
  */
 #define for_each_data_block(_i, _nr_data)				\

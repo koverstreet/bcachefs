@@ -851,12 +851,10 @@ static struct ec_stripe_new *ec_new_stripe_alloc(struct bch_fs *c,
 	s->c		= c;
 	s->devs		= devs;
 	s->watermark	= watermark;
-	s->nr_data	= nr_data;
-	s->nr_parity	= nr_parity,
 
 	ec_stripe_key_init(c, &s->new_stripe.key.k_i,
 			   algorithm,
-			   s->nr_data, s->nr_parity,
+			   nr_data, nr_parity,
 			   blocksize, disk_label);
 	return s;
 }
@@ -869,12 +867,11 @@ static int __new_stripe_alloc_buckets(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	struct open_bucket *ob;
 	struct bch_stripe *v = &s->new_stripe.key.v;
+	unsigned nr_data = v->nr_blocks - v->nr_redundant;
+	unsigned nr_parity = v->nr_redundant;
 	unsigned i, j, nr_have_parity = 0, nr_have_data = 0;
 
 	req->new_stripe_alloc = true;
-
-	BUG_ON(v->nr_blocks	!= s->nr_data + s->nr_parity);
-	BUG_ON(v->nr_redundant	!= s->nr_parity);
 
 	/* * We bypass the sector allocator which normally does this: */
 	bitmap_and(req->devs_may_alloc.d, req->devs_may_alloc.d,
@@ -890,18 +887,18 @@ static int __new_stripe_alloc_buckets(struct btree_trans *trans,
 		if (v->ptrs[i].dev != BCH_SB_MEMBER_INVALID)
 			__clear_bit(v->ptrs[i].dev, req->devs_may_alloc.d);
 
-		if (i < s->nr_data)
+		if (i < nr_data)
 			nr_have_data++;
 		else
 			nr_have_parity++;
 	}
 
-	BUG_ON(nr_have_data	> s->nr_data);
-	BUG_ON(nr_have_parity	> s->nr_parity);
+	BUG_ON(nr_have_data	> nr_data);
+	BUG_ON(nr_have_parity	> nr_parity);
 
 	req->ptrs.nr = 0;
-	if (nr_have_parity < s->nr_parity) {
-		req->nr_replicas	= s->nr_parity;
+	if (nr_have_parity < nr_parity) {
+		req->nr_replicas	= nr_parity;
 		req->nr_effective	= nr_have_parity;
 		req->data_type		= BCH_DATA_parity;
 
@@ -909,9 +906,9 @@ static int __new_stripe_alloc_buckets(struct btree_trans *trans,
 
 		open_bucket_for_each(c, &req->ptrs, ob, i) {
 			j = find_next_zero_bit(s->blocks_gotten,
-					       s->nr_data + s->nr_parity,
-					       s->nr_data);
-			BUG_ON(j >= s->nr_data + s->nr_parity);
+					       v->nr_blocks,
+					       nr_data);
+			BUG_ON(j >= v->nr_blocks);
 
 			s->blocks[j] = req->ptrs.v[i];
 			v->ptrs[j] = bch2_ob_ptr(c, ob);
@@ -923,8 +920,8 @@ static int __new_stripe_alloc_buckets(struct btree_trans *trans,
 	}
 
 	req->ptrs.nr = 0;
-	if (nr_have_data < s->nr_data) {
-		req->nr_replicas	= s->nr_data;
+	if (nr_have_data < nr_data) {
+		req->nr_replicas	= nr_data;
 		req->nr_effective	= nr_have_data;
 		req->data_type		= BCH_DATA_user;
 
@@ -932,8 +929,8 @@ static int __new_stripe_alloc_buckets(struct btree_trans *trans,
 
 		open_bucket_for_each(c, &req->ptrs, ob, i) {
 			j = find_next_zero_bit(s->blocks_gotten,
-					       s->nr_data, 0);
-			BUG_ON(j >= s->nr_data);
+					       nr_data, 0);
+			BUG_ON(j >= nr_data);
 
 			s->blocks[j] = req->ptrs.v[i];
 			v->ptrs[j] = bch2_ob_ptr(c, ob);
@@ -977,6 +974,7 @@ static int new_stripe_alloc_buckets(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct bch_stripe *v = &s->new_stripe.key.v;
+	unsigned nr_parity = v->nr_redundant;
 
 	if (bitmap_weight(s->blocks_gotten, v->nr_blocks) == v->nr_blocks)
 		return 0;
@@ -1002,7 +1000,7 @@ static int new_stripe_alloc_buckets(struct btree_trans *trans,
 	      ret == -BCH_ERR_freelist_empty) &&
 	     stripe_will_not_allocate(c, req, s))) {
 		unsigned need = bitmap_weight(s->blocks_moving, BCH_BKEY_PTRS_MAX) +
-			s->nr_parity;
+			nr_parity;
 
 		/*
 		 * At least one data block - unless we're updating a stripe
@@ -1022,9 +1020,9 @@ static int new_stripe_alloc_buckets(struct btree_trans *trans,
 		/* go with what we got if we allocated enough buckets, or bail
 		 * out and do a non ec allocation */
 		if (allocated >= need) {
-			unsigned old_nr_data = s->nr_data;
+			unsigned old_nr_data = v->nr_blocks - v->nr_redundant;
 			unsigned nr_parity_gotten = 0;
-			for (unsigned i = s->nr_data; i < s->nr_data + s->nr_parity; i++)
+			for_each_parity_block(i, old_nr_data, nr_parity)
 				nr_parity_gotten += test_bit(i, s->blocks_gotten);
 			unsigned new_nr_data = bitmap_weight(s->blocks_gotten, BCH_BKEY_PTRS_MAX)
 				- nr_parity_gotten;
@@ -1041,7 +1039,7 @@ static int new_stripe_alloc_buckets(struct btree_trans *trans,
 				v->ptrs + old_nr_data,
 				nr_parity_gotten * sizeof(v->ptrs[0]));
 
-			for_each_parity_block(i, old_nr_data, s->nr_parity)
+			for_each_parity_block(i, old_nr_data, nr_parity)
 				__clear_bit(i, s->blocks_gotten);
 
 			for_each_parity_block(i, new_nr_data, nr_parity_gotten)
@@ -1053,8 +1051,6 @@ static int new_stripe_alloc_buckets(struct btree_trans *trans,
 			memset(v->ptrs + new_nr_blocks, 0,
 			       (BCH_BKEY_PTRS_MAX - new_nr_blocks) * sizeof(v->ptrs[0]));
 
-			s->nr_data = new_nr_data;
-			s->nr_parity = nr_parity_gotten;
 			v->nr_blocks = new_nr_blocks;
 			v->nr_redundant = nr_parity_gotten;
 			ret = 0;
@@ -1104,10 +1100,10 @@ static bool may_reuse_stripe(struct bch_fs *c,
 		}
 
 	/* live data blocks (including moving) must fit with room for at least one new block */
-	if (live_data + 1 > new->nr_data)
+	if (live_data + 1 > ec_stripe_new_nr_data(new))
 		return false;
 
-	return dev_mask_nr(&devs_may_alloc) > new->nr_parity;
+	return dev_mask_nr(&devs_may_alloc) > ec_stripe_new_nr_parity(new);
 }
 
 static int get_old_stripe(struct btree_trans *trans,
@@ -1158,7 +1154,7 @@ static void init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s, 
 	struct bch_stripe *old_v = &s->old_stripe.key.v;
 	unsigned i;
 
-	BUG_ON(old_v->nr_redundant != s->nr_parity);
+	BUG_ON(old_v->nr_redundant != new_v->nr_redundant);
 
 	/*
 	 * Free buckets we initially allocated - they might conflict with
@@ -1313,7 +1309,7 @@ static int stripe_alloc_or_reuse(struct btree_trans *trans,
 	if (!s->res.sectors)
 		bch2_disk_reservation_get(c, &s->res,
 					  le16_to_cpu(s->new_stripe.key.v.sectors),
-					  s->nr_parity,
+					  ec_stripe_new_nr_parity(s),
 					  BCH_DISK_RESERVATION_NOFAIL);
 
 	bch2_stripe_new_buckets_add(c, s);
@@ -1325,8 +1321,9 @@ static void bch2_new_stripe_to_text(struct printbuf *out, struct bch_fs *c,
 				    struct ec_stripe_new *s)
 {
 	prt_printf(out, "\tidx %llu blocks %u+%u allocated %u ref %u %u %s obs",
-		   s->new_stripe.key.k.p.offset, s->nr_data, s->nr_parity,
-		   bitmap_weight(s->blocks_allocated, s->nr_data),
+		   s->new_stripe.key.k.p.offset,
+		   ec_stripe_new_nr_data(s), ec_stripe_new_nr_parity(s),
+		   bitmap_weight(s->blocks_allocated, ec_stripe_new_nr_data(s)),
 		   atomic_read(&s->ref[STRIPE_REF_io]),
 		   atomic_read(&s->ref[STRIPE_REF_stripe]),
 		   bch2_watermarks[s->watermark]);
@@ -1449,7 +1446,7 @@ void bch2_ec_stripe_head_put(struct bch_fs *c, struct ec_stripe_head *h)
 	if (h->s &&
 	    h->s->allocated &&
 	    bitmap_weight(h->s->blocks_allocated,
-			  h->s->nr_data) == h->s->nr_data)
+			  ec_stripe_new_nr_data(h->s)) == ec_stripe_new_nr_data(h->s))
 		ec_stripe_new_set_pending(c, h);
 
 	mutex_unlock(&h->lock);
@@ -1785,7 +1782,7 @@ int bch2_stripe_repair(struct moving_context *ctxt,
 
 	bch2_disk_reservation_get(c, &new_s->res,
 				  le16_to_cpu(new_s->new_stripe.key.v.sectors),
-				  new_s->nr_parity,
+				  ec_stripe_new_nr_parity(new_s),
 				  BCH_DISK_RESERVATION_NOFAIL);
 	bch2_stripe_buf_read(c, &new_s->old_stripe);
 

@@ -849,7 +849,7 @@ static int bucket_alloc_from_stripe(struct btree_trans *trans,
 	bch2_dev_alloc_list(c, &req->wp->stripe, &req->devs_may_alloc, &req->devs_sorted);
 
 	darray_for_each(req->devs_sorted, i)
-		for (unsigned ec_idx = 0; ec_idx < h->s->nr_data; ec_idx++) {
+		for (unsigned ec_idx = 0; ec_idx < ec_stripe_new_nr_data(h->s); ec_idx++) {
 			if (!h->s->blocks[ec_idx])
 				continue;
 
