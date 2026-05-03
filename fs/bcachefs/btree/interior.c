@@ -1804,6 +1804,59 @@ static int btree_split_insert_keys(struct btree_update *as,
 	return 0;
 }
 
+static void btree_node_op_log(struct printbuf *out, struct bch_fs *c,
+			      struct btree *b,
+			      darray_merge_node *srcs,
+			      darray_merge_node *dsts)
+{
+	size_t max = btree_max_u64s(c);
+
+	darray_for_each(*srcs, s) {
+		prt_printf(out, "src %zu: ", (size_t) (s - srcs->data));
+		if (s->b) {
+			bch2_btree_pos_to_text(out, c, s->b);
+			prt_newline(out);
+
+			prt_printf(out, " live=%u (%zu%%) whiteout=%u remaining=%zu sib_u64s=[%u,%u]",
+				   s->live_u64s,
+				   (size_t) s->live_u64s * 100 / max,
+				   s->b->whiteout_u64s,
+				   bch2_btree_keys_u64s_remaining(s->b),
+				   s->b->sib_u64s[0], s->b->sib_u64s[1]);
+			prt_newline(out);
+			printbuf_indent_add(out, 2);
+			prt_str(out, "format: ");
+			bch2_bkey_format_to_text(out, &s->b->format);
+			prt_newline(out);
+			printbuf_indent_sub(out, 2);
+		} else {
+			prt_printf(out, "(evicted) live=%u (%zu%%)",
+				   s->live_u64s,
+				   (size_t) s->live_u64s * 100 / max);
+			prt_newline(out);
+		}
+	}
+
+	darray_for_each(*dsts, d) {
+		prt_printf(out, "dst %zu: ", (size_t) (d - dsts->data));
+		bch2_btree_pos_to_text(out, c, d->b);
+		prt_newline(out);
+
+		prt_printf(out, " live=%u (%zu%%) whiteout=%u remaining=%zu sib_u64s=[%u,%u]",
+			   d->b->nr.live_u64s,
+			   (size_t) d->b->nr.live_u64s * 100 / max,
+			   d->b->whiteout_u64s,
+			   bch2_btree_keys_u64s_remaining(d->b),
+			   d->b->sib_u64s[0], d->b->sib_u64s[1]);
+		prt_newline(out);
+		printbuf_indent_add(out, 2);
+		prt_str(out, "format: ");
+		bch2_bkey_format_to_text(out, &d->b->format);
+		prt_newline(out);
+		printbuf_indent_sub(out, 2);
+	}
+}
+
 static int btree_split(struct btree_update *as, struct btree_trans *trans,
 		       btree_path_idx_t path, struct btree *b,
 		       struct keylist *keys)
@@ -1826,8 +1879,6 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 	try(bch2_btree_node_check_topology(trans, b));
 
 	if (b->nr.live_u64s > BTREE_SPLIT_THRESHOLD(c)) {
-		trace_btree_node(c, b, btree_node_split);
-
 		BUG_ON(darray_push(&dsts, ((struct btree_merge_node) {
 			trans, bch2_btree_node_alloc(as, trans, b->c.level), 0,
 		})));
@@ -1893,8 +1944,6 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 				goto err;
 		}
 	} else {
-		trace_btree_node(c, b, btree_node_compact);
-
 		BUG_ON(darray_push(&dsts, ((struct btree_merge_node) {
 			trans, bch2_btree_node_alloc_replacement(as, trans, b), 0,
 		})));
@@ -1934,6 +1983,22 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 
 	if (ret)
 		goto err;
+
+	{
+		struct btree_merge_node src = { .b = b, .live_u64s = b->nr.live_u64s };
+		darray_merge_node srcs = {
+			.data = &src, .nr = 1, .size = 1,
+		};
+
+		if (dsts.nr == 2)
+			event_inc_trace(c, btree_node_split, buf, ({
+				btree_node_op_log(&buf, c, b, &srcs, &dsts);
+			}));
+		else
+			event_inc_trace(c, btree_node_compact, buf, ({
+				btree_node_op_log(&buf, c, b, &srcs, &dsts);
+			}));
+	}
 
 	bch2_btree_interior_update_will_free_node(as, b);
 
@@ -2622,7 +2687,9 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 	if (ret)
 		goto err_free_new_node;
 
-	trace_btree_node(c, b, btree_node_merge);
+	event_inc_trace(c, btree_node_merge, buf, ({
+		btree_node_op_log(&buf, c, b, &srcs, &dsts);
+	}));
 
 	darray_for_each(srcs, s)
 		bch2_btree_interior_update_will_free_node(as, s->b);
