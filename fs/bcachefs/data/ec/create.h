@@ -73,6 +73,22 @@ struct ec_stripe_new {
 	u8			old_blocks_nr;
 };
 
+/*
+ * Stripe block layout: data slots at [0, nr_data), parity slots at
+ * [nr_data, nr_data + nr_parity). These macros name the ranges for
+ * readers; pass nr_data/nr_parity directly so they work for both
+ * struct ec_stripe_new (nr_data, nr_parity) and struct bch_stripe
+ * (nr_blocks - nr_redundant, nr_redundant).
+ */
+#define for_each_data_block(_i, _nr_data)				\
+	for (unsigned _i = 0; _i < (_nr_data); _i++)
+
+#define for_each_parity_block(_i, _nr_data, _nr_parity)			\
+	for (unsigned _i = (_nr_data); _i < (_nr_data) + (_nr_parity); _i++)
+
+#define for_each_data_parity_block(_i, _nr_data, _nr_parity)		\
+	for (unsigned _i = 0; _i < (_nr_data) + (_nr_parity); _i++)
+
 struct ec_stripe_head {
 	struct list_head	list;
 	struct mutex		lock;

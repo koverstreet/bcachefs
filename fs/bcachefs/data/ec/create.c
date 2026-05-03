@@ -426,7 +426,7 @@ static int __stripe_update_extents(struct btree_trans *trans,
 
 	try(bch2_btree_write_buffer_flush_sync(trans));
 
-	for (unsigned i = 0; i < nr_data; i++) {
+	for_each_data_block(i, nr_data) {
 		unsigned old_blocknr = i < old_blocks_nr
 			? old_block_map[i] : i;
 		struct bkey_i_stripe *old = i < old_blocks_nr
@@ -569,7 +569,7 @@ static int __ec_stripe_create(struct ec_stripe_new *s)
 			bch2_ec_block_io(c, &s->new_stripe, REQ_OP_WRITE, i);
 
 	/* write p/q: */
-	for (unsigned i = nr_data; i < v->nr_blocks; i++)
+	for_each_parity_block(i, nr_data, v->nr_redundant)
 		bch2_ec_block_io(c, &s->new_stripe, REQ_OP_WRITE, i);
 	closure_sync(&s->new_stripe.io);
 
@@ -671,7 +671,7 @@ static void ec_stripe_create(struct ec_stripe_new *s)
 
 	bch2_disk_reservation_put(c, &s->res);
 
-	for (unsigned i = 0; i < v->nr_blocks; i++)
+	for_each_data_parity_block(i, nr_data, v->nr_redundant)
 		if (s->blocks[i]) {
 			struct open_bucket *ob = c->allocator.open_buckets + s->blocks[i];
 
@@ -1041,11 +1041,11 @@ static int new_stripe_alloc_buckets(struct btree_trans *trans,
 				v->ptrs + old_nr_data,
 				nr_parity_gotten * sizeof(v->ptrs[0]));
 
-			for (unsigned i = 0; i < s->nr_parity; i++)
-				__clear_bit(old_nr_data + i, s->blocks_gotten);
+			for_each_parity_block(i, old_nr_data, s->nr_parity)
+				__clear_bit(i, s->blocks_gotten);
 
-			for (unsigned i = 0; i < nr_parity_gotten; i++)
-				__set_bit(new_nr_data + i, s->blocks_gotten);
+			for_each_parity_block(i, new_nr_data, nr_parity_gotten)
+				__set_bit(i, s->blocks_gotten);
 
 			/* Zero tail */
 			memset(s->blocks + new_nr_blocks, 0,
@@ -1060,7 +1060,7 @@ static int new_stripe_alloc_buckets(struct btree_trans *trans,
 			ret = 0;
 
 			struct bch_devs_list d = {};
-			for (unsigned i = 0; i < new_nr_blocks; i++) {
+			for_each_data_parity_block(i, new_nr_data, nr_parity_gotten) {
 				BUG_ON(s->blocks[i] &&
 				       v->ptrs[i].dev != c->allocator.open_buckets[s->blocks[i]].dev);
 				BUG_ON(bch2_dev_list_has_dev(d, v->ptrs[i].dev));
@@ -1096,7 +1096,7 @@ static bool may_reuse_stripe(struct bch_fs *c,
 	unsigned nr_data = old->nr_blocks - old->nr_redundant;
 	unsigned live_data = 0;
 
-	for (unsigned i = 0; i < nr_data; i++)
+	for_each_data_block(i, nr_data)
 		if (stripe_blockcount_get(old, i)) {
 			if (!bch2_dev_bad_or_evacuating(c, old->ptrs[i].dev))
 				__clear_bit(old->ptrs[i].dev, devs_may_alloc.d);
@@ -1174,7 +1174,7 @@ static void init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s, 
 	unsigned old_nr_data = old_v->nr_blocks - old_v->nr_redundant;
 	unsigned new_nr_data = new_v->nr_blocks - new_v->nr_redundant;
 
-	for (unsigned i = 0; i < old_nr_data; i++) {
+	for_each_data_block(i, old_nr_data) {
 		if (stripe_blockcount_get(old_v, i)) {
 			if (!bch2_dev_bad_or_evacuating(c, old_v->ptrs[i].dev))
 				__set_bit(s->old_blocks_nr, s->blocks_gotten);
@@ -1659,7 +1659,7 @@ int bch2_stripe_repair(struct moving_context *ctxt,
 
 	unsigned nr_data = old_s->nr_blocks - old_s->nr_redundant;
 	unsigned nr_live_data_blocks = 0;
-	for (unsigned i = 0; i < nr_data; i++)
+	for_each_data_block(i, nr_data)
 		nr_live_data_blocks += stripe_blockcount_get(old_s, i) != 0;
 
 	if (!nr_live_data_blocks)
@@ -1675,7 +1675,7 @@ int bch2_stripe_repair(struct moving_context *ctxt,
 		unsigned blocks_used[BCH_BKEY_PTRS_MAX], nr = 0;
 		memset(blocks_used, 0, sizeof(blocks_used));
 
-		for (unsigned i = 0; i < nr_data; i++)
+		for_each_data_block(i, nr_data)
 			if (stripe_blockcount_get(old_s, i))
 				blocks_used[nr++] = i;
 		BUG_ON(nr < need_evacuate);
