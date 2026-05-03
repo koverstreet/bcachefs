@@ -27,8 +27,6 @@ enum btree_write_flags {
 #define BTREE_WRITE_ALREADY_STARTED	BIT(__BTREE_WRITE_ALREADY_STARTED)
 
 void __bch2_btree_node_write(struct bch_fs *, struct btree *, unsigned);
-void bch2_btree_node_write(struct bch_fs *, struct btree *,
-			   enum six_lock_type, unsigned);
 void bch2_btree_node_write_trans(struct btree_trans *, struct btree *,
 				 enum six_lock_type, unsigned);
 void bch2_btree_init_next(struct btree_trans *, struct btree *);
