@@ -3,6 +3,7 @@
 #define _BCACHEFS_DATA_EC_CREATE_H
 
 #include "io.h"
+#include "util/darray.h"
 
 struct ec_dev_stripe_state {
 	struct list_head	list;
@@ -130,6 +131,23 @@ void *bch2_writepoint_ec_buf(struct bch_fs *, struct write_point *);
 unsigned bch2_disk_label_ec_devs(struct bch_fs *, unsigned, struct bch_devs_mask *, unsigned);
 void bch2_disk_label_ec_rw_member_devs(struct bch_fs *, unsigned,
 				       struct bch_devs_mask *, unsigned);
+
+/*
+ * Lazy per-(disk_label, sectors) cache of RW member counts (the can_widen
+ * target); shared by callers that walk stripes and need the widening target
+ * many times (scan, check). Kept eytzinger-sorted between inserts.
+ */
+struct widen_cache_entry {
+	u8	disk_label;
+	u16	sectors;
+	u16	nr_devs;
+};
+
+DEFINE_DARRAY_NAMED(widen_cache, struct widen_cache_entry);
+
+int bch2_widen_cache_init(widen_cache *);
+int bch2_widen_cache_lookup(widen_cache *, struct bch_fs *,
+			    u8 disk_label, u16 sectors, unsigned *nr_devs);
 
 void bch2_ec_stripe_new_cancel(struct bch_fs *, struct ec_stripe_head *, int);
 void bch2_ec_bucket_cancel(struct bch_fs *, struct open_bucket *, int);

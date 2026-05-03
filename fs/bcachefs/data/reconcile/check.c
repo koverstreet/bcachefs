@@ -8,6 +8,8 @@
 #include "btree/update.h"
 #include "btree/write_buffer.h"
 
+#include "data/ec/create.h"
+#include "data/ec/trigger.h"
 #include "data/reconcile/check.h"
 #include "data/reconcile/trigger.h"
 
@@ -405,6 +407,69 @@ static int check_reconcile_btree_bps(struct btree_trans *trans)
 	}));
 }
 
+/*
+ * Verify each stripe's stored can_widen matches the disk_label's RW-member
+ * count (the canonical widening target). The reconcile_scan_stripes pass
+ * refreshes can_widen when devs change RW state, and get_old_stripe demotes
+ * lazily at reuse time, but fsck verifies it explicitly so a stripe stuck
+ * out of sync gets surfaced and fixed.
+ */
+static int check_stripe_can_widen_one(struct btree_trans *trans,
+				      struct btree_iter *iter,
+				      struct bkey_s_c k,
+				      widen_cache *cache)
+{
+	struct bch_fs *c = trans->c;
+	int ret = 0;
+
+	if (k.k->type != KEY_TYPE_stripe)
+		return 0;
+
+	const struct bch_stripe *s = bkey_s_c_to_stripe(k).v;
+	unsigned nr_devs;
+	try(bch2_widen_cache_lookup(cache, c,
+				    s->disk_label, le16_to_cpu(s->sectors),
+				    &nr_devs));
+
+	u8 correct_can_widen = stripe_widen_value(
+		stripe_widen_target_nr_data(nr_devs, s->nr_redundant),
+		s->nr_blocks - s->nr_redundant);
+
+	if (s->can_widen == correct_can_widen)
+		return 0;
+
+	CLASS(printbuf, buf)();
+	prt_printf(&buf, "stripe can_widen=%u, should be %u\n",
+		   s->can_widen, correct_can_widen);
+	bch2_bkey_val_to_text(&buf, c, k);
+
+	if (fsck_err(trans, stripe_can_widen_wrong, "%s", buf.buf)) {
+		struct bkey_i_stripe *update =
+			errptr_try(bch2_bkey_make_mut_typed(trans, iter, &k, 0, stripe));
+		update->v.can_widen = correct_can_widen;
+	}
+fsck_err:
+	return ret;
+}
+
+noinline_for_stack
+static int check_stripe_can_widen(struct btree_trans *trans)
+{
+	struct bch_fs *c = trans->c;
+	struct progress_indicator progress;
+	bch2_progress_init(&progress, __func__, c, BIT_ULL(BTREE_ID_stripes), 0);
+
+	CLASS(widen_cache, cache)();
+	try(bch2_widen_cache_init(&cache));
+
+	return for_each_btree_key_commit(trans, iter, BTREE_ID_stripes,
+			POS_MIN, BTREE_ITER_prefetch, k,
+			NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+		bch2_progress_update_iter(trans, &progress, &iter) ?:
+		check_stripe_can_widen_one(trans, &iter, k, &cache);
+	}));
+}
+
 int bch2_check_reconcile_work(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
@@ -440,6 +505,7 @@ int bch2_check_reconcile_work(struct bch_fs *c)
 	try(check_reconcile_work_phys(trans));
 	try(check_reconcile_work_btrees(trans));
 	try(check_reconcile_btree_bps(trans));
+	try(check_stripe_can_widen(trans));
 
 	return 0;
 }

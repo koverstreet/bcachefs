@@ -827,6 +827,42 @@ void bch2_disk_label_ec_rw_member_devs(struct bch_fs *c, unsigned disk_label,
 			__set_bit(ca->dev_idx, devs->d);
 }
 
+static int widen_cache_cmp(const void *_l, const void *_r)
+{
+	const struct widen_cache_entry *l = _l, *r = _r;
+	return cmp_int(l->disk_label, r->disk_label) ?:
+	       cmp_int(l->sectors, r->sectors);
+}
+
+int bch2_widen_cache_init(widen_cache *cache)
+{
+	/* eytzinger1 reserves slot 0 as a sentinel: */
+	return darray_push(cache, ((struct widen_cache_entry) {}));
+}
+
+int bch2_widen_cache_lookup(widen_cache *cache, struct bch_fs *c,
+			    u8 disk_label, u16 sectors,
+			    unsigned *nr_devs)
+{
+	struct widen_cache_entry search = {
+		.disk_label	= disk_label,
+		.sectors	= sectors,
+	};
+	struct widen_cache_entry *e =
+		darray_eytzinger1_find(*cache, widen_cache_cmp, &search);
+	if (!e) {
+		struct bch_devs_mask devs;
+		bch2_disk_label_ec_rw_member_devs(c, disk_label, &devs, sectors);
+		search.nr_devs = dev_mask_nr(&devs);
+		try(darray_push(cache, search));
+		darray_eytzinger1_sort(*cache, widen_cache_cmp);
+		e = darray_eytzinger1_find(*cache, widen_cache_cmp, &search);
+	}
+
+	*nr_devs = e->nr_devs;
+	return 0;
+}
+
 static void ec_stripe_key_init(struct bch_fs *c,
 			       struct bkey_i *k,
 			       unsigned algorithm,

@@ -1018,28 +1018,6 @@ static int do_reconcile_scan_fs(struct moving_context *ctxt, struct reconcile_sc
 	return 0;
 }
 
-/*
- * Lazy per-(disk_label, sectors) cache of how many devices the current
- * pool can supply for stripes of that geometry. Populated on cache
- * miss during the scan; eytzinger-sorted after each insert so lookups
- * stay log(N). Collapses per-stripe disk_label_ec_devs() (RCU walk +
- * filter) to once-per-unique-geometry.
- */
-struct widen_cache_entry {
-	u8	disk_label;
-	u16	sectors;
-	u16	nr_devs;
-};
-
-DEFINE_DARRAY_NAMED(widen_cache, struct widen_cache_entry);
-
-static int widen_cache_cmp(const void *_l, const void *_r)
-{
-	const struct widen_cache_entry *l = _l, *r = _r;
-	return cmp_int(l->disk_label, r->disk_label) ?:
-	       cmp_int(l->sectors, r->sectors);
-}
-
 static int reconcile_scan_stripe_can_widen_one(struct btree_trans *trans,
 					       struct btree_iter *iter,
 					       struct bkey_s_c k,
@@ -1051,23 +1029,13 @@ static int reconcile_scan_stripe_can_widen_one(struct btree_trans *trans,
 		return 0;
 
 	const struct bch_stripe *cur = bkey_s_c_to_stripe(k).v;
-	struct widen_cache_entry search = {
-		.disk_label	= cur->disk_label,
-		.sectors	= le16_to_cpu(cur->sectors),
-	};
-	struct widen_cache_entry *e =
-		darray_eytzinger1_find(*cache, widen_cache_cmp, &search);
-	if (!e) {
-		struct bch_devs_mask devs;
-		bch2_disk_label_ec_rw_member_devs(c, search.disk_label, &devs, search.sectors);
-		search.nr_devs = dev_mask_nr(&devs);
-		try(darray_push(cache, search));
-		darray_eytzinger1_sort(*cache, widen_cache_cmp);
-		e = darray_eytzinger1_find(*cache, widen_cache_cmp, &search);
-	}
+	unsigned nr_devs;
+	try(bch2_widen_cache_lookup(cache, c,
+				    cur->disk_label, le16_to_cpu(cur->sectors),
+				    &nr_devs));
 
 	u8 new_can_widen = stripe_widen_value(
-		stripe_widen_target_nr_data(e->nr_devs, cur->nr_redundant),
+		stripe_widen_target_nr_data(nr_devs, cur->nr_redundant),
 		cur->nr_blocks - cur->nr_redundant);
 
 	if (cur->can_widen == new_can_widen)
@@ -1086,8 +1054,7 @@ static int do_reconcile_scan_stripes(struct moving_context *ctxt)
 	struct bch_fs_reconcile *r = &c->reconcile;
 
 	CLASS(widen_cache, cache)();
-	/* eytzinger1 reserves slot 0 as a sentinel: */
-	try(darray_push(&cache, ((struct widen_cache_entry) {})));
+	try(bch2_widen_cache_init(&cache));
 
 	bch2_progress_init(&r->progress, NULL, c, BIT_ULL(BTREE_ID_stripes), 0);
 	r->scan_start	= BBPOS(BTREE_ID_stripes, POS_MIN);

@@ -360,6 +360,7 @@ enum bch_fsck_flags {
 	x(validate_error_in_commit,				329,	0)		\
 	x(extent_io_opts_not_set,				330,	FSCK_AUTOFIX)	\
 	x(stripe_needs_reconcile_not_set,			352,	FSCK_AUTOFIX)	\
+	x(stripe_can_widen_wrong,				361,	FSCK_AUTOFIX)	\
 	x(extent_io_opts_unneeded,				331,	FSCK_AUTOFIX)	\
 	x(reconcile_bp_to_missing_btree_ptr,			310,	FSCK_AUTOFIX)	\
 	x(reconcile_bp_to_leaf_node_key,			334,	FSCK_AUTOFIX)	\
