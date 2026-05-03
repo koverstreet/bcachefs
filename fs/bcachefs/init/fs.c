@@ -403,6 +403,14 @@ void bch2_fs_read_only(struct bch_fs *c)
 	bch_verbose(c, "going read-only");
 
 	/*
+	 * Block new foreground-end write operations from starting - any new
+	 * writes will return -EROFS. Set before stopping reconcile so the
+	 * reconcile kthread's child workers (which check this flag to break
+	 * out) see it while bch2_reconcile_stop() is blocked waiting on them.
+	 */
+	set_bit(BCH_FS_going_ro, &c->flags);
+
+	/*
 	 * Stop background kthreads that issue writes (reconcile, etc.)
 	 * before disabling c->writes; otherwise they can dispatch
 	 * data_update operations that fail with erofs_no_writes once
@@ -410,11 +418,6 @@ void bch2_fs_read_only(struct bch_fs *c)
 	 */
 	bch2_reconcile_stop(c);
 
-	/*
-	 * Block new foreground-end write operations from starting - any new
-	 * writes will return -EROFS:
-	 */
-	set_bit(BCH_FS_going_ro, &c->flags);
 	enumerated_ref_stop_async(&c->writes);
 
 	/*
