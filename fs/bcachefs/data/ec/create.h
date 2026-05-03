@@ -127,6 +127,8 @@ struct ec_stripe_head {
 
 void *bch2_writepoint_ec_buf(struct bch_fs *, struct write_point *);
 
+unsigned bch2_disk_label_ec_devs(struct bch_fs *, unsigned, struct bch_devs_mask *, unsigned);
+
 void bch2_ec_stripe_new_cancel(struct bch_fs *, struct ec_stripe_head *, int);
 void bch2_ec_bucket_cancel(struct bch_fs *, struct open_bucket *, int);
 

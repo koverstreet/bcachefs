@@ -88,6 +88,24 @@ static inline void stripe_csum_set(struct bch_stripe *s,
 	memcpy(stripe_csum(s, block, csum_idx), &csum, bch_crc_bytes[s->csum_type]);
 }
 
+/*
+ * Pool widening target: how many data blocks the current device pool
+ * could supply to a stripe with this much parity overhead. Capped at
+ * BCH_BKEY_PTRS_MAX.
+ */
+static inline unsigned stripe_widen_target_nr_data(unsigned nr_devs, unsigned nr_redundant)
+{
+	return nr_devs > nr_redundant
+		? min_t(unsigned, nr_devs, BCH_BKEY_PTRS_MAX) - nr_redundant
+		: 0;
+}
+
+/* The clamped (target - actual) delta to store in bch_stripe.can_widen. */
+static inline u8 stripe_widen_value(unsigned target_nr_data, unsigned actual_nr_data)
+{
+	return clamp_t(int, (int)target_nr_data - (int)actual_nr_data, 0, 7);
+}
+
 #define STRIPE_LRU_POS_EMPTY	1
 
 static inline u64 stripe_lru_pos(const struct bch_stripe *s)

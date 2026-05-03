@@ -11,6 +11,7 @@ extern const char * const bch2_reconcile_opts[];
 	x(fs)				\
 	x(metadata)			\
 	x(pending)			\
+	x(stripes)			\
 	x(device)			\
 	x(inum)
 

@@ -779,9 +779,9 @@ static unsigned pick_blocksize(struct bch_fs *c,
 }
 
 /* returns blocksize */
-static unsigned disk_label_ec_devs(struct bch_fs *c, unsigned disk_label,
-				   struct bch_devs_mask *devs,
-				   unsigned blocksize)
+unsigned bch2_disk_label_ec_devs(struct bch_fs *c, unsigned disk_label,
+				 struct bch_devs_mask *devs,
+				 unsigned blocksize)
 {
 	guard(rcu)();
 
@@ -1404,7 +1404,7 @@ static void ec_stripe_head_devs_update(struct bch_fs *c, struct ec_stripe_head *
 {
 	struct bch_devs_mask old_devs = h->devs;
 
-	h->blocksize		= disk_label_ec_devs(c, h->disk_label, &h->devs, 0);
+	h->blocksize		= bch2_disk_label_ec_devs(c, h->disk_label, &h->devs, 0);
 	h->nr_active_devs	= dev_mask_nr(&h->devs);
 
 	/*
@@ -1663,7 +1663,7 @@ int bch2_stripe_repair(struct moving_context *ctxt,
 		return 0;
 
 	struct bch_devs_mask devs;
-	disk_label_ec_devs(c, old_s->disk_label, &devs, le16_to_cpu(old_s->sectors));
+	bch2_disk_label_ec_devs(c, old_s->disk_label, &devs, le16_to_cpu(old_s->sectors));
 
 	unsigned need_evacuate = max(0,
 			(int) (nr_live_data_blocks + old_s->nr_redundant) - (int) dev_mask_nr(&devs));
