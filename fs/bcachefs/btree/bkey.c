@@ -585,12 +585,12 @@ static void set_format_field(struct bkey_format *f, enum bch_bkey_fields i,
 
 struct bkey_format bch2_bkey_format_done(struct bkey_format_state *s)
 {
-	unsigned i, bits = KEY_PACKED_BITS_START;
+	unsigned bits = KEY_PACKED_BITS_START;
 	struct bkey_format ret = {
 		.nr_fields = BKEY_NR_FIELDS,
 	};
 
-	for (i = 0; i < ARRAY_SIZE(s->field_min); i++) {
+	for (unsigned i = 0; i < ARRAY_SIZE(s->field_min); i++) {
 		s->field_min[i] = min(s->field_min[i], s->field_max[i]);
 
 		set_format_field(&ret, i,
@@ -600,20 +600,12 @@ struct bkey_format bch2_bkey_format_done(struct bkey_format_state *s)
 		bits += ret.bits_per_field[i];
 	}
 
-	/* allow for extent merging: */
-	if (ret.bits_per_field[BKEY_FIELD_SIZE]) {
-		unsigned b = min(4U, 32U - ret.bits_per_field[BKEY_FIELD_SIZE]);
-
-		ret.bits_per_field[BKEY_FIELD_SIZE] += b;
-		bits += b;
-	}
-
 	ret.key_u64s = DIV_ROUND_UP(bits, 64);
 
 	/* if we have enough spare bits, round fields up to nearest byte */
 	bits = ret.key_u64s * 64 - bits;
 
-	for (i = 0; i < ARRAY_SIZE(ret.bits_per_field); i++) {
+	for (unsigned i = 0; i < ARRAY_SIZE(ret.bits_per_field); i++) {
 		unsigned r = round_up(ret.bits_per_field[i], 8) -
 			ret.bits_per_field[i];
 
