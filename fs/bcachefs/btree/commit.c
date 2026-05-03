@@ -1146,6 +1146,17 @@ revert_fs_usage:
 	return ret;
 }
 
+static noinline int bch2_trans_commit_btree_write_ratelimit(struct btree_trans *trans)
+{
+	struct bch_fs_btree_cache *bc = &trans->c->btree.cache;
+
+	return drop_locks_do(trans, ({
+		closure_wait_event(&bc->nr_in_flight_wait,
+				   atomic_long_read(&bc->nr_in_flight_inner) < BTREE_WRITE_IO_LIMIT(c) * 3 / 4);
+		0;
+	}));
+}
+
 int __bch2_trans_commit(struct btree_trans *trans, enum bch_trans_commit_flags flags)
 {
 	struct btree_insert_entry *errored_at = NULL;
@@ -1161,6 +1172,12 @@ int __bch2_trans_commit(struct btree_trans *trans, enum bch_trans_commit_flags f
 
 	if (!bch2_trans_has_updates(trans))
 		goto out_reset;
+
+	if (unlikely(atomic_long_read(&c->btree.cache.nr_in_flight_inner) > BTREE_WRITE_IO_LIMIT(c))) {
+		ret = bch2_trans_commit_btree_write_ratelimit(trans);
+		if (ret)
+			goto out_reset;
+	}
 
 	ret = bch2_trans_commit_run_triggers(trans);
 	if (ret)

@@ -221,6 +221,9 @@ static void btree_node_write_endio(struct bio *bio)
 		wb->wbio.used_mempool,
 		wb->data);
 
+	atomic_long_dec(&c->btree.cache.nr_in_flight_inner);
+	closure_wake_up(&c->btree.cache.nr_in_flight_wait);
+
 	clear_btree_node_write_in_flight_inner(b);
 	smp_mb__after_atomic();
 	wake_up_bit(&b->flags, BTREE_NODE_write_in_flight_inner);
@@ -524,6 +527,8 @@ do_write:
 	atomic64_add(bytes_to_write, &c->btree.write_stats[type].bytes);
 
 	async_object_list_add(c, btree_write_bio, wbio, &wbio->list_idx);
+
+	atomic_long_inc(&c->btree.cache.nr_in_flight_inner);
 
 	INIT_WORK(&wbio->work, btree_write_submit);
 	queue_work(c->btree.write_submit_wq, &wbio->work);

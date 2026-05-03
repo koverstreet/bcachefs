@@ -242,6 +242,8 @@ struct bch_fs_btree_cache {
 
 	/* Number of nodes with BTREE_NODE_write_in_flight set. */
 	atomic_long_t		nr_in_flight;
+	atomic_long_t		nr_in_flight_inner;
+	struct closure_waitlist	nr_in_flight_wait;
 
 	/* shrinker stats */
 	size_t			nr_freed;
