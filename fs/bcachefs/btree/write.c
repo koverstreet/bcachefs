@@ -69,7 +69,7 @@ static void __btree_node_write_done(struct bch_fs *c, struct btree *b)
 
 	if (new & (1U << BTREE_NODE_write_in_flight)) {
 		/* Re-arm: bit stays set across the new write, no counter change. */
-		__bch2_btree_node_write(c, b, BTREE_WRITE_ALREADY_STARTED|type);
+		__bch2_btree_node_write(c, b, BTREE_WRITE_already_started|type);
 	} else {
 		atomic_long_dec(&c->btree.cache.nr_in_flight);
 		bch2_btree_node_write_done_clean(c, b);
@@ -286,7 +286,7 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b, unsigned flags)
 	u64 start_time = local_clock();
 	int ret;
 
-	if (flags & BTREE_WRITE_ALREADY_STARTED)
+	if (flags & BTREE_WRITE_already_started)
 		goto do_write;
 
 	/*
@@ -303,7 +303,7 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b, unsigned flags)
 		if (!(old & (1 << BTREE_NODE_dirty)))
 			return;
 
-		if ((flags & BTREE_WRITE_ONLY_IF_NEED) &&
+		if ((flags & BTREE_WRITE_only_if_need) &&
 		    !(old & (1 << BTREE_NODE_need_write)))
 			return;
 
@@ -319,7 +319,7 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b, unsigned flags)
 		if (old & (1 << BTREE_NODE_write_in_flight))
 			return;
 
-		if (flags & BTREE_WRITE_ONLY_IF_NEED)
+		if (flags & BTREE_WRITE_only_if_need)
 			type = new & BTREE_WRITE_TYPE_MASK;
 		new &= ~BTREE_WRITE_TYPE_MASK;
 
