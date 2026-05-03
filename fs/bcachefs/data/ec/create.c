@@ -801,6 +801,32 @@ unsigned bch2_disk_label_ec_devs(struct bch_fs *c, unsigned disk_label,
 	return blocksize;
 }
 
+/*
+ * RW-member view of bch2_disk_label_ec_devs: returns devs in this disk_label
+ * group whose configured state is BCH_MEMBER_STATE_rw, regardless of whether
+ * they're currently online. This is the target for stripe.can_widen so that
+ * transient online/offline transitions don't trigger a full reconcile scan
+ * to rewrite can_widen across every stripe.
+ */
+void bch2_disk_label_ec_rw_member_devs(struct bch_fs *c, unsigned disk_label,
+				       struct bch_devs_mask *devs,
+				       unsigned blocksize)
+{
+	guard(rcu)();
+
+	const struct bch_devs_mask *t = disk_label
+		? bch2_target_to_mask(c, group_to_target(disk_label - 1))
+		: NULL;
+
+	memset(devs, 0, sizeof(*devs));
+	for_each_member_device_rcu(c, ca, t)
+		if (ca->mi.state == BCH_MEMBER_STATE_rw &&
+		    (ca->mi.data_allowed & BIT(BCH_DATA_user)) &&
+		    ca->mi.durability &&
+		    ca->mi.bucket_size == blocksize)
+			__set_bit(ca->dev_idx, devs->d);
+}
+
 static void ec_stripe_key_init(struct bch_fs *c,
 			       struct bkey_i *k,
 			       unsigned algorithm,
@@ -1139,6 +1165,31 @@ static int get_old_stripe(struct btree_trans *trans,
 			  bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
 			  bch_err_throw(c, transaction_restart_commit)
 			: 0;
+	}
+
+	/*
+	 * Demote can_widen if the RW-member set for this disk_label has shrunk
+	 * since the last reconcile_scan_stripes pass: a stale-high value would
+	 * keep a non-widenable stripe at the top of the LRU, blocking real
+	 * candidates. We only demote here - promotions (devs added or going RW)
+	 * are handled by reconcile_scan_stripes. Computed against RW members
+	 * (regardless of online state) to match the scan's view; transient
+	 * online/offline transitions don't churn can_widen on every stripe.
+	 */
+	struct bch_devs_mask rw_member_devs;
+	bch2_disk_label_ec_rw_member_devs(c, old.v->disk_label, &rw_member_devs,
+					  le16_to_cpu(old.v->sectors));
+	u8 correct_can_widen = stripe_widen_value(
+		stripe_widen_target_nr_data(dev_mask_nr(&rw_member_devs),
+					    old.v->nr_redundant),
+		old.v->nr_blocks - old.v->nr_redundant);
+
+	if (old.v->can_widen > correct_can_widen) {
+		struct bkey_i_stripe *upd =
+			errptr_try(bch2_bkey_make_mut_typed(trans, &iter, &k, 0, stripe));
+		upd->v.can_widen = correct_can_widen;
+		return bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
+		       bch_err_throw(c, transaction_restart_commit);
 	}
 
 	bool ret = may_reuse_stripe(c, new, old.v) &&

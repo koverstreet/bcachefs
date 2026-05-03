@@ -837,11 +837,12 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 		__bch2_dev_read_write(c, ca);
 
 	/*
-	 * Going-RW changes the EC widening target for this disk_label;
-	 * queue a stripes scan so can_widen gets refreshed and the reuse
-	 * path can pick up newly-widenable stripes. Must come after
-	 * __bch2_dev_read_write so the scan, which reads
-	 * c->allocator.rw_devs via target_rw_devs, sees the new state.
+	 * Going-RW grows the EC widening target (RW members) for this
+	 * disk_label; queue a stripes scan so can_widen is refreshed and the
+	 * reuse path can pick up newly-widenable stripes. Must come after the
+	 * SB write above so the scan, which reads ca->mi.state, sees the new
+	 * state. Going-from-RW shrinks the target instead, but get_old_stripe
+	 * demotes lazily on the reuse path so we don't need a scan there.
 	 */
 	if (new_state == BCH_MEMBER_STATE_rw)
 		try(bch2_set_reconcile_needs_scan(c,

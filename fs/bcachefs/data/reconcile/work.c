@@ -1059,7 +1059,7 @@ static int reconcile_scan_stripe_can_widen_one(struct btree_trans *trans,
 		darray_eytzinger1_find(*cache, widen_cache_cmp, &search);
 	if (!e) {
 		struct bch_devs_mask devs;
-		bch2_disk_label_ec_devs(c, search.disk_label, &devs, search.sectors);
+		bch2_disk_label_ec_rw_member_devs(c, search.disk_label, &devs, search.sectors);
 		search.nr_devs = dev_mask_nr(&devs);
 		try(darray_push(cache, search));
 		darray_eytzinger1_sort(*cache, widen_cache_cmp);
