@@ -3230,7 +3230,8 @@ static void async_btree_node_rewrite_work(struct work_struct *work)
 		: bch2_btree_node_merge_key(trans, a->btree_id, a->level, a->key.k,
 					    a->op == ASYNC_BTREE_merge_no_read ? BTREE_ITER_nofill : 0));
 	if (!bch2_err_matches(ret, ENOENT) &&
-	    !bch2_err_matches(ret, EROFS))
+	    !bch2_err_matches(ret, EROFS) &&
+	    !bch2_err_matches(ret, BCH_ERR_no_btree_node_nofill))
 		bch_err_fn_ratelimited(c, ret);
 
 	scoped_guard(spinlock, &c->btree.node_rewrites.lock)
