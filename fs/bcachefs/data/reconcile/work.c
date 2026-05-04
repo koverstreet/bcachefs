@@ -903,10 +903,8 @@ static int do_reconcile_scan_bps(struct moving_context *ctxt,
 				  last_flushed, NULL, bp, ({
 		ctxt->stats->pos = BBPOS(BTREE_ID_backpointers, iter.pos);
 
-		if (kthread_should_stop() || !bch2_reconcile_enabled(c))
-			break;
-
 		CLASS(disk_reservation, res)(c);
+		(kthread_should_stop() || !bch2_reconcile_enabled(c)) ? 1 :
 		do_reconcile_scan_bp(trans, s, bp, last_flushed) ?:
 		bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
 	}));
@@ -969,15 +967,13 @@ static int do_reconcile_scan_btree(struct moving_context *ctxt,
 		ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
 		bch2_progress_update_iter(trans, &r->progress, &iter);
 
-		if (kthread_should_stop() || !bch2_reconcile_enabled(c))
-			return 0;
-
 		atomic64_add(!level ? k.k->size : c->opts.btree_node_size >> 9,
 			     &r->scan_stats.sectors_seen);
 
 		bch2_disk_reservation_put(c, &res.r);
 
 		struct bch_inode_opts opts;
+		(kthread_should_stop() || !bch2_reconcile_enabled(c)) ? 1 :
 		bch2_bkey_get_io_opts(trans, snapshot_io_opts, k, &opts) ?:
 		update_reconcile_opts_scan(trans, snapshot_io_opts, &opts, &iter, level, k, s) ?:
 		(start.inode &&
