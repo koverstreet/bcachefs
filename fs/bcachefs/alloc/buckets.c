@@ -411,7 +411,7 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 
 			/*
 			 * no locking, we're single threaded and not rw yet, see
-			 * the big assertino above that we repeat here:
+			 * the big assertion above that we repeat here:
 			 */
 			BUG_ON(test_bit(BCH_FS_rw, &c->flags));
 

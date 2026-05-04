@@ -1079,7 +1079,7 @@ bool bch2_journal_noflush_seq(struct journal *j, u64 start, u64 end)
 		if (unwritten_seq >= end)
 			break;
 
-		/* journal flush already in flight, or flush requseted */
+		/* journal flush already in flight, or flush requested */
 		if (buf->must_flush)
 			return false;
 

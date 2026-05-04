@@ -65,7 +65,7 @@ void bch2_bkey_val_to_text(struct printbuf *, struct bch_fs *,
 
 void bch2_bkey_swab_val(const struct bch_fs *c, struct bkey_s);
 
-static inline bool bch2_bkey_maybe_mergable(const struct bkey *l, const struct bkey *r)
+static inline bool bch2_bkey_maybe_mergeable(const struct bkey *l, const struct bkey *r)
 {
 	return l->type == r->type &&
 		!bversion_cmp(l->bversion, r->bversion) &&

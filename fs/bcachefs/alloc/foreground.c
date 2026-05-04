@@ -446,7 +446,7 @@ again:
 					 POS(ca->dev_idx, U64_MAX),
 					 0, k, ret) {
 		/*
-		 * peek normally dosen't trim extents - they can span iter.pos,
+		 * peek normally doesn't trim extents - they can span iter.pos,
 		 * which is not what we want here:
 		 */
 		iter.k.size = iter.k.p.offset - iter.pos.offset;
@@ -705,7 +705,7 @@ static noinline void bch2_stripe_state_rescale(struct dev_stripe_state *stripe)
 	 * to the whole filesystem.
 	 */
 	u64 scale_max = U64_MAX;	/* maximum we can subtract without underflow */
-	u64 scale_min = 0;		/* minumum we must subtract to avoid overflow */
+	u64 scale_min = 0;		/* minimum we must subtract to avoid overflow */
 
 	for (u64 *v = stripe->next_alloc;
 	     v < stripe->next_alloc + ARRAY_SIZE(stripe->next_alloc); v++) {
@@ -1443,7 +1443,7 @@ void bch2_fs_allocator_foreground_init(struct bch_fs *c)
 	mutex_init(&a->write_points_hash_lock);
 	a->write_points_nr = ARRAY_SIZE(a->write_points);
 
-	/* open bucket 0 is a sentinal NULL: */
+	/* open bucket 0 is a sentinel NULL: */
 	spin_lock_init(&a->open_buckets[0].lock);
 
 	for (ob = a->open_buckets + 1;
