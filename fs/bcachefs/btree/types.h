@@ -265,6 +265,17 @@ struct bch_fs_btree_cache {
 	u64			pinned_nodes_mask[2];
 };
 
+static inline size_t btree_cache_nr_live(const struct bch_fs_btree_cache *bc)
+{
+	return btree_cache_list_nr(&bc->live[0]) +
+		btree_cache_list_nr(&bc->live[1]);
+}
+
+static inline size_t btree_cache_nr_dirty(const struct bch_fs_btree_cache *bc)
+{
+	return bc->live[0].nr_dirty + bc->live[1].nr_dirty;
+}
+
 /* Iterator, update, and trigger flags: */
 
 struct btree_node_iter {
