@@ -677,11 +677,42 @@ static int __dev_stripe_cmp(struct dev_stripe_state *stripe,
 
 #define dev_stripe_cmp(l, r) __dev_stripe_cmp(stripe, l, r)
 
+/*
+ * Newly-included devs (not in cached_devs) join at min(next_alloc[i] of devs
+ * already in scope) rather than at 0, so they don't win every comparison
+ * until catching up. See struct dev_stripe_state.
+ */
+static void dev_stripe_state_sync(struct dev_stripe_state *stripe,
+				  struct bch_devs_mask *devs)
+{
+	if (likely(bitmap_equal(stripe->cached_devs.d, devs->d, BCH_SB_MEMBERS_MAX)))
+		return;
+
+	struct bch_devs_mask added;
+	bitmap_andnot(added.d, devs->d, stripe->cached_devs.d, BCH_SB_MEMBERS_MAX);
+
+	if (!bitmap_empty(added.d, BCH_SB_MEMBERS_MAX)) {
+		u64 min_va = U64_MAX;
+		unsigned i;
+		for_each_set_bit(i, devs->d, BCH_SB_MEMBERS_MAX)
+			if (!test_bit(i, added.d))
+				min_va = min(min_va, stripe->next_alloc[i]);
+
+		if (min_va != U64_MAX)
+			for_each_set_bit(i, added.d, BCH_SB_MEMBERS_MAX)
+				stripe->next_alloc[i] = min_va;
+	}
+
+	stripe->cached_devs = *devs;
+}
+
 void bch2_dev_alloc_list(struct bch_fs *c,
 			 struct dev_stripe_state *stripe,
 			 struct bch_devs_mask *devs,
 			 struct dev_alloc_list *ret)
 {
+	dev_stripe_state_sync(stripe, devs);
+
 	ret->nr = 0;
 
 	unsigned i;
