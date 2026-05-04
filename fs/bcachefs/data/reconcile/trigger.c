@@ -1010,6 +1010,15 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 		opts->_name##_from_inode	= old->_name##_from_inode;
 		BCH_RECONCILE_OPTS()
 #undef x
+
+		/*
+		 * On-disk reconcile_opts were written under whatever
+		 * bch2_io_opts_fixups rules existed at the time. If the rules
+		 * have grown since, the persisted opts may violate today's
+		 * invariants - re-run fixups so consumers downstream of this
+		 * read see a combination that's valid under the current rules.
+		 */
+		bch2_io_opts_fixups(opts);
 	}
 
 	return 0;
