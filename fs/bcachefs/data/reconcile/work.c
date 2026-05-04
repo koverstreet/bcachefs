@@ -1412,7 +1412,6 @@ static int do_reconcile_phase_iter(struct reconcile_pass *p, u32 kick,
 		if (!k.k)
 			return 0;	/* phase exhausted */
 
-		r->running = true;
 		r->work_pos.pos = k.k->p;
 
 		ret = handler(p, k);
@@ -1521,6 +1520,8 @@ static int do_reconcile(struct moving_context *ctxt)
 		.sectors_scanned	= &sectors_scanned,
 		.copygc_run_count	= &copygc_run_count,
 	};
+
+	r->running = true;
 
 	while (!bch2_move_ratelimit(ctxt) &&
 	       !test_bit(BCH_FS_going_ro, &c->flags)) {
