@@ -475,13 +475,14 @@ int bch2_extent_reconcile_pending_mod(struct btree_trans *trans, struct btree_it
 
 	try(bch2_trans_relock(trans));
 
-	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k)));
+	unsigned buf_u64s = level ? BKEY_BTREE_PTR_U64s_MAX : BKEY_EXTENT_U64s_MAX;
+	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, buf_u64s * sizeof(u64)));
 	bkey_reassemble(n, k);
 
 	if (!level) {
 		bkey_reconcile_pending_mod(c, n, set);
 
-		return  bch2_trans_update(trans, iter, n, 0) ?:
+		return  bch2_trans_update_buf(trans, iter, n, buf_u64s, 0) ?:
 			bch2_trans_commit(trans, NULL, NULL,
 					  BCH_TRANS_COMMIT_no_enospc);
 	} else {
