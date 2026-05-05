@@ -495,7 +495,8 @@ static void bch2_do_discards(struct bch_fs *c)
 		}));
 	} while (!ret && again);
 
-	bch_err_fn(c, ret);
+	if (!bch2_err_matches(ret, EROFS))
+		bch_err_fn(c, ret);
 }
 
 void bch2_do_discards_going_ro(struct bch_fs *c)
