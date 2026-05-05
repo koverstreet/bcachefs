@@ -742,7 +742,8 @@ static int btree_update_nodes_written_trans(struct btree_trans *trans,
 		i->update_node_key = false;
 		bkey_strip_reconcile(c, bkey_i_to_s(&i->key));
 
-		try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, &i->key,
+		try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(&i->key),
+						  BKEY_BTREE_PTR_U64s_MAX,
 						  SET_NEEDS_RECONCILE_foreground, 0));
 
 		/*

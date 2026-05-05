@@ -993,7 +993,7 @@ static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
 int bch2_extent_update(struct btree_trans *trans,
 		       subvol_inum inum,
 		       struct btree_iter *iter,
-		       struct bkey_i *k,
+		       struct bkey_i *k, unsigned k_buf_u64s,
 		       struct disk_reservation *disk_res,
 		       u64 new_i_size,
 		       s64 *i_sectors_delta_total,
@@ -1044,10 +1044,11 @@ int bch2_extent_update(struct btree_trans *trans,
 
 	bch2_inode_opts_get_inode(c, &inode, &opts);
 
-	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, k,
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(k), k_buf_u64s,
 					  SET_NEEDS_RECONCILE_foreground,
 					  change_cookie));
-	try(bch2_trans_update(trans, iter, k, 0));
+	try(bch2_trans_update(trans, iter, k,
+			      BTREE_TRIGGER_set_needs_reconcile_done));
 	try(bch2_trans_commit(trans, disk_res, NULL,
 			      BCH_TRANS_COMMIT_no_check_rw|
 			      BCH_TRANS_COMMIT_no_enospc));
@@ -1099,6 +1100,7 @@ static int bch2_write_index_default(struct bch_write_op *op)
 					BTREE_ITER_slots|BTREE_ITER_intent);
 
 		ret =   bch2_extent_update(trans, inum, &iter, sk.k,
+					sk.k->k.u64s + 1 + BCH_REPLICAS_MAX,
 					&op->res,
 					op->new_i_size, &op->i_sectors_delta,
 					op->flags & BCH_WRITE_check_enospc,
@@ -1944,10 +1946,9 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 	 * pointers to BCH_SB_MEMBER_INVALID so the extent is accounted as
 	 * degraded
 	 */
+	unsigned new_buf_u64s = k.k->u64s + 1 + BCH_REPLICAS_MAX;
 	struct bkey_i *new = errptr_try(bch2_trans_kmalloc_nomemzero(trans,
-				bkey_bytes(k.k) +
-				sizeof(struct bch_extent_reconcile) +
-				sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX));
+				new_buf_u64s * sizeof(u64)));
 
 	bkey_reassemble(new, k);
 	bch2_cut_front(c, bkey_start_pos(&orig->k), new);
@@ -1964,22 +1965,19 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 	 * since been created. The write is still outstanding, so we're ok
 	 * w.r.t. snapshot atomicity:
 	 */
-
-	/*
-	 * For transactional consistency, set_needs_reconcile() has to be called
-	 * with the io_opts from the btree in the same transaction:
-	 */
 	struct bch_inode_unpacked inode;
 	struct bch_inode_opts opts;
 
 	return  bch2_extent_update_i_size_sectors(trans, iter,
 					min(new->k.p.offset << 9, new_i_size), 0, &inode) ?:
 		(bch2_inode_opts_get_inode(c, &inode, &opts),
-		 bch2_bkey_set_needs_reconcile(trans, NULL, &opts, new,
+		 bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(new),
+					       new_buf_u64s,
 					       SET_NEEDS_RECONCILE_foreground,
 					       op->opts.change_cookie)) ?:
 		bch2_trans_update(trans, iter, new,
-				  BTREE_UPDATE_internal_snapshot_node);
+				  BTREE_UPDATE_internal_snapshot_node|
+				  BTREE_TRIGGER_set_needs_reconcile_done);
 }
 
 static void bch2_nocow_write_convert_unwritten(struct bch_write_op *op)

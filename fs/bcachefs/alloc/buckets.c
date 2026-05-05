@@ -316,7 +316,9 @@ static int bch2_no_valid_pointers_repair(struct btree_trans *trans,
 
 		struct bch_inode_opts opts;
 		try(bch2_bkey_get_io_opts(trans, NULL, *k, &opts));
-		try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, new, SET_NEEDS_RECONCILE_opt_change, 0));
+		try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(new),
+						  BKEY_EXTENT_U64s_MAX,
+						  SET_NEEDS_RECONCILE_opt_change, 0));
 	} else {
 		ret_fsck_err(trans, extent_ptrs_all_invalid,
 			     "extent without valid pointers\n%s", buf.buf);
@@ -387,7 +389,9 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 
 		struct bch_inode_opts opts;
 		try(bch2_bkey_get_io_opts(trans, NULL, k, &opts));
-		try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, new, SET_NEEDS_RECONCILE_opt_change, 0));
+		try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(new),
+						  BKEY_EXTENT_U64s_MAX,
+						  SET_NEEDS_RECONCILE_opt_change, 0));
 
 		if (!(flags & BTREE_TRIGGER_is_root)) {
 			CLASS(btree_node_iter, iter)(trans, btree, new->k.p, 0, level,
@@ -896,6 +900,13 @@ int bch2_trigger_extent(struct btree_trans *trans, struct btree_trigger_op op)
 		return 0;
 
 	if (op.flags & (BTREE_TRIGGER_transactional|BTREE_TRIGGER_gc)) {
+		if ((op.flags & BTREE_TRIGGER_transactional) &&
+		    (op.flags & BTREE_TRIGGER_insert) &&
+		    !(op.flags & BTREE_TRIGGER_set_needs_reconcile_done) &&
+		    !op.level &&
+		    op.new.k->type)
+			try(bch2_extent_trigger_set_needs_reconcile(trans, &op));
+
 		if (op.old.k->type)
 			try(__trigger_extent(trans, op.btree, op.level, op.old,
 					     op.flags & ~BTREE_TRIGGER_insert));

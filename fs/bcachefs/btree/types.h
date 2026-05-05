@@ -338,7 +338,8 @@ struct btree_node_iter {
 	x(insert)				\
 	x(overwrite)				\
 	x(is_root)				\
-	x(is_discard)
+	x(is_discard)				\
+	x(set_needs_reconcile_done)
 
 enum {
 #define x(n) BTREE_ITER_FLAG_BIT_##n,

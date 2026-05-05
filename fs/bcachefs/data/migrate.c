@@ -66,7 +66,8 @@ static struct bkey_i *drop_dev_ptrs(struct btree_trans *trans, struct bkey_s_c k
 	if (bch2_bkey_can_read(c, bkey_i_to_s_c(n))) {
 		struct bch_inode_opts opts;
 		int ret = bch2_bkey_get_io_opts(trans, NULL, k, &opts) ?:
-			  bch2_bkey_set_needs_reconcile(trans, NULL, &opts, n,
+			  bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(n),
+							n_buf_u64s,
 							SET_NEEDS_RECONCILE_opt_change, 0);
 		if (ret)
 			return ERR_PTR(ret);

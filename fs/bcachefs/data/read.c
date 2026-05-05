@@ -568,7 +568,9 @@ static noinline int maybe_poison_extent(struct btree_trans *trans, struct bch_re
 	bkey_reassemble(new, k);
 	try(bch2_bkey_extent_flags_set(c, new, flags|BIT_ULL(BCH_EXTENT_FLAG_poisoned)));
 	try(bch2_trans_update(trans, &iter, new, BTREE_UPDATE_internal_snapshot_node));
-	try(bch2_trans_commit(trans, NULL, NULL, 0));
+
+	CLASS(disk_reservation, res)(c);
+	try(bch2_trans_commit(trans, &res.r, NULL, 0));
 
 	/*
 	 * Propagate key change back to data update path, in particular so it

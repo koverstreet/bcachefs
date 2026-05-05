@@ -642,10 +642,11 @@ static int invalidate_one_bucket_by_bps(struct btree_trans *trans,
 {
 	struct bpos bp_start	= bucket_pos_to_bp_start(ca,	bucket);
 	struct bpos bp_end	= bucket_pos_to_bp_end(ca,	bucket);
+	CLASS(disk_reservation, res)(trans->c);
 
 	return for_each_btree_key_max_commit(trans, iter, BTREE_ID_backpointers,
 				      bp_start, bp_end, 0, k,
-				      NULL, NULL,
+				      &res.r, NULL,
 				      BCH_WATERMARK_btree|
 				      BCH_TRANS_COMMIT_no_enospc, ({
 		if (k.k->type != KEY_TYPE_backpointer)

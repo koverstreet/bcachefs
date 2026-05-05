@@ -815,13 +815,14 @@ static int bch2_check_extents_to_backpointers_pass(struct btree_trans *trans,
 	bch2_progress_init(&progress, "extents_to_backpointers", trans->c,
 		btree_has_data_ptrs_mask,
 		~0ULL);
+	CLASS(disk_reservation, res)(c); /* extents btree updates always require a disk res passed in */
 
 	for (enum btree_id btree_id = 0;
 	     btree_id < btree_id_nr_alive(c);
 	     btree_id++) {
 		int level, depth = btree_type_has_data_ptrs(btree_id) ? 0 : 1;
 
-		try(commit_do(trans, NULL, NULL,
+		try(commit_do(trans, &res.r, NULL,
 			      BCH_TRANS_COMMIT_no_enospc,
 			      check_btree_root_to_backpointers(trans, s, btree_id, &level)));
 
@@ -832,7 +833,7 @@ static int bch2_check_extents_to_backpointers_pass(struct btree_trans *trans,
 				bch2_progress_update_iter(trans, &progress, &iter) ?:
 				wb_maybe_flush_inc(&s->last_flushed) ?:
 				check_extent_to_backpointers(trans, s, btree_id, level, k) ?:
-				bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
+				bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
 			})));
 
 			--level;

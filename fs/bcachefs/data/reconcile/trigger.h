@@ -180,6 +180,10 @@ int bch2_update_reconcile_opts(struct btree_trans *,
 
 int bch2_bkey_set_needs_reconcile(struct btree_trans *,
 				  struct per_snapshot_io_opts *, struct bch_inode_opts *,
-				  struct bkey_i *, enum set_needs_reconcile_ctx, u32);
+				  struct bkey_s, unsigned,
+				  enum set_needs_reconcile_ctx, u32);
+
+int bch2_extent_trigger_set_needs_reconcile(struct btree_trans *,
+					    struct btree_trigger_op *);
 
 #endif /* _BCACHEFS_RECONCILE_TRIGGER_H */

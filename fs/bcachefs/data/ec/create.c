@@ -176,7 +176,8 @@ static int ec_stripe_key_update(struct btree_trans *trans,
 
 	struct bch_inode_opts opts;
 	bch2_inode_opts_get(c, &opts, false);
-	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, new_mut,
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(new_mut),
+					  new_mut->k.u64s,
 					  SET_NEEDS_RECONCILE_foreground, 0));
 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, new_mut->k.p, BTREE_ITER_intent);
@@ -334,10 +335,7 @@ static int stripe_update_extent(struct btree_trans *trans,
 			(union bch_extent_entry *) ec_ptr,
 			(union bch_extent_entry *) &stripe_ptr);
 
-	struct bch_inode_opts opts;
-	try(bch2_bkey_get_io_opts(trans, NULL, bkey_i_to_s_c(n), &opts));
-	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, n, SET_NEEDS_RECONCILE_other, 0));
-	try(bch2_trans_update(trans, &iter, n, 0));
+	try(bch2_trans_update_buf(trans, &iter, n, BKEY_EXTENT_U64s_MAX, 0));
 	try(bch2_trans_commit(trans, res, NULL,
 			BCH_TRANS_COMMIT_no_check_rw|
 			BCH_TRANS_COMMIT_no_enospc));

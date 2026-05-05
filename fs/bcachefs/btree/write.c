@@ -88,8 +88,9 @@ static int btree_node_write_update_key(struct btree_trans *trans,
 	if (ret)
 		return ret == -BCH_ERR_btree_node_dying ? 0 : ret;
 
+	unsigned n_buf_u64s = BKEY_BTREE_PTR_U64s_MAX;
 	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans,
-				BKEY_BTREE_PTR_U64s_MAX * sizeof(u64)));
+						n_buf_u64s * sizeof(u64)));
 	bkey_copy(n, &b->key);
 
 	bkey_i_to_btree_ptr_v2(n)->v.sectors_written =
@@ -104,7 +105,8 @@ static int btree_node_write_update_key(struct btree_trans *trans,
 	if (wbio->wbio.failed.nr) {
 		struct bch_inode_opts opts;
 		try(bch2_bkey_get_io_opts(trans, NULL, bkey_i_to_s_c(n), &opts));
-		try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, n,
+		try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(n),
+						  n_buf_u64s,
 						  SET_NEEDS_RECONCILE_opt_change, 0));
 	}
 

@@ -155,6 +155,14 @@ int bch2_trans_update_extent_overwrite(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	enum btree_id btree_id = iter->btree_id;
 	struct bkey_i *update;
+
+	/*
+	 * Split fragments below are fresh kkeys derived from @old, so the
+	 * caller's BTREE_TRIGGER_set_needs_reconcile_done (asserting "I
+	 * already set the reconcile field on the kkey I'm inserting") doesn't
+	 * apply to them — let the trigger compute it.
+	 */
+	flags &= ~BTREE_TRIGGER_set_needs_reconcile_done;
 	struct bpos new_start = bkey_start_pos(new.k);
 	unsigned front_split = bkey_lt(bkey_start_pos(old.k), new_start);
 	unsigned back_split  = bkey_gt(old.k->p, new.k->p);

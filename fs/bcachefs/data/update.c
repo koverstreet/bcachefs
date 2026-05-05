@@ -232,16 +232,13 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	 * degraded due to option changes:
 	 */
 	struct bkey_i_extent *new = bkey_i_to_extent(bch2_keylist_front(&u->op.insert_keys));
-	new = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(&new->k) +
-				 sizeof(struct bch_extent_reconcile) +
-				 sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX));
+	unsigned new_buf_u64s = new->k.u64s + 1 + BCH_REPLICAS_MAX;
+	new = errptr_try(bch2_trans_kmalloc(trans, new_buf_u64s * sizeof(u64)));
 	bkey_copy(&new->k_i, bch2_keylist_front(&u->op.insert_keys));
 
+	unsigned insert_buf_u64s = k.k->u64s + bkey_val_u64s(&new->k) + 1 + BCH_REPLICAS_MAX;
 	struct bkey_i *insert = errptr_try(bch2_trans_kmalloc(trans,
-				    bkey_bytes(k.k) +
-				    bkey_val_bytes(&new->k) +
-				    sizeof(struct bch_extent_reconcile) +
-				    sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX));
+						insert_buf_u64s * sizeof(u64)));
 	bkey_reassemble(insert, k);
 
 	bch2_cut_front(c, iter->pos,	&new->k_i);
@@ -420,11 +417,8 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	 * incorrectly written data due to needs_rb already being set on the
 	 * existing extent
 	 */
-	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, &new->k_i,
-					  SET_NEEDS_RECONCILE_foreground,
-					  u->op.opts.change_cookie));
-	/* This is the real set_needs_reconcile() call */
-	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, insert,
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(&new->k_i),
+					  new_buf_u64s,
 					  SET_NEEDS_RECONCILE_foreground,
 					  u->op.opts.change_cookie));
 
@@ -451,7 +445,15 @@ static int data_update_index_update_key(struct btree_trans *trans,
 		}
 	}
 
-	try(bch2_trans_update(trans, iter, insert, BTREE_UPDATE_internal_snapshot_node));
+	/* This is the real set_needs_reconcile() call */
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(insert),
+					  insert_buf_u64s,
+					  SET_NEEDS_RECONCILE_foreground,
+					  u->op.opts.change_cookie));
+
+	try(bch2_trans_update(trans, iter, insert,
+			      BTREE_UPDATE_internal_snapshot_node|
+			      BTREE_TRIGGER_set_needs_reconcile_done));
 	try(bch2_trans_commit(trans, &u->op.res, NULL,
 			      BCH_TRANS_COMMIT_no_check_rw|
 			      BCH_TRANS_COMMIT_no_enospc|
@@ -528,19 +530,22 @@ static int data_update_index_update_key_nowrite(struct btree_trans *trans,
 	if (!ptrs_kill)
 		return 0;
 
-	struct bkey_i *new = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) +
-				 sizeof(struct bch_extent_reconcile) +
-				 sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX));
+	unsigned new_buf_u64s = k.k->u64s + 1 + BCH_REPLICAS_MAX;
+	struct bkey_i *new = errptr_try(bch2_trans_kmalloc(trans,
+						new_buf_u64s * sizeof(u64)));
 	bkey_reassemble(new, k);
 
 	bch2_bkey_drop_ptrs_mask(c, new, ptrs_kill);
 
 	struct bch_inode_opts opts;
 	try(bch2_bkey_get_io_opts(trans, NULL, k, &opts));
-	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, new,
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(new),
+					  new_buf_u64s,
 					  SET_NEEDS_RECONCILE_foreground,
 					  u->op.opts.change_cookie - 1));
-	try(bch2_trans_update(trans, iter, new, BTREE_UPDATE_internal_snapshot_node));
+	try(bch2_trans_update(trans, iter, new,
+			      BTREE_UPDATE_internal_snapshot_node|
+			      BTREE_TRIGGER_set_needs_reconcile_done));
 
 	prt_printf(msg, "new: ");
 	bch2_bkey_val_to_text(msg, c, bkey_i_to_s_c(new));
@@ -921,6 +926,7 @@ static int bch2_extent_drop_ptrs(struct btree_trans *trans,
 				 struct data_update_opts *data_opts)
 {
 	struct bch_fs *c = trans->c;
+	CLASS(disk_reservation, res)(c); /* extents btree updates always require a disk res passed in */
 
 	struct bkey_i *n = errptr_try(bch2_bkey_make_mut_noupdate(trans, k));
 
@@ -948,7 +954,7 @@ static int bch2_extent_drop_ptrs(struct btree_trans *trans,
 
 	return bch2_trans_relock(trans) ?:
 		bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node) ?:
-		bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
+		bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
 }
 
 static int bch2_data_update_bios_init(struct data_update *m, struct bch_fs *c,

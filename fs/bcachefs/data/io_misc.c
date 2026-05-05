@@ -72,10 +72,12 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 
 	bch2_bkey_buf_reassemble(&old, k);
 
+	unsigned new_buf_u64s;
 	if (!unwritten) {
 		struct bkey_i_reservation *reservation;
 
-		bch2_bkey_buf_realloc(&new, sizeof(*reservation) / sizeof(u64));
+		new_buf_u64s = sizeof(*reservation) / sizeof(u64);
+		bch2_bkey_buf_realloc(&new, new_buf_u64s);
 		reservation = bkey_reservation_init(new.k);
 		reservation->k.p = iter->pos;
 		bch2_key_resize(&reservation->k, sectors);
@@ -87,7 +89,8 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 
 		devs_have.nr = 0;
 
-		bch2_bkey_buf_realloc(&new, BKEY_EXTENT_U64s_MAX);
+		new_buf_u64s = BKEY_EXTENT_U64s_MAX;
+		bch2_bkey_buf_realloc(&new, new_buf_u64s);
 
 		e = bkey_extent_init(new.k);
 		e->k.p = iter->pos;
@@ -122,7 +125,7 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 			ptr->unwritten = true;
 	}
 
-	ret = bch2_extent_update(trans, inum, iter, new.k, &res.r,
+	ret = bch2_extent_update(trans, inum, iter, new.k, new_buf_u64s, &res.r,
 				 0, i_sectors_delta, true, 0);
 err:
 	if (!ret && sectors_allocated)
@@ -208,7 +211,7 @@ int bch2_fpunch_at(struct btree_trans *trans, struct btree_iter *iter,
 
 		bch2_key_resize(&delete.k, min(end, k.k->p.offset) - iter->pos.offset);
 
-		ret = bch2_extent_update(trans, inum, iter, &delete,
+		ret = bch2_extent_update(trans, inum, iter, &delete, delete.k.u64s,
 				&res.r, 0, i_sectors_delta, false, 0);
 	}
 

@@ -482,8 +482,9 @@ int bch2_extent_reconcile_pending_mod(struct btree_trans *trans, struct btree_it
 	if (!level) {
 		bkey_reconcile_pending_mod(c, n, set);
 
+		CLASS(disk_reservation, res)(c);
 		return  bch2_trans_update_buf(trans, iter, n, buf_u64s, 0) ?:
-			bch2_trans_commit(trans, NULL, NULL,
+			bch2_trans_commit(trans, &res.r, NULL,
 					  BCH_TRANS_COMMIT_no_enospc);
 	} else {
 		CLASS(btree_node_iter, iter2)(trans, iter->btree_id, k.k->p, 0, level - 1, 0);
