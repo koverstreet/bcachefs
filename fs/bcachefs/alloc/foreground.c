@@ -1851,15 +1851,6 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_r
 	bch2_print_str(c, KERN_ERR, buf.buf);
 }
 
-static inline unsigned allocator_wait_timeout(struct bch_fs *c)
-{
-	if (c->allocator.last_stuck &&
-	    time_after(c->allocator.last_stuck + HZ * 60 * 2, jiffies))
-		return 0;
-
-	return c->opts.allocator_stuck_timeout * HZ;
-}
-
 /*
  * Returns true if any device we tried to allocate from and failed has had
  * its alloc_wake_counter advance since we recorded the snapshot — i.e. the
@@ -1897,15 +1888,25 @@ static bool alloc_wait_advanced(struct bch_fs *c, struct alloc_request *req)
 void __bch2_wait_on_allocator(struct bch_fs *c, struct alloc_request *req,
 			      int err, struct closure *cl)
 {
-	unsigned long until = jiffies + allocator_wait_timeout(c);
+	unsigned long until = jiffies + c->opts.allocator_stuck_timeout * HZ;
 
 	while (1) {
-		unsigned long t = until - jiffies;
+		long t = until - jiffies;
 
-		if (t && closure_sync_timeout(cl, t)) {
-			/* Timed out — cl is still on freelist_wait. */
-			c->allocator.last_stuck = jiffies;
-			bch2_print_allocator_stuck(c, req, err);
+		if (t > 0 && closure_sync_timeout(cl, t)) {
+			/*
+			 * Timed out — cl is still on freelist_wait.
+			 *
+			 * Multiple threads can be waiting on the allocator
+			 * concurrently; without this CAS gate they would all
+			 * race past the timeout and dump fs state at once,
+			 * interleaving N copies of the same output.
+			 */
+			unsigned long old = READ_ONCE(c->allocator.last_stuck);
+
+			if ((!old || time_after(jiffies, old + HZ * 60 * 2)) &&
+			    try_cmpxchg(&c->allocator.last_stuck, &old, jiffies))
+				bch2_print_allocator_stuck(c, req, err);
 		}
 
 		closure_sync(cl);
