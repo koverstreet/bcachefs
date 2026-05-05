@@ -20,9 +20,7 @@ void bch2_snapshot_to_text(struct printbuf *, const struct bch_snapshot *);
 void bch2_snapshot_key_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 int bch2_snapshot_validate(struct bch_fs *, struct bkey_s_c,
 			   struct bkey_validate_context);
-int bch2_mark_snapshot(struct btree_trans *, enum btree_id, unsigned,
-		       struct bkey_s_c, struct bkey_s,
-		       enum btree_iter_update_trigger_flags);
+int bch2_mark_snapshot(struct btree_trans *, struct btree_trigger_op);
 
 int bch2_snapshot_tree_keys_to_text(struct printbuf *, struct btree_trans *, u32);
 

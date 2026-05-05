@@ -103,11 +103,9 @@ const struct bch_extent_reconcile *bch2_bkey_reconcile_opts(const struct bch_fs 
 enum reconcile_work_id bch2_bkey_reconcile_work_id(const struct bch_fs *, struct bkey_s_c);
 
 int __bch2_trigger_extent_reconcile(struct btree_trans *,
-				    enum btree_id, unsigned,
-				    struct bkey_s_c, struct bkey_s,
+				    struct btree_trigger_op,
 				    const struct bch_extent_reconcile *,
-				    const struct bch_extent_reconcile *,
-				    enum btree_iter_update_trigger_flags);
+				    const struct bch_extent_reconcile *);
 
 static inline unsigned rb_needs_trigger(const struct bch_extent_reconcile *r)
 {
@@ -115,16 +113,14 @@ static inline unsigned rb_needs_trigger(const struct bch_extent_reconcile *r)
 }
 
 static inline int bch2_trigger_extent_reconcile(struct btree_trans *trans,
-				enum btree_id btree, unsigned level,
-				struct bkey_s_c old, struct bkey_s new,
-				enum btree_iter_update_trigger_flags flags)
+						struct btree_trigger_op op)
 {
 	struct bch_fs *c = trans->c;
-	const struct bch_extent_reconcile *old_r = bch2_bkey_reconcile_opts(c, old);
-	const struct bch_extent_reconcile *new_r = bch2_bkey_reconcile_opts(c, new.s_c);
+	const struct bch_extent_reconcile *old_r = bch2_bkey_reconcile_opts(c, op.old);
+	const struct bch_extent_reconcile *new_r = bch2_bkey_reconcile_opts(c, op.new.s_c);
 
 	return rb_needs_trigger(old_r) || rb_needs_trigger(new_r)
-		? __bch2_trigger_extent_reconcile(trans, btree, level, old, new, old_r, new_r, flags)
+		? __bch2_trigger_extent_reconcile(trans, op, old_r, new_r)
 		: 0;
 }
 

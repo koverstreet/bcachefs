@@ -372,46 +372,44 @@ static int reconcile_work_mod(struct btree_trans *trans, struct bkey_s_c k,
 }
 
 int __bch2_trigger_extent_reconcile(struct btree_trans *trans,
-				    enum btree_id btree, unsigned level,
-				    struct bkey_s_c old, struct bkey_s new,
+				    struct btree_trigger_op op,
 				    const struct bch_extent_reconcile *old_r,
-				    const struct bch_extent_reconcile *new_r,
-				    enum btree_iter_update_trigger_flags flags)
+				    const struct bch_extent_reconcile *new_r)
 {
-	if (flags & BTREE_TRIGGER_transactional) {
+	if (op.flags & BTREE_TRIGGER_transactional) {
 		enum reconcile_work_id old_work = rb_work_id(old_r);
 		enum reconcile_work_id new_work = rb_work_id(new_r);
 
-		if (!level) {
+		if (!op.level) {
 			if (old_work != new_work) {
 				/* adjust reflink pos */
-				struct bpos pos = data_to_rb_work_pos(btree, new.k->p);
+				struct bpos pos = data_to_rb_work_pos(op.btree, op.new.k->p);
 
-				try(reconcile_work_mod(trans, old,	old_work, pos, false));
-				try(reconcile_work_mod(trans, new.s_c,	new_work, pos, true));
+				try(reconcile_work_mod(trans, op.old,	  old_work, pos, false));
+				try(reconcile_work_mod(trans, op.new.s_c, new_work, pos, true));
 			}
 		} else {
 			struct bch_fs *c = trans->c;
-			struct bpos bp = POS(old_work, bch2_bkey_get_reconcile_bp(c, old));
+			struct bpos bp = POS(old_work, bch2_bkey_get_reconcile_bp(c, op.old));
 
 			if (bp.inode != new_work && bp.offset) {
-				try(reconcile_bp_del(trans, btree, level, old, bp));
+				try(reconcile_bp_del(trans, op.btree, op.level, op.old, bp));
 				bp.offset = 0;
 			}
 
 			bp.inode = new_work;
 
 			if (bp.inode && !bp.offset)
-				try(reconcile_bp_add(trans, btree, level, new, &bp));
+				try(reconcile_bp_add(trans, op.btree, op.level, op.new, &bp));
 
-			bch2_bkey_set_reconcile_bp(c, new, bp.offset);
+			bch2_bkey_set_reconcile_bp(c, op.new, bp.offset);
 		}
 	}
 
-	if (flags & (BTREE_TRIGGER_transactional|BTREE_TRIGGER_gc)) {
-		bool metadata = level != 0;
-		s64 old_size = !metadata ? old.k->size : btree_sectors(trans->c);
-		s64 new_size = !metadata ? new.k->size : btree_sectors(trans->c);
+	if (op.flags & (BTREE_TRIGGER_transactional|BTREE_TRIGGER_gc)) {
+		bool metadata = op.level != 0;
+		s64 old_size = !metadata ? op.old.k->size : btree_sectors(trans->c);
+		s64 new_size = !metadata ? op.new.k->size : btree_sectors(trans->c);
 
 		unsigned old_a = rb_accounting_counters(old_r);
 		unsigned new_a = rb_accounting_counters(new_r);
@@ -430,11 +428,11 @@ int __bch2_trigger_extent_reconcile(struct btree_trans *trans,
 			if (new_a & BIT(c))
 				v[metadata] += new_size;
 
-			try(bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc, v, reconcile_work, c));
+			try(bch2_disk_accounting_mod2(trans, op.flags & BTREE_TRIGGER_gc, v, reconcile_work, c));
 		}
 
-		try(trigger_dev_counters(trans, metadata, old,     old_r, flags & ~BTREE_TRIGGER_insert));
-		try(trigger_dev_counters(trans, metadata, new.s_c, new_r, flags & ~BTREE_TRIGGER_overwrite));
+		try(trigger_dev_counters(trans, metadata, op.old,     old_r, op.flags & ~BTREE_TRIGGER_insert));
+		try(trigger_dev_counters(trans, metadata, op.new.s_c, new_r, op.flags & ~BTREE_TRIGGER_overwrite));
 	}
 
 	return 0;

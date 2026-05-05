@@ -415,20 +415,17 @@ static int __trigger_reflink_p(struct btree_trans *trans,
 	return ret;
 }
 
-int bch2_trigger_reflink_p(struct btree_trans *trans,
-			   enum btree_id btree_id, unsigned level,
-			   struct bkey_s_c old,
-			   struct bkey_s new,
-			   enum btree_iter_update_trigger_flags flags)
+int bch2_trigger_reflink_p(struct btree_trans *trans, struct btree_trigger_op op)
 {
-	if ((flags & BTREE_TRIGGER_transactional) &&
-	    (flags & BTREE_TRIGGER_insert)) {
-		struct bch_reflink_p *v = bkey_s_to_reflink_p(new).v;
+	if ((op.flags & BTREE_TRIGGER_transactional) &&
+	    (op.flags & BTREE_TRIGGER_insert)) {
+		struct bch_reflink_p *v = bkey_s_to_reflink_p(op.new).v;
 
 		v->front_pad = v->back_pad = 0;
 	}
 
-	return trigger_run_overwrite_then_insert(__trigger_reflink_p, trans, btree_id, level, old, new, flags);
+	return trigger_run_overwrite_then_insert(__trigger_reflink_p, trans,
+						 op.btree, op.level, op.old, op.new, op.flags);
 }
 
 /* indirect extent trigger */
@@ -445,24 +442,18 @@ check_indirect_extent_deleting(struct bkey_s new,
 	}
 }
 
-int bch2_trigger_reflink_v(struct btree_trans *trans,
-			   enum btree_id btree_id, unsigned level,
-			   struct bkey_s_c old, struct bkey_s new,
-			   enum btree_iter_update_trigger_flags flags)
+int bch2_trigger_reflink_v(struct btree_trans *trans, struct btree_trigger_op op)
 {
-	if ((flags & BTREE_TRIGGER_transactional) &&
-	    (flags & BTREE_TRIGGER_insert))
-		check_indirect_extent_deleting(new, &flags);
+	if ((op.flags & BTREE_TRIGGER_transactional) &&
+	    (op.flags & BTREE_TRIGGER_insert))
+		check_indirect_extent_deleting(op.new, &op.flags);
 
-	return bch2_trigger_extent(trans, btree_id, level, old, new, flags);
+	return bch2_trigger_extent(trans, op);
 }
 
-int bch2_trigger_indirect_inline_data(struct btree_trans *trans,
-			      enum btree_id btree_id, unsigned level,
-			      struct bkey_s_c old, struct bkey_s new,
-			      enum btree_iter_update_trigger_flags flags)
+int bch2_trigger_indirect_inline_data(struct btree_trans *trans, struct btree_trigger_op op)
 {
-	check_indirect_extent_deleting(new, &flags);
+	check_indirect_extent_deleting(op.new, &op.flags);
 
 	return 0;
 }

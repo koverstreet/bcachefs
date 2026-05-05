@@ -302,12 +302,8 @@ int bch2_check_fix_ptrs(struct btree_trans *,
 			enum btree_id, unsigned, struct bkey_s_c,
 			enum btree_iter_update_trigger_flags);
 
-int bch2_trigger_extent(struct btree_trans *, enum btree_id, unsigned,
-			struct bkey_s_c, struct bkey_s,
-			enum btree_iter_update_trigger_flags);
-int bch2_trigger_reservation(struct btree_trans *, enum btree_id, unsigned,
-			  struct bkey_s_c, struct bkey_s,
-			  enum btree_iter_update_trigger_flags);
+int bch2_trigger_extent(struct btree_trans *, struct btree_trigger_op);
+int bch2_trigger_reservation(struct btree_trans *, struct btree_trigger_op);
 
 #define trigger_run_overwrite_then_insert(_fn, _trans, _btree_id, _level, _old, _new, _flags)\
 ({												\

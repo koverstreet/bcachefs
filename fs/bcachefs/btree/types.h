@@ -9,6 +9,7 @@
 #include "alloc/replicas_types.h"
 
 #include "btree/bbpos_types.h"
+#include "btree/bkey_types.h"
 #include "btree/interior_types.h"
 #include "btree/key_cache_types.h"
 #include "btree/node_scan_types.h"
@@ -364,6 +365,14 @@ enum btree_iter_update_trigger_flags {
 #define x(n) BTREE_TRIGGER_##n	= 1U << BTREE_ITER_FLAG_BIT_##n,
 	BTREE_TRIGGER_FLAGS()
 #undef x
+};
+
+struct btree_trigger_op {
+	enum btree_id				btree;
+	unsigned				level;
+	struct bkey_s_c				old;
+	struct bkey_s				new;
+	enum btree_iter_update_trigger_flags	flags;
 };
 
 /* Btree paths and iterators: */

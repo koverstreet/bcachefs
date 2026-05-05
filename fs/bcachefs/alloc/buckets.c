@@ -878,18 +878,15 @@ static int __trigger_extent(struct btree_trans *trans,
 	return 0;
 }
 
-int bch2_trigger_extent(struct btree_trans *trans,
-			enum btree_id btree, unsigned level,
-			struct bkey_s_c old, struct bkey_s new,
-			enum btree_iter_update_trigger_flags flags)
+int bch2_trigger_extent(struct btree_trans *trans, struct btree_trigger_op op)
 {
-	struct bkey_ptrs_c new_ptrs = bch2_bkey_ptrs_c(new.s_c);
-	struct bkey_ptrs_c old_ptrs = bch2_bkey_ptrs_c(old);
+	struct bkey_ptrs_c new_ptrs = bch2_bkey_ptrs_c(op.new.s_c);
+	struct bkey_ptrs_c old_ptrs = bch2_bkey_ptrs_c(op.old);
 	unsigned new_ptrs_bytes = (void *) new_ptrs.end - (void *) new_ptrs.start;
 	unsigned old_ptrs_bytes = (void *) old_ptrs.end - (void *) old_ptrs.start;
 
-	if (unlikely(flags & BTREE_TRIGGER_check_repair))
-		return bch2_check_fix_ptrs(trans, btree, level, new.s_c, flags);
+	if (unlikely(op.flags & BTREE_TRIGGER_check_repair))
+		return bch2_check_fix_ptrs(trans, op.btree, op.level, op.new.s_c, op.flags);
 
 	/* if pointers aren't changing - nothing to do: */
 	if (new_ptrs_bytes == old_ptrs_bytes &&
@@ -898,16 +895,16 @@ int bch2_trigger_extent(struct btree_trans *trans,
 		    new_ptrs_bytes))
 		return 0;
 
-	if (flags & (BTREE_TRIGGER_transactional|BTREE_TRIGGER_gc)) {
-		if (old.k->type)
-			try(__trigger_extent(trans, btree, level, old,
-					     flags & ~BTREE_TRIGGER_insert));
+	if (op.flags & (BTREE_TRIGGER_transactional|BTREE_TRIGGER_gc)) {
+		if (op.old.k->type)
+			try(__trigger_extent(trans, op.btree, op.level, op.old,
+					     op.flags & ~BTREE_TRIGGER_insert));
 
-		if (new.k->type)
-			try(__trigger_extent(trans, btree, level, new.s_c,
-					     flags & ~BTREE_TRIGGER_overwrite));
+		if (op.new.k->type)
+			try(__trigger_extent(trans, op.btree, op.level, op.new.s_c,
+					     op.flags & ~BTREE_TRIGGER_overwrite));
 
-		try(bch2_trigger_extent_reconcile(trans, btree, level, old, new, flags));
+		try(bch2_trigger_extent_reconcile(trans, op));
 	}
 
 	return 0;
@@ -932,12 +929,10 @@ static int __trigger_reservation(struct btree_trans *trans,
 	return 0;
 }
 
-int bch2_trigger_reservation(struct btree_trans *trans,
-			  enum btree_id btree_id, unsigned level,
-			  struct bkey_s_c old, struct bkey_s new,
-			  enum btree_iter_update_trigger_flags flags)
+int bch2_trigger_reservation(struct btree_trans *trans, struct btree_trigger_op op)
 {
-	return trigger_run_overwrite_then_insert(__trigger_reservation, trans, btree_id, level, old, new, flags);
+	return trigger_run_overwrite_then_insert(__trigger_reservation, trans,
+						 op.btree, op.level, op.old, op.new, op.flags);
 }
 
 /* Mark superblocks: */

@@ -25,9 +25,7 @@ static inline int bch2_inode_has_child_snapshots(struct btree_trans *trans, stru
 		: 0;
 }
 
-int bch2_trigger_inode(struct btree_trans *, enum btree_id, unsigned,
-		       struct bkey_s_c, struct bkey_s,
-		       enum btree_iter_update_trigger_flags);
+int bch2_trigger_inode(struct btree_trans *, struct btree_trigger_op);
 
 #define bch2_bkey_ops_inode ((struct bkey_ops) {	\
 	.key_validate	= bch2_inode_validate,		\

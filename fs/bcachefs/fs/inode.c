@@ -747,30 +747,26 @@ static int update_parent_inode_has_children(struct btree_trans *trans, struct bp
 	return 0;
 }
 
-int bch2_trigger_inode(struct btree_trans *trans,
-		       enum btree_id btree_id, unsigned level,
-		       struct bkey_s_c old,
-		       struct bkey_s new,
-		       enum btree_iter_update_trigger_flags flags)
+int bch2_trigger_inode(struct btree_trans *trans, struct btree_trigger_op op)
 {
 	struct bch_fs *c = trans->c;
 
-	if ((flags & BTREE_TRIGGER_atomic) && (flags & BTREE_TRIGGER_insert)) {
+	if ((op.flags & BTREE_TRIGGER_atomic) && (op.flags & BTREE_TRIGGER_insert)) {
 		BUG_ON(!trans->journal_res.seq);
-		bkey_s_to_inode_v3(new).v->bi_journal_seq = cpu_to_le64(trans->journal_res.seq);
+		bkey_s_to_inode_v3(op.new).v->bi_journal_seq = cpu_to_le64(trans->journal_res.seq);
 	}
 
-	s64 nr[1] = { bkey_is_inode(new.k) - bkey_is_inode(old.k) };
-	if ((flags & (BTREE_TRIGGER_transactional|BTREE_TRIGGER_gc)) && nr[0]) {
-		try(bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc, nr, nr_inodes));
+	s64 nr[1] = { bkey_is_inode(op.new.k) - bkey_is_inode(op.old.k) };
+	if ((op.flags & (BTREE_TRIGGER_transactional|BTREE_TRIGGER_gc)) && nr[0]) {
+		try(bch2_disk_accounting_mod2(trans, op.flags & BTREE_TRIGGER_gc, nr, nr_inodes));
 	}
 
-	if (flags & BTREE_TRIGGER_transactional) {
-		int unlinked_delta =	(int) bkey_is_unlinked_inode(new.s_c) -
-					(int) bkey_is_unlinked_inode(old);
+	if (op.flags & BTREE_TRIGGER_transactional) {
+		int unlinked_delta =	(int) bkey_is_unlinked_inode(op.new.s_c) -
+					(int) bkey_is_unlinked_inode(op.old);
 		if (unlinked_delta) {
 			try(bch2_btree_bit_mod_buffered(trans, BTREE_ID_deleted_inodes,
-							new.k->p, unlinked_delta > 0));
+							op.new.k->p, unlinked_delta > 0));
 		}
 
 		/*
@@ -779,18 +775,18 @@ int bch2_trigger_inode(struct btree_trans *trans,
 		 * need to set or clear the has_child_snapshot flag on the
 		 * parent.
 		 */
-		int deleted_delta = (int) bkey_is_inode(new.k) -
-				    (int) bkey_is_inode(old.k);
+		int deleted_delta = (int) bkey_is_inode(op.new.k) -
+				    (int) bkey_is_inode(op.old.k);
 		if (deleted_delta &&
-		    bch2_snapshot_parent(c, new.k->p.snapshot))
-			try(update_parent_inode_has_children(trans, new.k->p, deleted_delta > 0));
+		    bch2_snapshot_parent(c, op.new.k->p.snapshot))
+			try(update_parent_inode_has_children(trans, op.new.k->p, deleted_delta > 0));
 
 		/*
 		 * When an inode is first updated in a new snapshot, we may need
 		 * to clear has_child_snapshot
 		 */
 		if (deleted_delta > 0)
-			try(update_inode_has_children(trans, new, false));
+			try(update_inode_has_children(trans, op.new, false));
 	}
 
 	return 0;

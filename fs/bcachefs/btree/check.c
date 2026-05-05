@@ -726,8 +726,14 @@ static int bch2_gc_mark_key(struct btree_trans *trans, enum btree_id btree_id,
 	 */
 	unsigned flags = !iter ? BTREE_TRIGGER_is_root : 0;
 
-	try(bch2_key_trigger(trans, btree_id, level, old, unsafe_bkey_s_c_to_s(k),
-			     BTREE_TRIGGER_check_repair|flags));
+	struct btree_trigger_op op = {
+		.btree		= btree_id,
+		.level		= level,
+		.old		= old,
+		.new		= unsafe_bkey_s_c_to_s(k),
+		.flags		= BTREE_TRIGGER_check_repair|flags,
+	};
+	try(bch2_key_trigger(trans, op));
 
 	if (bch2_trans_has_updates(trans)) {
 		CLASS(disk_reservation, res)(c);
@@ -735,8 +741,8 @@ static int bch2_gc_mark_key(struct btree_trans *trans, enum btree_id btree_id,
 			bch_err_throw(c, transaction_restart_commit);
 	}
 
-	try(bch2_key_trigger(trans, btree_id, level, old, unsafe_bkey_s_c_to_s(k),
-			     BTREE_TRIGGER_gc|BTREE_TRIGGER_insert|flags));
+	op.flags = BTREE_TRIGGER_gc|BTREE_TRIGGER_insert|flags;
+	try(bch2_key_trigger(trans, op));
 fsck_err:
 	return ret;
 }

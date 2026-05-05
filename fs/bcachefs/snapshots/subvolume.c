@@ -269,14 +269,11 @@ static int subvolume_children_mod(struct btree_trans *trans, struct bpos pos, bo
 		: 0;
 }
 
-int bch2_subvolume_trigger(struct btree_trans *trans,
-			   enum btree_id btree_id, unsigned level,
-			   struct bkey_s_c old, struct bkey_s new,
-			   enum btree_iter_update_trigger_flags flags)
+int bch2_subvolume_trigger(struct btree_trans *trans, struct btree_trigger_op op)
 {
-	if (flags & BTREE_TRIGGER_transactional) {
-		struct bpos children_pos_old = subvolume_children_pos(old);
-		struct bpos children_pos_new = subvolume_children_pos(new.s_c);
+	if (op.flags & BTREE_TRIGGER_transactional) {
+		struct bpos children_pos_old = subvolume_children_pos(op.old);
+		struct bpos children_pos_new = subvolume_children_pos(op.new.s_c);
 
 		if (!bpos_eq(children_pos_old, children_pos_new)) {
 			try(subvolume_children_mod(trans, children_pos_old, false));

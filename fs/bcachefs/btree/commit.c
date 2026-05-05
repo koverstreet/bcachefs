@@ -518,9 +518,13 @@ static int run_one_mem_trigger(struct btree_trans *trans,
 	const struct bkey_ops *new_ops = bch2_bkey_type_ops(i->k->k.type);
 
 	if (old_ops->trigger == new_ops->trigger)
-		return bch2_key_trigger(trans, i->btree_id, i->level,
-				old, bkey_i_to_s(new),
-				BTREE_TRIGGER_insert|BTREE_TRIGGER_overwrite|flags);
+		return bch2_key_trigger(trans, (struct btree_trigger_op) {
+			.btree		= i->btree_id,
+			.level		= i->level,
+			.old		= old,
+			.new		= bkey_i_to_s(new),
+			.flags		= BTREE_TRIGGER_insert|BTREE_TRIGGER_overwrite|flags,
+		});
 	else
 		return bch2_key_trigger_new(trans, i->btree_id, i->level,
 				bkey_i_to_s(new), flags) ?:
@@ -552,9 +556,14 @@ static int run_one_trans_trigger(struct btree_trans *trans, struct btree_insert_
 	    old_ops->trigger == new_ops->trigger) {
 		i->overwrite_trigger_run = true;
 		i->insert_trigger_run = true;
-		return bch2_key_trigger(trans, i->btree_id, i->level, old, bkey_i_to_s(i->k),
-					BTREE_TRIGGER_insert|
-					BTREE_TRIGGER_overwrite|flags) ?: 1;
+		return bch2_key_trigger(trans, (struct btree_trigger_op) {
+			.btree		= i->btree_id,
+			.level		= i->level,
+			.old		= old,
+			.new		= bkey_i_to_s(i->k),
+			.flags		= BTREE_TRIGGER_insert|
+					  BTREE_TRIGGER_overwrite|flags,
+		}) ?: 1;
 	} else if (!i->overwrite_trigger_run) {
 		i->overwrite_trigger_run = true;
 		return bch2_key_trigger_old(trans, i->btree_id, i->level, old, flags) ?: 1;

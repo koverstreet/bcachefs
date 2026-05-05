@@ -3353,12 +3353,15 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 			try(bch2_trans_update(trans, &parent_iter, new_key, skip_triggers ? BTREE_TRIGGER_norun : 0));
 		} else {
 			if (!skip_triggers)
-				try(bch2_key_trigger(trans, b->c.btree_id, b->c.level + 1,
-						     bkey_i_to_s_c(&b->key),
-						     bkey_i_to_s(new_key),
-						     BTREE_TRIGGER_insert|
-						     BTREE_TRIGGER_overwrite|
-						     BTREE_TRIGGER_transactional));
+				try(bch2_key_trigger(trans, (struct btree_trigger_op) {
+					.btree		= b->c.btree_id,
+					.level		= b->c.level + 1,
+					.old		= bkey_i_to_s_c(&b->key),
+					.new		= bkey_i_to_s(new_key),
+					.flags		= BTREE_TRIGGER_insert|
+							  BTREE_TRIGGER_overwrite|
+							  BTREE_TRIGGER_transactional,
+				}));
 
 			journal_entry_set(errptr_try(bch2_trans_jset_entry_alloc(trans,
 										 jset_u64s(b->key.k.u64s))),
