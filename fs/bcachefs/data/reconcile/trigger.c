@@ -209,7 +209,8 @@ struct bpos bch2_bkey_get_reconcile_bp_pos(const struct bch_fs *c, struct bkey_s
 		   bch2_bkey_get_reconcile_bp(c, k));
 }
 
-void bch2_bkey_set_reconcile_bp(const struct bch_fs *c, struct bkey_s k, u64 idx)
+void bch2_bkey_set_reconcile_bp(const struct bch_fs *c, struct bkey_s k,
+				unsigned buf_u64s, u64 idx)
 {
 	struct bkey_ptrs ptrs = bch2_bkey_ptrs(k);
 	union bch_extent_entry *entry;
@@ -229,6 +230,8 @@ void bch2_bkey_set_reconcile_bp(const struct bch_fs *c, struct bkey_s k, u64 idx
 		.type	= BIT(BCH_EXTENT_ENTRY_reconcile_bp),
 		.idx	= idx,
 	};
+	BUG_ON(k.k->u64s + sizeof(r) / sizeof(u64) > buf_u64s);
+
 	union bch_extent_entry *end = bkey_val_end(k);
 	memcpy_u64s(end, &r, sizeof(r) / sizeof(u64));
 	k.k->u64s += sizeof(r) / sizeof(u64);
@@ -402,7 +405,7 @@ int __bch2_trigger_extent_reconcile(struct btree_trans *trans,
 			if (bp.inode && !bp.offset)
 				try(reconcile_bp_add(trans, op.btree, op.level, op.new, &bp));
 
-			bch2_bkey_set_reconcile_bp(c, op.new, bp.offset);
+			bch2_bkey_set_reconcile_bp(c, op.new, op.new_buf_u64s, bp.offset);
 		}
 	}
 

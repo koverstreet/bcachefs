@@ -63,7 +63,7 @@ static inline struct bch_extent_reconcile io_opts_to_reconcile_opts(struct bch_f
 };
 
 struct bpos bch2_bkey_get_reconcile_bp_pos(const struct bch_fs *, struct bkey_s_c);
-void bch2_bkey_set_reconcile_bp(const struct bch_fs *, struct bkey_s, u64);
+void bch2_bkey_set_reconcile_bp(const struct bch_fs *, struct bkey_s, unsigned, u64);
 
 int reconcile_bp_del(struct btree_trans *, enum btree_id, unsigned,
 		     struct bkey_s_c, struct bpos bp_pos);

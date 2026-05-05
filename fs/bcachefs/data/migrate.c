@@ -40,9 +40,10 @@ static struct bkey_i *drop_dev_ptrs(struct btree_trans *trans, struct bkey_s_c k
 	if (!bch2_bkey_has_device_c(c, k, dev_idx))
 		return NULL;
 
-	struct bkey_i *n = bch2_trans_kmalloc(trans, bkey_bytes(k.k) +
-					      sizeof(struct bch_extent_reconcile) +
-					      sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX);
+	unsigned n_buf_u64s = metadata
+		? BKEY_BTREE_PTR_U64s_MAX
+		: BKEY_EXTENT_U64s_MAX;
+	struct bkey_i *n = bch2_trans_kmalloc(trans, n_buf_u64s * sizeof(u64));
 	if (IS_ERR(n))
 		return n;
 	bkey_reassemble(n, k);

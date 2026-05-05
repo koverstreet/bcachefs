@@ -286,12 +286,13 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 			trans, btree_ptr_with_no_reconcile_bp,
 			"btree ptr with no reconcile \n%s",
 			(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
-		struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) + sizeof(struct bch_extent_reconcile_bp)));
+		unsigned buf_u64s = k.k->u64s + sizeof(struct bch_extent_reconcile_bp) / sizeof(u64);
+		struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, buf_u64s * sizeof(u64)));
 
 		bkey_reassemble(n, k);
 
 		try(reconcile_bp_add(trans, iter->btree_id, level, bkey_i_to_s(n), &bp_pos));
-		bch2_bkey_set_reconcile_bp(c, bkey_i_to_s(n), bp_pos.offset);
+		bch2_bkey_set_reconcile_bp(c, bkey_i_to_s(n), buf_u64s, bp_pos.offset);
 		return btree_node_update_key_get_node(trans, iter, level, n);
 	}
 
@@ -299,10 +300,10 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 			trans, btree_ptr_with_bad_reconcile_bp,
 			"btree ptr with bad reconcile \n%s",
 			(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
-		struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) + sizeof(struct bch_extent_reconcile_bp)));
+		struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k)));
 
 		bkey_reassemble(n, k);
-		bch2_bkey_set_reconcile_bp(c, bkey_i_to_s(n), 0);
+		bch2_bkey_set_reconcile_bp(c, bkey_i_to_s(n), n->k.u64s, 0);
 
 		return btree_node_update_key_get_node(trans, iter, level, n);
 	}
@@ -335,7 +336,7 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 				struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k)));
 				bkey_reassemble(n, k);
 
-				bch2_bkey_set_reconcile_bp(c, bkey_i_to_s(n), rb_iter.pos.offset);
+				bch2_bkey_set_reconcile_bp(c, bkey_i_to_s(n), n->k.u64s, rb_iter.pos.offset);
 
 				return btree_node_update_key_get_node(trans, iter, level, n);
 			}

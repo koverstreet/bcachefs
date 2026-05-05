@@ -88,9 +88,8 @@ static int btree_node_write_update_key(struct btree_trans *trans,
 	if (ret)
 		return ret == -BCH_ERR_btree_node_dying ? 0 : ret;
 
-	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(&b->key.k) +
-					      sizeof(struct bch_extent_reconcile) +
-					      sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX));
+	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans,
+				BKEY_BTREE_PTR_U64s_MAX * sizeof(u64)));
 	bkey_copy(n, &b->key);
 
 	bkey_i_to_btree_ptr_v2(n)->v.sectors_written =
