@@ -419,7 +419,9 @@ int bch2_trigger_reflink_p(struct btree_trans *trans, struct btree_trigger_op op
 {
 	if ((op.flags & BTREE_TRIGGER_transactional) &&
 	    (op.flags & BTREE_TRIGGER_insert)) {
-		struct bch_reflink_p *v = bkey_s_to_reflink_p(op.new).v;
+		struct bkey_s mut;
+		try(bch2_trigger_get_mutable_new(trans, op, op.new.k->u64s, &mut));
+		struct bch_reflink_p *v = bkey_s_to_reflink_p(mut).v;
 
 		v->front_pad = v->back_pad = 0;
 	}
@@ -430,30 +432,34 @@ int bch2_trigger_reflink_p(struct btree_trans *trans, struct btree_trigger_op op
 
 /* indirect extent trigger */
 
-static inline void
-check_indirect_extent_deleting(struct bkey_s new,
-			       enum btree_iter_update_trigger_flags *flags)
+static inline int
+check_indirect_extent_deleting(struct btree_trans *trans, struct btree_trigger_op *op)
 {
-	if ((*flags & BTREE_TRIGGER_insert) && !*bkey_refcount(new)) {
-		new.k->type = KEY_TYPE_deleted;
-		new.k->size = 0;
-		set_bkey_val_u64s(new.k, 0);
-		*flags &= ~BTREE_TRIGGER_insert;
+	if ((op->flags & BTREE_TRIGGER_insert) && !*bkey_refcount_c(op->new)) {
+		struct bkey_s mut;
+		try(bch2_trigger_get_mutable_new(trans, *op, op->new.k->u64s, &mut));
+		mut.k->type = KEY_TYPE_deleted;
+		mut.k->size = 0;
+		set_bkey_val_u64s(mut.k, 0);
+		op->new = mut.s_c;
+		op->flags &= ~BTREE_TRIGGER_insert;
 	}
+	return 0;
 }
 
 int bch2_trigger_reflink_v(struct btree_trans *trans, struct btree_trigger_op op)
 {
 	if ((op.flags & BTREE_TRIGGER_transactional) &&
 	    (op.flags & BTREE_TRIGGER_insert))
-		check_indirect_extent_deleting(op.new, &op.flags);
+		try(check_indirect_extent_deleting(trans, &op));
 
 	return bch2_trigger_extent(trans, op);
 }
 
 int bch2_trigger_indirect_inline_data(struct btree_trans *trans, struct btree_trigger_op op)
 {
-	check_indirect_extent_deleting(op.new, &op.flags);
+	if (op.flags & BTREE_TRIGGER_insert)
+		try(check_indirect_extent_deleting(trans, &op));
 
 	return 0;
 }

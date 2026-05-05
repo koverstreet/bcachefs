@@ -884,13 +884,13 @@ static int __trigger_extent(struct btree_trans *trans,
 
 int bch2_trigger_extent(struct btree_trans *trans, struct btree_trigger_op op)
 {
-	struct bkey_ptrs_c new_ptrs = bch2_bkey_ptrs_c(op.new.s_c);
+	struct bkey_ptrs_c new_ptrs = bch2_bkey_ptrs_c(op.new);
 	struct bkey_ptrs_c old_ptrs = bch2_bkey_ptrs_c(op.old);
 	unsigned new_ptrs_bytes = (void *) new_ptrs.end - (void *) new_ptrs.start;
 	unsigned old_ptrs_bytes = (void *) old_ptrs.end - (void *) old_ptrs.start;
 
 	if (unlikely(op.flags & BTREE_TRIGGER_check_repair))
-		return bch2_check_fix_ptrs(trans, op.btree, op.level, op.new.s_c, op.flags);
+		return bch2_check_fix_ptrs(trans, op.btree, op.level, op.new, op.flags);
 
 	/* if pointers aren't changing - nothing to do: */
 	if (new_ptrs_bytes == old_ptrs_bytes &&
@@ -912,7 +912,7 @@ int bch2_trigger_extent(struct btree_trans *trans, struct btree_trigger_op op)
 					     op.flags & ~BTREE_TRIGGER_insert));
 
 		if (op.new.k->type)
-			try(__trigger_extent(trans, op.btree, op.level, op.new.s_c,
+			try(__trigger_extent(trans, op.btree, op.level, op.new,
 					     op.flags & ~BTREE_TRIGGER_overwrite));
 
 		try(bch2_trigger_extent_reconcile(trans, op));

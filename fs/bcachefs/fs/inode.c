@@ -753,7 +753,11 @@ int bch2_trigger_inode(struct btree_trans *trans, struct btree_trigger_op op)
 
 	if ((op.flags & BTREE_TRIGGER_atomic) && (op.flags & BTREE_TRIGGER_insert)) {
 		BUG_ON(!trans->journal_res.seq);
-		bkey_s_to_inode_v3(op.new).v->bi_journal_seq = cpu_to_le64(trans->journal_res.seq);
+
+		struct bkey_s mut;
+		try(bch2_trigger_get_mutable_new(trans, op, op.new.k->u64s, &mut));
+		bkey_s_to_inode_v3(mut).v->bi_journal_seq =
+			cpu_to_le64(trans->journal_res.seq);
 	}
 
 	s64 nr[1] = { bkey_is_inode(op.new.k) - bkey_is_inode(op.old.k) };
@@ -762,7 +766,7 @@ int bch2_trigger_inode(struct btree_trans *trans, struct btree_trigger_op op)
 	}
 
 	if (op.flags & BTREE_TRIGGER_transactional) {
-		int unlinked_delta =	(int) bkey_is_unlinked_inode(op.new.s_c) -
+		int unlinked_delta =	(int) bkey_is_unlinked_inode(op.new) -
 					(int) bkey_is_unlinked_inode(op.old);
 		if (unlinked_delta) {
 			try(bch2_btree_bit_mod_buffered(trans, BTREE_ID_deleted_inodes,
@@ -785,8 +789,11 @@ int bch2_trigger_inode(struct btree_trans *trans, struct btree_trigger_op op)
 		 * When an inode is first updated in a new snapshot, we may need
 		 * to clear has_child_snapshot
 		 */
-		if (deleted_delta > 0)
-			try(update_inode_has_children(trans, op.new, false));
+		if (deleted_delta > 0) {
+			struct bkey_s mut;
+			try(bch2_trigger_get_mutable_new(trans, op, op.new.k->u64s, &mut));
+			try(update_inode_has_children(trans, mut, false));
+		}
 	}
 
 	return 0;

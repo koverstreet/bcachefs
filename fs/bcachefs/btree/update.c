@@ -559,7 +559,10 @@ int bch2_trigger_get_mutable_new(struct btree_trans *trans,
 	BUG_ON(!(op.flags & BTREE_TRIGGER_insert));
 
 	if (needed_u64s <= op.new_buf_u64s) {
-		*out = op.new;
+		*out = (struct bkey_s) {
+			.k = (struct bkey *)	op.new.k,
+			.v = (struct bch_val *)	op.new.v,
+		};
 		return 0;
 	}
 

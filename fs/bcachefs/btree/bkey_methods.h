@@ -96,7 +96,7 @@ static inline int bch2_key_trigger_old(struct btree_trans *trans,
 		.btree		= btree_id,
 		.level		= level,
 		.old		= old,
-		.new		= bkey_i_to_s(&deleted),
+		.new		= bkey_i_to_s_c(&deleted),
 		.new_buf_u64s	= deleted.k.u64s,
 		.flags		= BTREE_TRIGGER_overwrite|flags,
 	});
@@ -104,7 +104,7 @@ static inline int bch2_key_trigger_old(struct btree_trans *trans,
 
 static inline int bch2_key_trigger_new(struct btree_trans *trans,
 			enum btree_id btree_id, unsigned level,
-			struct bkey_s new, unsigned new_buf_u64s,
+			struct bkey_s_c new, unsigned new_buf_u64s,
 			enum btree_iter_update_trigger_flags flags)
 {
 	struct bkey_i deleted;

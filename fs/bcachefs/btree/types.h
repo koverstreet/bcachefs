@@ -372,7 +372,7 @@ struct btree_trigger_op {
 	enum btree_id				btree;
 	unsigned				level;
 	struct bkey_s_c				old;
-	struct bkey_s				new;
+	struct bkey_s_c				new;
 	unsigned				new_buf_u64s;
 	enum btree_iter_update_trigger_flags	flags;
 };

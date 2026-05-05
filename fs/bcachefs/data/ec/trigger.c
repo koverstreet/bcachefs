@@ -348,10 +348,10 @@ int bch2_trigger_stripe(struct btree_trans *trans, struct btree_trigger_op op)
 	const struct bch_stripe *old_s = op.old.k->type == KEY_TYPE_stripe
 		? bkey_s_c_to_stripe(op.old).v : NULL;
 	const struct bch_stripe *new_s = op.new.k->type == KEY_TYPE_stripe
-		? bkey_s_c_to_stripe(op.new.s_c).v : NULL;
+		? bkey_s_c_to_stripe(op.new).v : NULL;
 
 	if (unlikely(op.flags & BTREE_TRIGGER_check_repair))
-		return bch2_check_fix_ptrs(trans, op.btree, op.level, op.new.s_c, op.flags);
+		return bch2_check_fix_ptrs(trans, op.btree, op.level, op.new, op.flags);
 
 	BUG_ON(new_s && old_s &&
 	       (new_s->sectors		!= old_s->sectors ||
@@ -373,8 +373,11 @@ int bch2_trigger_stripe(struct btree_trans *trans, struct btree_trigger_op op)
 
 		if (unlikely(new_lru_pos == STRIPE_LRU_POS_EMPTY) &&
 		    !bch2_stripe_is_open(c, idx)) {
-			op.new.k->type = KEY_TYPE_deleted;
-			set_bkey_val_u64s(op.new.k, 0);
+			struct bkey_s mut;
+			try(bch2_trigger_get_mutable_new(trans, op, op.new.k->u64s, &mut));
+			mut.k->type = KEY_TYPE_deleted;
+			set_bkey_val_u64s(mut.k, 0);
+			op.new = mut.s_c;
 			new_s = NULL;
 			new_lru_pos = 0;
 			needs_reconcile_delta =
@@ -449,7 +452,7 @@ int bch2_trigger_stripe(struct btree_trans *trans, struct btree_trigger_op op)
 			struct disk_accounting_pos acc;
 			memset(&acc, 0, sizeof(acc));
 			acc.type = BCH_DISK_ACCOUNTING_replicas;
-			bch2_bkey_to_replicas(c, &acc.replicas, op.new.s_c);
+			bch2_bkey_to_replicas(c, &acc.replicas, op.new);
 			try(bch2_disk_accounting_mod(trans, &acc, &sectors, 1, gc));
 
 			if (gc)
@@ -467,7 +470,7 @@ int bch2_trigger_stripe(struct btree_trans *trans, struct btree_trigger_op op)
 			try(bch2_disk_accounting_mod(trans, &acc, &sectors, 1, gc));
 		}
 
-		try(mark_stripe_buckets(trans, op.old, op.new.s_c, op.flags));
+		try(mark_stripe_buckets(trans, op.old, op.new, op.flags));
 	}
 
 	return 0;

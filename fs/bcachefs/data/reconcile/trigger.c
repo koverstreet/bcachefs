@@ -389,7 +389,7 @@ int __bch2_trigger_extent_reconcile(struct btree_trans *trans,
 				struct bpos pos = data_to_rb_work_pos(op.btree, op.new.k->p);
 
 				try(reconcile_work_mod(trans, op.old,	  old_work, pos, false));
-				try(reconcile_work_mod(trans, op.new.s_c, new_work, pos, true));
+				try(reconcile_work_mod(trans, op.new, new_work, pos, true));
 			}
 		} else {
 			struct bch_fs *c = trans->c;
@@ -443,7 +443,7 @@ int __bch2_trigger_extent_reconcile(struct btree_trans *trans,
 		}
 
 		try(trigger_dev_counters(trans, metadata, op.old,     old_r, op.flags & ~BTREE_TRIGGER_insert));
-		try(trigger_dev_counters(trans, metadata, op.new.s_c, new_r, op.flags & ~BTREE_TRIGGER_overwrite));
+		try(trigger_dev_counters(trans, metadata, op.new, new_r, op.flags & ~BTREE_TRIGGER_overwrite));
 	}
 
 	return 0;

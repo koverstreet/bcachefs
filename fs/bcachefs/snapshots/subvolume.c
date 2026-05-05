@@ -273,7 +273,7 @@ int bch2_subvolume_trigger(struct btree_trans *trans, struct btree_trigger_op op
 {
 	if (op.flags & BTREE_TRIGGER_transactional) {
 		struct bpos children_pos_old = subvolume_children_pos(op.old);
-		struct bpos children_pos_new = subvolume_children_pos(op.new.s_c);
+		struct bpos children_pos_new = subvolume_children_pos(op.new);
 
 		if (!bpos_eq(children_pos_old, children_pos_new)) {
 			try(subvolume_children_mod(trans, children_pos_old, false));

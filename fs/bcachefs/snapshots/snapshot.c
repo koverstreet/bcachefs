@@ -557,7 +557,7 @@ static int __bch2_mark_snapshot(struct btree_trans *trans,
 
 int bch2_mark_snapshot(struct btree_trans *trans, struct btree_trigger_op op)
 {
-	return __bch2_mark_snapshot(trans, op.btree, op.level, op.old, op.new.s_c, op.flags);
+	return __bch2_mark_snapshot(trans, op.btree, op.level, op.old, op.new, op.flags);
 }
 
 /* Snapshot tree traversal: */

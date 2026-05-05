@@ -522,13 +522,13 @@ static int run_one_mem_trigger(struct btree_trans *trans,
 			.btree		= i->btree_id,
 			.level		= i->level,
 			.old		= old,
-			.new		= bkey_i_to_s(new),
+			.new		= bkey_i_to_s_c(new),
 			.new_buf_u64s	= i->k_buf_u64s,
 			.flags		= BTREE_TRIGGER_insert|BTREE_TRIGGER_overwrite|flags,
 		});
 	else
 		return bch2_key_trigger_new(trans, i->btree_id, i->level,
-				bkey_i_to_s(new), i->k_buf_u64s, flags) ?:
+				bkey_i_to_s_c(new), i->k_buf_u64s, flags) ?:
 		       bch2_key_trigger_old(trans, i->btree_id, i->level,
 				old, flags);
 }
@@ -561,7 +561,7 @@ static int run_one_trans_trigger(struct btree_trans *trans, struct btree_insert_
 			.btree		= i->btree_id,
 			.level		= i->level,
 			.old		= old,
-			.new		= bkey_i_to_s(i->k),
+			.new		= bkey_i_to_s_c(i->k),
 			.new_buf_u64s	= i->k_buf_u64s,
 			.flags		= BTREE_TRIGGER_insert|
 					  BTREE_TRIGGER_overwrite|flags,
@@ -571,7 +571,7 @@ static int run_one_trans_trigger(struct btree_trans *trans, struct btree_insert_
 		return bch2_key_trigger_old(trans, i->btree_id, i->level, old, flags) ?: 1;
 	} else if (!i->insert_trigger_run) {
 		i->insert_trigger_run = true;
-		return bch2_key_trigger_new(trans, i->btree_id, i->level, bkey_i_to_s(i->k),
+		return bch2_key_trigger_new(trans, i->btree_id, i->level, bkey_i_to_s_c(i->k),
 					    i->k_buf_u64s, flags) ?: 1;
 	} else {
 		return 0;

@@ -1238,10 +1238,12 @@ int bch2_trigger_alloc(struct btree_trans *trans, struct btree_trigger_op op)
 
 	struct bch_alloc_v4 *new_a;
 	if (likely(op.new.k->type == KEY_TYPE_alloc_v4)) {
-		new_a = bkey_s_to_alloc_v4(op.new).v;
+		struct bkey_s mut;
+		try(bch2_trigger_get_mutable_new(trans, op, op.new.k->u64s, &mut));
+		new_a = bkey_s_to_alloc_v4(mut).v;
 	} else {
 		struct bkey_i_alloc_v4 *new_ka =
-			errptr_try(bch2_alloc_to_v4_mut_inlined(trans, op.new.s_c));
+			errptr_try(bch2_alloc_to_v4_mut_inlined(trans, op.new));
 		new_a = &new_ka->v;
 	}
 
@@ -1255,7 +1257,7 @@ int bch2_trigger_alloc(struct btree_trans *trans, struct btree_trigger_op op)
 			    !bch2_bucket_nouse(ca, op.new.k->p.offset)) {
 				CLASS(printbuf, buf)();
 				prt_printf(&buf, "bucket going empty but not open\n");
-				bch2_bkey_val_to_text(&buf, c, op.new.s_c);
+				bch2_bkey_val_to_text(&buf, c, op.new);
 
 				log_fsck_err_on(true, trans,
 					alloc_key_bucket_nonempty_to_empty_not_open,
@@ -1283,7 +1285,7 @@ int bch2_trigger_alloc(struct btree_trans *trans, struct btree_trigger_op op)
 		    (new_a->data_type == BCH_DATA_free &&
 		     alloc_freespace_genbits(*old_a) != alloc_freespace_genbits(*new_a))) {
 			try(bch2_bucket_do_freespace_index(trans, ca, op.old, old_a, false));
-			try(bch2_bucket_do_freespace_index(trans, ca, op.new.s_c, new_a, true));
+			try(bch2_bucket_do_freespace_index(trans, ca, op.new, new_a, true));
 		}
 
 		/*
@@ -1325,14 +1327,14 @@ int bch2_trigger_alloc(struct btree_trans *trans, struct btree_trigger_op op)
 				    trans, alloc_key_journal_seq_in_future,
 				    "bucket journal seq in future (currently at %llu)\n%s",
 				    journal_cur_seq(&c->journal),
-				    (bch2_bkey_val_to_text(&buf, c, op.new.s_c), buf.buf)))
+				    (bch2_bkey_val_to_text(&buf, c, op.new), buf.buf)))
 			new_a->journal_seq_nonempty = transaction_seq;
 
 		if (new_a->gen != old_a->gen) {
 			guard(rcu)();
 			u8 *gen = bucket_gen(ca, op.new.k->p.offset);
 			if (unlikely(!gen))
-				return inval_bucket_key(trans, op.new.s_c);
+				return inval_bucket_key(trans, op.new);
 			*gen = new_a->gen;
 		}
 
@@ -1401,7 +1403,7 @@ int bch2_trigger_alloc(struct btree_trans *trans, struct btree_trigger_op op)
 
 		if (statechange(a->data_type == BCH_DATA_need_discard)) {
 			try(bch2_bucket_do_discard_index(trans, op.old, old_a, false));
-			try(bch2_bucket_do_discard_index(trans, op.new.s_c, new_a, true));
+			try(bch2_bucket_do_discard_index(trans, op.new, new_a, true));
 		}
 
 		if (statechange_to(a->data_type == BCH_DATA_cached) &&
@@ -1417,7 +1419,7 @@ int bch2_trigger_alloc(struct btree_trans *trans, struct btree_trigger_op op)
 		guard(rcu)();
 		struct bucket *g = gc_bucket(ca, op.new.k->p.offset);
 		if (unlikely(!g))
-			return inval_bucket_key(trans, op.new.s_c);
+			return inval_bucket_key(trans, op.new);
 		g->gen_valid	= 1;
 		g->gen		= new_a->gen;
 	}

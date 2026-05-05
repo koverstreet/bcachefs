@@ -312,7 +312,7 @@ int bch2_trigger_reservation(struct btree_trans *, struct btree_trigger_op);
 	if (_old.k->type)									\
 		ret = _fn(_trans, _btree_id, _level, _old, _flags & ~BTREE_TRIGGER_insert);	\
 	if (!ret && _new.k->type)								\
-		ret = _fn(_trans, _btree_id, _level, _new.s_c, _flags & ~BTREE_TRIGGER_overwrite);\
+		ret = _fn(_trans, _btree_id, _level, _new, _flags & ~BTREE_TRIGGER_overwrite);\
 	ret;											\
 })
 

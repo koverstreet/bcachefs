@@ -65,14 +65,6 @@ void bch2_gc_pos_to_text(struct printbuf *out, struct gc_pos *p)
 	bch2_bpos_to_text(out, p->pos);
 }
 
-static struct bkey_s unsafe_bkey_s_c_to_s(struct bkey_s_c k)
-{
-	return (struct bkey_s) {{{
-		(struct bkey *) k.k,
-		(struct bch_val *) k.v
-	}}};
-}
-
 static inline void __gc_pos_set(struct bch_fs *c, struct gc_pos new_pos)
 {
 	guard(preempt)();
@@ -730,7 +722,7 @@ static int bch2_gc_mark_key(struct btree_trans *trans, enum btree_id btree_id,
 		.btree		= btree_id,
 		.level		= level,
 		.old		= old,
-		.new		= unsafe_bkey_s_c_to_s(k),
+		.new		= k,
 		.new_buf_u64s	= k.k->u64s,
 		.flags		= BTREE_TRIGGER_check_repair|flags,
 	};

@@ -117,7 +117,7 @@ static inline int bch2_trigger_extent_reconcile(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	const struct bch_extent_reconcile *old_r = bch2_bkey_reconcile_opts(c, op.old);
-	const struct bch_extent_reconcile *new_r = bch2_bkey_reconcile_opts(c, op.new.s_c);
+	const struct bch_extent_reconcile *new_r = bch2_bkey_reconcile_opts(c, op.new);
 
 	return rb_needs_trigger(old_r) || rb_needs_trigger(new_r)
 		? __bch2_trigger_extent_reconcile(trans, op, old_r, new_r)
