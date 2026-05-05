@@ -1911,6 +1911,15 @@ void __bch2_wait_on_allocator(struct bch_fs *c, struct alloc_request *req,
 
 		closure_sync(cl);
 
+		/*
+		 * If we're going emergency-RO, bail out: alloc_wait_advanced
+		 * gates on __dev_buckets_free > 1, which won't be true if
+		 * we're shutting down with a draining device — we'd re-park
+		 * and block read_only_work indefinitely.
+		 */
+		if (test_bit(BCH_FS_emergency_ro, &c->flags))
+			return;
+
 		if (!bch2_err_matches(err, BCH_ERR_bucket_alloc_blocked))
 			return;
 

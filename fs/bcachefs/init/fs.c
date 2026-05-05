@@ -502,6 +502,13 @@ static bool __bch2_fs_emergency_read_only(struct bch_fs *c, struct printbuf *out
 	bch2_fs_read_only_async(c);
 	wake_up(&bch2_read_only_wait);
 
+	/*
+	 * Wake threads parked in __bch2_wait_on_allocator: going-RO won't
+	 * complete while they hold open closures on freelist_wait, and they
+	 * won't otherwise notice the fs is shutting down.
+	 */
+	bch2_alloc_wake_all(c);
+
 	if (ret) {
 		prt_printf(out, "emergency read only at seq %llu\n",
 			   journal_cur_seq(&c->journal));
