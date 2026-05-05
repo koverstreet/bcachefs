@@ -1767,7 +1767,7 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_r
 		prt_printf(&buf, "will_retry_all_devices:\t%u\n", req->will_retry_all_devices);
 		prt_printf(&buf, "will_retry_target_devices:\t%u\n", req->will_retry_target_devices);
 		prt_printf(&buf, "will_retry_set_devices:\t%u\n", req->will_retry_set_devices);
-		prt_printf(&buf, "copygc_can_make_progress :\t%u\n", req->copygc_can_make_progress);
+		prt_printf(&buf, "copygc_can_make_progress:\t%u\n", req->copygc_can_make_progress);
 		prt_printf(&buf, "have_cl:\t%u\n", req->cl != NULL);
 
 		if (req->devs_have && req->devs_have->nr) {
@@ -1873,12 +1873,16 @@ static bool alloc_wait_advanced(struct bch_fs *c, struct alloc_request *req)
 		/* If a device has been removed, retry the allocation now */
 
 		struct bch_dev *ca = bch2_dev_rcu_noerror(c, e->dev);
-		if (!ca ||
-		    (atomic_read(&ca->alloc_wake_counter) !=
-		     e->wake_counter_snapshot)) {
+		if (!ca)
+			return true;
+		if (atomic_read(&ca->alloc_wake_counter) !=
+		    e->wake_counter_snapshot) {
 			bch2_dev_usage_read_fast(ca, &req->usage);
-			if (__dev_buckets_free(ca, req->usage, req->watermark) > 1)
+			if (__dev_buckets_free(ca, req->usage, req->watermark) > 1 ||
+			    !bch2_copygc_can_make_progress(ca))
 				return true;
+
+			bch2_copygc_wakeup(c);
 		}
 	}
 	BUG_ON(!found);

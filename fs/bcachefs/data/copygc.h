@@ -10,6 +10,7 @@ bool bch2_copygc_can_make_progress(struct bch_dev *);
 
 static inline void bch2_copygc_wakeup(struct bch_fs *c)
 {
+	c->copygc.kick_count++;
 	guard(rcu)();
 	struct task_struct *p = rcu_dereference(c->copygc.thread);
 	if (p)
