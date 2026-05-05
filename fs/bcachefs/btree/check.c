@@ -731,6 +731,7 @@ static int bch2_gc_mark_key(struct btree_trans *trans, enum btree_id btree_id,
 		.level		= level,
 		.old		= old,
 		.new		= unsafe_bkey_s_c_to_s(k),
+		.new_buf_u64s	= k.k->u64s,
 		.flags		= BTREE_TRIGGER_check_repair|flags,
 	};
 	try(bch2_key_trigger(trans, op));

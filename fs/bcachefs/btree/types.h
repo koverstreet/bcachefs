@@ -372,6 +372,7 @@ struct btree_trigger_op {
 	unsigned				level;
 	struct bkey_s_c				old;
 	struct bkey_s				new;
+	unsigned				new_buf_u64s;
 	enum btree_iter_update_trigger_flags	flags;
 };
 
@@ -525,6 +526,7 @@ struct btree_insert_entry {
 	 * overwritten in the btree:
 	 */
 	u8			old_btree_u64s;
+	u8			k_buf_u64s;
 	btree_path_idx_t	path;
 	struct bkey_i		*k;
 	/* key being overwritten: */

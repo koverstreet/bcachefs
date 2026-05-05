@@ -768,7 +768,7 @@ static int btree_update_nodes_written_trans(struct btree_trans *trans,
 		}
 
 		try(bch2_key_trigger_new(trans, as->btree_id, i->level + 1, bkey_i_to_s(&i->key),
-					 BTREE_TRIGGER_transactional));
+					 i->key.k.u64s, BTREE_TRIGGER_transactional));
 
 		if (!i->update_node_key || i->root) {
 			journal_entry_set(errptr_try(bch2_trans_jset_entry_alloc(trans,
@@ -3358,6 +3358,7 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 					.level		= b->c.level + 1,
 					.old		= bkey_i_to_s_c(&b->key),
 					.new		= bkey_i_to_s(new_key),
+					.new_buf_u64s	= new_key->k.u64s,
 					.flags		= BTREE_TRIGGER_insert|
 							  BTREE_TRIGGER_overwrite|
 							  BTREE_TRIGGER_transactional,
