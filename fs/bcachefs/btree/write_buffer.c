@@ -534,7 +534,7 @@ static int wb_flush_sorted_sharded(struct btree_trans *trans,
 		}));
 
 	darray_for_each(shards, i)
-		closure_call(&i->cl, wb_flush_shard_work, c->btree.write_buffer_wq, &cl);
+		closure_call(&i->cl, wb_flush_shard_work, c->btree.write_buffer_shard_wq, &cl);
 
 	closure_sync_unbounded(&cl);
 
@@ -1312,6 +1312,8 @@ void bch2_fs_btree_write_buffer_exit(struct bch_fs *c)
 		darray_exit(&wb->inc.keys);
 	}
 
+	if (c->btree.write_buffer_shard_wq)
+		destroy_workqueue(c->btree.write_buffer_shard_wq);
 	if (c->btree.write_buffer_wq)
 		destroy_workqueue(c->btree.write_buffer_wq);
 }
@@ -1378,6 +1380,12 @@ int bch2_fs_btree_write_buffer_init(struct bch_fs *c)
 		alloc_workqueue("bcachefs_wb_flush",
 				WQ_UNBOUND|WQ_MEM_RECLAIM, 0);
 	if (!c->btree.write_buffer_wq)
+		return bch_err_throw(c, ENOMEM_fs_other_alloc);
+
+	c->btree.write_buffer_shard_wq =
+		alloc_workqueue("bcachefs_wb_flush_shard",
+				WQ_UNBOUND|WQ_MEM_RECLAIM, 0);
+	if (!c->btree.write_buffer_shard_wq)
 		return bch_err_throw(c, ENOMEM_fs_other_alloc);
 
 	for (unsigned i = 0; i < BCH_WB_BTREE_NR; i++) {

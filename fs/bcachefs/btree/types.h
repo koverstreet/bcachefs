@@ -858,11 +858,16 @@ struct bch_fs_btree {
 	 */
 	struct bch_fs_btree_write_buffer	write_buffer[BCH_WB_BTREE_NR];
 	/*
-	 * Shared workqueue for parallelizing the write-buffer fastpath across
-	 * CPUs once the sorted key list crosses a threshold. WQ_MEM_RECLAIM
-	 * because the WB flush sits in the journal-reclaim path.
+	 * Per-btree flush_work runs on write_buffer_wq; once the sorted key
+	 * list crosses a threshold the flush parallelizes across CPUs by
+	 * queuing sub-shards on write_buffer_shard_wq and closure_sync()ing.
+	 * The two must be separate workqueues — the outer flush worker
+	 * blocks waiting for the inner shards to complete, so they can't
+	 * share a wq. WQ_MEM_RECLAIM on both because the flush sits in the
+	 * journal-reclaim path.
 	 */
 	struct workqueue_struct			*write_buffer_wq;
+	struct workqueue_struct			*write_buffer_shard_wq;
 	struct bch_fs_btree_trans		trans;
 	struct bch_fs_btree_reserve_cache	reserve_cache;
 	struct bch_fs_btree_interior_updates	interior_updates;
