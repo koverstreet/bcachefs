@@ -815,102 +815,90 @@ static int fetch_wb_keys_from_journal(struct bch_fs *c, u64 max_seq)
 	return ret;
 }
 
-static bool any_wb_pin_le(struct bch_fs *c, u64 max_seq)
+static bool wb_pin_le(struct bch_fs_btree_write_buffer *wb, u64 max_seq)
 {
-	for (unsigned i = 0; i < BCH_WB_BTREE_NR; i++) {
-		struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer[i];
-		if ((wb->inc.pin.seq && wb->inc.pin.seq <= max_seq) ||
-		    (wb->flushing.pin.seq && wb->flushing.pin.seq <= max_seq))
+	/*
+	 * move_keys_from_inc_to_flushing writes flushing.pin.seq (set), then
+	 * drops inc.pin.seq (clear) under j->lock — releases between the two.
+	 * Read inc first with acquire so observing inc=0 (post-drop) means we
+	 * must also observe flushing=N (set before the drop's release). Reading
+	 * the other way round can see flushing=0 (pre-set) AND inc=0 (post-drop)
+	 * and miss the in-flight pin entirely.
+	 */
+	u64 inc      = smp_load_acquire(&wb->inc.pin.seq);
+	u64 flushing = READ_ONCE(wb->flushing.pin.seq);
+	return (inc      && inc      <= max_seq) ||
+	       (flushing && flushing <= max_seq);
+}
+
+static bool any_wb_pin_le(struct bch_fs *c, u64 max_seq,
+			  bool *did_work, enum wb_flush_caller caller)
+{
+	for (struct bch_fs_btree_write_buffer *wb = c->btree.write_buffer;
+	     wb < c->btree.write_buffer + BCH_WB_BTREE_NR;
+	     wb++)
+		if (wb_pin_le(wb, max_seq)) {
+			WRITE_ONCE(wb->flush_work_caller, caller);
+			queue_work(c->btree.write_buffer_wq, &wb->flush_work);
+			*did_work = true;
 			return true;
-	}
+		}
 	return false;
 }
 
+/*
+ * Drive a fan-out flush across all per-btree write buffer instances:
+ *
+ *   1) fetch from the journal (snapshots cur_entry_offset_if_blocked,
+ *      so max_seq + offset is well-defined),
+ *   2) wake every per-btree flush worker, and
+ *   3) wait for the workers to drain pins ≤ max_seq.
+ *
+ * The dispatcher used to call flush_locked() inline, serializing the per-btree
+ * flushes; the toplevel sort is the expensive step and we want it parallelized.
+ * @caller is recorded only by the dispatcher diagnostic counter (see below);
+ * worker-driven flushes always count as WB_FLUSH_thread.
+ */
 static int btree_write_buffer_flush_seq(struct btree_trans *trans, u64 max_seq,
 					bool *did_work, enum wb_flush_caller caller)
 {
 	struct bch_fs *c = trans->c;
 	int ret = 0, fetch_from_journal_err;
 
-	do {
-		bch2_trans_unlock_long(trans);
+	bch2_trans_unlock_long(trans);
 
+	do {
 		fetch_from_journal_err = fetch_wb_keys_from_journal(c, max_seq);
 
-		for (enum bch_wb_btree i = 0; i < BCH_WB_BTREE_NR; i++) {
-			struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer[i];
-
-			*did_work |= wb->inc.keys.nr || wb->flushing.keys.nr;
-
-			/*
-			 * Drop any btree locks left over from the previous
-			 * iteration's flush_locked() — its commit_do slowpath
-			 * pins paths in the trans beyond the iter we explicitly
-			 * exit, and we mustn't hold btree locks while taking
-			 * wb->flushing.lock.
-			 *
-			 * On memory allocation failure, flush_locked()
-			 * is not guaranteed to empty wb->inc.
-			 */
-			bch2_trans_unlock_long(trans);
-
-			scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
-				guard(mutex)(&wb->flushing.lock);
-				ret = bch2_btree_write_buffer_flush_locked(trans, i, caller);
-			}
-			if (ret)
-				break;
-		}
-	} while (!ret && (fetch_from_journal_err || any_wb_pin_le(c, max_seq)));
+		closure_wait_event(&c->btree.write_buffer_flush_wait,
+				   !any_wb_pin_le(c, max_seq, did_work, caller) ||
+				   (ret = bch2_journal_error(&c->journal)));
+	} while (!ret && fetch_from_journal_err);
 
 	return ret;
 }
 
 /*
- * Flush one specific btree's write buffer up to max_seq. Used by the journal
- * pin callback, which knows which btree's pin fired.
+ * Pin firing means keys are already staged in this btree's wb (inc.pin /
+ * flushing.pin are added when keys land in the buffer — see bch_wb_acquire
+ * and move_keys_from_inc_to_flushing). All we need to do is kick the per-btree
+ * flush worker; it will drain the buffer and drop the pin asynchronously.
  *
- * We still have to fetch from the journal (journal bufs mix keys from all
- * btrees, and other btrees' keys have to land somewhere), but the flush
- * itself is narrowed to the one btree — the other 10 btrees' flush threads
- * will drain their own pressure.
+ * Returning 0 here moves the pin to the per-type "flushed" list so reclaim
+ * stops re-picking it; the worker's pin_drop removes it from the list when
+ * the keys are actually written. No wait, no journal fetch needed.
  */
-static int btree_write_buffer_flush_seq_one(struct btree_trans *trans,
-					    enum bch_wb_btree idx,
-					    u64 max_seq,
-					    enum wb_flush_caller caller)
-{
-	struct bch_fs *c = trans->c;
-	struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer[idx];
-	int ret = 0, fetch_from_journal_err;
-
-	do {
-		bch2_trans_unlock_long(trans);
-
-		fetch_from_journal_err = fetch_wb_keys_from_journal(c, max_seq);
-
-		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
-			guard(mutex)(&wb->flushing.lock);
-			ret = bch2_btree_write_buffer_flush_locked(trans, idx, caller);
-		}
-	} while (!ret &&
-		 (fetch_from_journal_err ||
-		  (wb->inc.pin.seq && wb->inc.pin.seq <= max_seq) ||
-		  (wb->flushing.pin.seq && wb->flushing.pin.seq <= max_seq)));
-
-	return ret;
-}
-
 static int bch2_btree_write_buffer_journal_flush(struct journal *j,
 				struct journal_entry_pin *_pin, u64 seq)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct btree_write_buffer_keys *keys =
 		container_of(_pin, struct btree_write_buffer_keys, pin);
-	CLASS(btree_trans, trans)(c);
+	struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer[keys->wb_btree];
 
-	return btree_write_buffer_flush_seq_one(trans, keys->wb_btree, seq,
-						WB_FLUSH_journal_pin);
+	WRITE_ONCE(wb->flush_work_caller, WB_FLUSH_journal_pin);
+	queue_work(c->btree.write_buffer_wq, &wb->flush_work);
+	return 0;
 }
 
 int bch2_btree_write_buffer_flush_sync(struct btree_trans *trans)
@@ -1031,29 +1019,44 @@ int bch2_btree_write_buffer_maybe_flush(struct btree_trans *trans,
 	return 0;
 }
 
-/* Per-btree "should flush": this btree's own fill level. */
-static inline bool bch_wb_btree_should_flush(struct bch_fs_btree_write_buffer *wb)
-{
-	return wb->inc.keys.nr + wb->flushing.keys.nr > wb->inc.keys.size / 4;
-}
-
+/*
+ * Drain this btree's write buffer until empty (or journal error).
+ *
+ * The auto-flush wakeup gate is per-btree bch_wb_btree_should_flush() at
+ * journal_keys_to_write_buffer_end; this worker is also the fan-out target
+ * for sync flushers, who don't go through that gate. So the worker drains
+ * everything: once we're running, finish the job.
+ *
+ * After draining, wake the dispatcher's waitlist (sync flushers block here
+ * waiting for pins ≤ their target seq to drain).
+ */
 static void bch2_btree_write_buffer_flush_work_fn(struct work_struct *work)
 {
 	struct bch_fs_btree_write_buffer *wb =
 		container_of(work, struct bch_fs_btree_write_buffer, flush_work);
 	struct bch_fs *c = wb->c;
 
-	if (!bch_wb_btree_should_flush(wb) || bch2_journal_error(&c->journal))
-		return;
-
 	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 		guard(mutex)(&wb->flushing.lock);
 		CLASS(btree_trans, trans)(c);
-		do {
+		while (!bch2_journal_error(&c->journal) &&
+		       (wb->inc.keys.nr || wb->flushing.keys.nr)) {
+			size_t before = wb->inc.keys.nr + wb->flushing.keys.nr;
+			enum wb_flush_caller caller =
+				READ_ONCE(wb->flush_work_caller);
+
 			bch2_trans_unlock_long(trans);
-			bch2_btree_write_buffer_flush_locked(trans, wb->idx, WB_FLUSH_thread);
-		} while (!bch2_journal_error(&c->journal) &&
-			 bch_wb_btree_should_flush(wb));
+			bch2_btree_write_buffer_flush_locked(trans, wb->idx, caller);
+
+			/*
+			 * Stuck-keys guard: during recovery, accounting keys can
+			 * be left in flushing if !BCH_FS_accounting_replay_done.
+			 * Bail rather than spin; a later flush after the bit is
+			 * set will drain them.
+			 */
+			if (wb->inc.keys.nr + wb->flushing.keys.nr >= before)
+				break;
+		}
 	}
 
 	if (test_bit(JOURNAL_low_on_wb, &c->journal.flags) &&
@@ -1061,6 +1064,8 @@ static void bch2_btree_write_buffer_flush_work_fn(struct work_struct *work)
 		guard(spinlock)(&c->journal.lock);
 		bch2_journal_set_watermark(&c->journal);
 	}
+
+	closure_wake_up(&c->btree.write_buffer_flush_wait);
 }
 
 static void wb_accounting_sort(struct bch_fs_btree_write_buffer *wb)
@@ -1124,9 +1129,6 @@ static void bch_wb_acquire(struct bch_fs *c,
 	pb->room = darray_room(pb->wb->keys);
 	if (pb->wb == &wb->flushing)
 		pb->room = min(pb->room, wb->sorted.size - wb->flushing.keys.nr);
-
-	bch2_journal_pin_add(&c->journal, dst->seq, &pb->wb->pin,
-			     bch2_btree_write_buffer_journal_flush);
 }
 
 int bch2_journal_key_to_wb_slowpath(struct bch_fs *c,
@@ -1225,16 +1227,26 @@ int bch2_journal_keys_to_write_buffer_end(struct bch_fs *c, struct journal_keys_
 			wb_accounting_sort(wb);
 		}
 
-		if (!pb->wb->keys.nr)
-			bch2_journal_pin_drop(&c->journal, &pb->wb->pin);
+		if (pb->wb->keys.nr)
+			bch2_journal_pin_add(&c->journal, dst->seq, &pb->wb->pin,
+					     bch2_btree_write_buffer_journal_flush);
 
 		if (pb->wb == &wb->flushing)
 			mutex_unlock(&wb->flushing.lock);
 		mutex_unlock(&wb->inc.lock);
+
+		if (bch_wb_btree_should_flush(wb)) {
+			WRITE_ONCE(wb->flush_work_caller, WB_FLUSH_thread);
+			queue_work(c->btree.write_buffer_wq, &wb->flush_work);
+		}
 	}
 
-	if (bch2_btree_write_buffer_should_flush(c))
-		bch2_btree_write_buffer_wakeup(c);
+	/*
+	 * Pins may have advanced (per-btree pin_drops above, plus any seqs
+	 * advanced by move_keys_from_inc_to_flushing inside bch_wb_acquire) —
+	 * wake any sync flushers blocked on a target seq.
+	 */
+	closure_wake_up(&c->btree.write_buffer_flush_wait);
 
 	return ret;
 }

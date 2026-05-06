@@ -868,6 +868,13 @@ struct bch_fs_btree {
 	 */
 	struct workqueue_struct			*write_buffer_wq;
 	struct workqueue_struct			*write_buffer_shard_wq;
+	/*
+	 * Sync flushers (btree_write_buffer_flush_seq) wake the per-btree
+	 * flush_works and then wait here for the worker to drain pins past
+	 * their target seq. Waked from the flush worker after drain and from
+	 * journal_keys_to_write_buffer_end after pin drops.
+	 */
+	struct closure_waitlist			write_buffer_flush_wait;
 	struct bch_fs_btree_trans		trans;
 	struct bch_fs_btree_reserve_cache	reserve_cache;
 	struct bch_fs_btree_interior_updates	interior_updates;

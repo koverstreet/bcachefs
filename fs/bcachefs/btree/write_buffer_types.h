@@ -107,6 +107,13 @@ struct bch_fs_btree_write_buffer {
 	struct btree_write_buffer_keys	flushing;
 
 	struct work_struct		flush_work;
+	/*
+	 * Set by the dispatcher (or auto-flush wakeup) before queue_work(),
+	 * read by the worker on each flush_locked call. Racy under concurrent
+	 * dispatchers — accepted; this only feeds the diagnostic
+	 * nr_flushes_caller[] histogram.
+	 */
+	enum wb_flush_caller		flush_work_caller;
 
 	u64				nr_flushes;
 	u64				nr_flushes_caller[WB_FLUSH_NR];
