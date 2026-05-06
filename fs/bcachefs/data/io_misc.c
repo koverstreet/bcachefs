@@ -103,8 +103,7 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 						0, &cl)) ?:
 			bch2_alloc_sectors_req(trans, req, write_point, &wp);
 		if (bch2_err_matches(ret, BCH_ERR_operation_blocked)) {
-			bch2_trans_unlock_long(trans);
-			bch2_wait_on_allocator(c, req, ret, &cl);
+			bch2_wait_on_allocator(trans, c, req, ret, &cl);
 			ret = bch_err_throw(c, transaction_restart_nested);
 		}
 		if (ret)

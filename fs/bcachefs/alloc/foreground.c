@@ -1889,15 +1889,19 @@ static bool alloc_wait_advanced(struct bch_fs *c, struct alloc_request *req)
 	return false;
 }
 
-void __bch2_wait_on_allocator(struct bch_fs *c, struct alloc_request *req,
+void __bch2_wait_on_allocator(struct btree_trans *trans, struct bch_fs *c,
+			      struct alloc_request *req,
 			      int err, struct closure *cl)
 {
 	unsigned long until = jiffies + c->opts.allocator_stuck_timeout * HZ;
 
+	if (trans)
+		bch2_trans_unlock(trans);
+
 	while (1) {
 		long t = until - jiffies;
 
-		if (t > 0 && closure_sync_timeout(cl, t)) {
+		if (t > 0 && trans_closure_sync_timeout(trans, cl, t)) {
 			/*
 			 * Timed out — cl is still on freelist_wait.
 			 *
@@ -1913,7 +1917,7 @@ void __bch2_wait_on_allocator(struct bch_fs *c, struct alloc_request *req,
 				bch2_print_allocator_stuck(c, req, err);
 		}
 
-		closure_sync(cl);
+		trans_closure_sync(trans, cl);
 
 		/*
 		 * If we're going emergency-RO, bail out: alloc_wait_advanced
