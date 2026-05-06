@@ -402,10 +402,18 @@ int __bch2_trigger_extent_reconcile(struct btree_trans *trans,
 
 			bp.inode = new_work;
 
-			if (bp.inode && !bp.offset)
-				try(reconcile_bp_add(trans, op.btree, op.level, op.new, &bp));
+			if (op.flags & BTREE_TRIGGER_insert) {
+				unsigned needed = op.new.k->u64s +
+					sizeof(struct bch_extent_reconcile_bp) / sizeof(u64);
+				struct bkey_s mut;
+				try(bch2_trigger_get_mutable_new(trans, op, needed, &mut));
 
-			bch2_bkey_set_reconcile_bp(c, op.new, op.new_buf_u64s, bp.offset);
+				if (bp.inode && !bp.offset)
+					try(reconcile_bp_add(trans, op.btree, op.level,
+							     mut, &bp));
+
+				bch2_bkey_set_reconcile_bp(c, mut, needed, bp.offset);
+			}
 		}
 	}
 

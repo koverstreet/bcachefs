@@ -528,6 +528,55 @@ int __must_check bch2_trans_update_ip(struct btree_trans *trans, struct btree_it
 	return bch2_trans_update_by_path(trans, path_idx, k, k_buf_u64s, flags, ip);
 }
 
+/*
+ * Triggers may need to mutate (and possibly grow) the in-flight new key.
+ *
+ * Fast path: if the existing buffer is already big enough, hand back @op.new
+ * unchanged — no trans->updates walk needed.
+ *
+ * Slow path (growth required): find the queued update by (btree, level, pos),
+ * kmalloc a fresh buffer, and rewire i->k / i->k_buf_u64s. We re-find on each
+ * call because nested updates can grow trans->updates and invalidate any
+ * pointer captured earlier.
+ *
+ * Mem-trigger phase forbids growth: the journal layout is already committed
+ * to. Overwrite-only callers (no BTREE_TRIGGER_insert) have no business
+ * mutating @new (it's the deleted-dummy stub).
+ */
+int bch2_trigger_get_mutable_new(struct btree_trans *trans,
+				 struct btree_trigger_op op,
+				 unsigned needed_u64s,
+				 struct bkey_s *out)
+{
+	BUG_ON(!(op.flags & BTREE_TRIGGER_insert));
+
+	if (needed_u64s <= op.new_buf_u64s) {
+		*out = op.new;
+		return 0;
+	}
+
+	BUG_ON(op.flags & BTREE_TRIGGER_atomic);
+
+	struct btree_insert_entry *i = NULL;
+	trans_for_each_update(trans, e)
+		if (e->btree_id == op.btree &&
+		    e->level == op.level &&
+		    bpos_eq(e->k->k.p, op.new.k->p)) {
+			i = e;
+			break;
+		}
+	BUG_ON(!i);
+
+	struct bkey_i *new_buf =
+		errptr_try(bch2_trans_kmalloc(trans, needed_u64s * sizeof(u64)));
+	bkey_copy(new_buf, i->k);
+	i->k		= new_buf;
+	i->k_buf_u64s	= needed_u64s;
+
+	*out = bkey_i_to_s(i->k);
+	return 0;
+}
+
 int bch2_btree_insert_clone_trans(struct btree_trans *trans,
 				  enum btree_id btree,
 				  struct bkey_i *k)
