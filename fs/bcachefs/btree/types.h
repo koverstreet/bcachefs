@@ -710,7 +710,6 @@ struct bch_fs_btree_trans {
 	mempool_t			pool;
 	mempool_t			malloc_pool;
 	struct btree_trans_buf		__percpu *bufs;
-	struct lock_graph		__percpu *lock_graph;
 
 	struct srcu_struct		barrier;
 	bool				barrier_initialized;

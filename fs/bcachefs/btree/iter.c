@@ -4074,15 +4074,6 @@ void bch2_fs_btree_iter_exit(struct bch_fs *c)
 		}
 	free_percpu(c->btree.trans.bufs);
 
-	if (c->btree.trans.lock_graph)
-		for_each_possible_cpu(cpu) {
-			struct lock_graph *g = per_cpu_ptr(c->btree.trans.lock_graph, cpu);
-
-			for (unsigned i = 0; i < ARRAY_SIZE(g->g); i++)
-				darray_exit(&g->g[i].waitlist);
-		}
-	free_percpu(c->btree.trans.lock_graph);
-
 	trans = list_first_entry_or_null(&c->btree.trans.list, struct btree_trans, list);
 	if (trans)
 		panic("%s leaked btree_trans\n", trans->fn);
@@ -4129,22 +4120,9 @@ void bch2_fs_btree_iter_init_early(struct bch_fs *c)
 
 int bch2_fs_btree_iter_init(struct bch_fs *c)
 {
-	int cpu;
-
 	c->btree.trans.bufs = alloc_percpu(struct btree_trans_buf);
 	if (!c->btree.trans.bufs)
 		return -ENOMEM;
-
-	c->btree.trans.lock_graph = alloc_percpu(struct lock_graph);
-	if (!c->btree.trans.lock_graph)
-		return -ENOMEM;
-
-	for_each_possible_cpu(cpu) {
-		struct lock_graph *g = per_cpu_ptr(c->btree.trans.lock_graph, cpu);
-
-		for (unsigned i = 0; i < ARRAY_SIZE(g->g); i++)
-			darray_init(&g->g[i].waitlist);
-	}
 
 	try(mempool_init_kmalloc_pool(&c->btree.trans.pool, 1, sizeof(struct btree_trans)));
 	try(mempool_init_kmalloc_pool(&c->btree.trans.malloc_pool, 1, BTREE_TRANS_MEM_MAX));

@@ -20,6 +20,7 @@
 #include "btree/init.h"
 #include "btree/interior.h"
 #include "btree/key_cache.h"
+#include "btree/locking.h"
 #include "btree/read.h"
 #include "btree/write.h"
 #include "btree/write_buffer.h"
@@ -1676,6 +1677,7 @@ static void bcachefs_exit(void)
 	bch2_vfs_exit();
 	bch2_chardev_exit();
 	bch2_btree_key_cache_exit();
+	bch2_lock_graph_exit();
 	kobject_put(&bcachefs_kobj);
 }
 
@@ -1686,6 +1688,7 @@ static int __init bcachefs_init(void)
 	kobject_init(&bcachefs_kobj, &bcachefs_ktype);
 
 	if (kobject_add(&bcachefs_kobj, fs_kobj, "bcachefs") ||
+	    bch2_lock_graph_init() ||
 	    bch2_btree_key_cache_init() ||
 	    bch2_chardev_init() ||
 	    bch2_vfs_init() ||
