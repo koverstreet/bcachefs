@@ -71,28 +71,14 @@ void bch2_btree_node_io_lock(struct btree *b)
 			    TASK_UNINTERRUPTIBLE);
 }
 
-void __bch2_btree_node_wait_on_read(struct btree *b)
+void bch2_btree_node_wait_on_read(struct btree_trans *trans, struct btree *b)
 {
-	wait_on_bit_io(&b->flags, BTREE_NODE_read_in_flight,
-		       TASK_UNINTERRUPTIBLE);
+	trans_wait_on_bit_io(trans, &b->flags, BTREE_NODE_read_in_flight);
 }
 
-void __bch2_btree_node_wait_on_write(struct btree *b)
+void bch2_btree_node_wait_on_write(struct btree_trans *trans, struct btree *b)
 {
-	wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight,
-		       TASK_UNINTERRUPTIBLE);
-}
-
-void bch2_btree_node_wait_on_read(struct btree *b)
-{
-	wait_on_bit_io(&b->flags, BTREE_NODE_read_in_flight,
-		       TASK_UNINTERRUPTIBLE);
-}
-
-void bch2_btree_node_wait_on_write(struct btree *b)
-{
-	wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight,
-		       TASK_UNINTERRUPTIBLE);
+	trans_wait_on_bit_io(trans, &b->flags, BTREE_NODE_write_in_flight);
 }
 
 __printf(7, 0)

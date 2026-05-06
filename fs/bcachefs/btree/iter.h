@@ -446,6 +446,25 @@ static inline void trans_closure_sync(struct btree_trans *trans, struct closure 
 #define trans_wait_event(_trans, _waitlist, _condition)				\
 	trans_wait_event_timeout(_trans, _waitlist, _condition, MAX_SCHEDULE_TIMEOUT)
 
+/*
+ * SRCU-aware wrapper around wait_on_bit_io(): under SRCU, do bounded
+ * io_schedule_timeout() waits; once the SRCU short-wait budget is
+ * exhausted, drop SRCU and fall through to an unbounded io_schedule()
+ * wait.
+ */
+static inline void trans_wait_on_bit_io(struct btree_trans *trans,
+					unsigned long *word, int bit)
+{
+	while (test_bit_acquire(bit, word)) {
+		long budget = bch2_trans_short_wait_budget(trans, MAX_SCHEDULE_TIMEOUT);
+
+		if (budget == MAX_SCHEDULE_TIMEOUT)
+			wait_on_bit_io(word, bit, TASK_UNINTERRUPTIBLE);
+		else
+			wait_on_bit_io_timeout(word, bit, TASK_UNINTERRUPTIBLE, budget);
+	}
+}
+
 static inline int trans_was_restarted(struct btree_trans *trans, u32 restart_count)
 {
 	return restart_count != trans->restart_count

@@ -867,4 +867,24 @@ static inline mempool_t *mempool_create_kvmalloc_pool(int min_nr, size_t size)
 }
 #endif
 
+#include <linux/wait_bit.h>
+
+int bch2_bit_wait_io_timeout(struct wait_bit_key *, int);
+
+/*
+ * wait_on_bit_io_timeout() - missing from <linux/wait_bit.h>; same as
+ * wait_on_bit_timeout() but uses io_schedule_timeout() so the wait is
+ * accounted as iowait.
+ */
+static inline int wait_on_bit_io_timeout(unsigned long *word, int bit,
+					 unsigned mode, unsigned long timeout)
+{
+	might_sleep();
+	if (!test_bit_acquire(bit, word))
+		return 0;
+	return out_of_line_wait_on_bit_timeout(word, bit,
+					       bch2_bit_wait_io_timeout,
+					       mode, timeout);
+}
+
 #endif /* _BCACHEFS_UTIL_H */

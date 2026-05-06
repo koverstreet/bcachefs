@@ -854,8 +854,9 @@ static struct btree *bch2_btree_node_grab(struct bch_fs *c, struct list_head *he
 	return NULL;
 }
 
-static struct btree *btree_node_cannibalize(struct bch_fs *c, bool pcpu_read_locks)
+static struct btree *btree_node_cannibalize(struct btree_trans *trans, bool pcpu_read_locks)
 {
+	struct bch_fs *c = trans->c;
 	struct bch_fs_btree_cache *bc = &c->btree.cache;
 
 	while (1) {
@@ -872,8 +873,8 @@ static struct btree *btree_node_cannibalize(struct bch_fs *c, bool pcpu_read_loc
 				if (btree_node_dirty(b))
 					__bch2_btree_node_write(c, b, BTREE_WRITE_cache_reclaim);
 
-				bch2_btree_node_wait_on_read(b);
-				bch2_btree_node_wait_on_write(b);
+				bch2_btree_node_wait_on_read(trans, b);
+				bch2_btree_node_wait_on_write(trans, b);
 				return b;
 			}
 		}
@@ -957,7 +958,7 @@ got_mem:
 err:
 	/* Try to cannibalize another cached btree node: */
 	if (bc->alloc_lock == current &&
-	    (b = btree_node_cannibalize(c, pcpu_read_locks))) {
+	    (b = btree_node_cannibalize(trans, pcpu_read_locks))) {
 		event_inc_trace(c, btree_cache_cannibalize, buf, prt_str(&buf, trans->fn));
 		goto got_mem;
 	}
@@ -1181,7 +1182,7 @@ retry:
 		six_unlock_type(&b->c.lock, lock_type);
 		bch2_trans_unlock(trans);
 
-		bch2_btree_node_wait_on_read(b);
+		bch2_btree_node_wait_on_read(trans, b);
 
 		ret =   bch2_trans_relock(trans) ?:
 			bch2_btree_path_relock(trans, path, _THIS_IP_);
@@ -1373,7 +1374,7 @@ lock_node:
 	}
 
 	/* XXX: waiting on IO with btree locks held: */
-	__bch2_btree_node_wait_on_read(b);
+	bch2_btree_node_wait_on_read(trans, b);
 
 	prefetch(b->aux_data);
 
@@ -1438,8 +1439,8 @@ wait_on_io:
 	/* XXX we're called from btree_gc which will be holding other btree
 	 * nodes locked
 	 */
-	__bch2_btree_node_wait_on_read(b);
-	__bch2_btree_node_wait_on_write(b);
+	bch2_btree_node_wait_on_read(trans, b);
+	bch2_btree_node_wait_on_write(trans, b);
 
 	btree_node_lock_nopath_nofail(trans, &b->c, SIX_LOCK_intent);
 	btree_node_lock_nopath_nofail(trans, &b->c, SIX_LOCK_write);
