@@ -1558,9 +1558,10 @@ static noinline __cold void btree_cache_exit_locked_dump(struct bch_fs *c,
 		   counts.n[SIX_LOCK_write],
 		   b->c.lock.intent_lock_recurse,
 		   b->c.lock.write_lock_recurse);
-	if (owner)
+	if (owner) {
+		prt_printf(&msg.m, "Owner: %s\n", owner->comm);
 		bch2_prt_task_backtrace(&msg.m, owner, 0, GFP_NOWAIT);
-	else
+	} else
 		prt_printf(&msg.m, "owner not recorded");
 }
 
