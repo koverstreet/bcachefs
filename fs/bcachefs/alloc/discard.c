@@ -544,37 +544,39 @@ void bch2_do_discards_fast_work(struct work_struct *work)
 	struct discard_state s = {};
 	int ret = 0;
 
-	CLASS(btree_trans, trans)(c);
+	{
+		CLASS(btree_trans, trans)(c);
 
-	while (1) {
-		u64 bucket;
+		while (1) {
+			u64 bucket;
 
-		scoped_guard(mutex, &ca->discard_fast_lock) {
-			bucket = ca->discard_fast.nr
-				? darray_pop(&ca->discard_fast)
-				: 0;
+			scoped_guard(mutex, &ca->discard_fast_lock) {
+				bucket = ca->discard_fast.nr
+					? darray_pop(&ca->discard_fast)
+					: 0;
+			}
+
+			if (!bucket)
+				break;
+
+			do {
+				ret = lockrestart_do(trans,
+					bch2_discard_one_bucket(trans, POS(ca->dev_idx, bucket),
+								ca->mi.bucket_size, &s, true));
+				if (ret == -BCH_ERR_max_discards_in_flight)
+					ret = bch2_discards_complete(trans, &s, true, false);
+			} while (ret == -BCH_ERR_max_discards_in_flight);
+
+			ret = bch2_discards_complete(trans, &s, false, true) ?: ret;
+			if (ret)
+				break;
 		}
 
-		if (!bucket)
-			break;
-
-		do {
-			ret = lockrestart_do(trans,
-				bch2_discard_one_bucket(trans, POS(ca->dev_idx, bucket),
-							ca->mi.bucket_size, &s, true));
-			if (ret == -BCH_ERR_max_discards_in_flight)
-				ret = bch2_discards_complete(trans, &s, true, false);
-		} while (ret == -BCH_ERR_max_discards_in_flight);
-
-		ret = bch2_discards_complete(trans, &s, false, true) ?: ret;
-		if (ret)
-			break;
+		event_inc_trace(c, bucket_discard_fast_worker, buf, ({
+			prt_printf(&buf, "dev %s: ret %s\n", ca->name, bch2_err_str(ret));
+			__discard_state_to_text(&buf, &s);
+		}));
 	}
-
-	event_inc_trace(c, bucket_discard_fast_worker, buf, ({
-		prt_printf(&buf, "dev %s: ret %s\n", ca->name, bch2_err_str(ret));
-		__discard_state_to_text(&buf, &s);
-	}));
 
 	enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_discard_one_bucket_fast);
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_discard_fast);
