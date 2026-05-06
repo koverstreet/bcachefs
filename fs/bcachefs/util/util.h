@@ -887,4 +887,36 @@ static inline int wait_on_bit_io_timeout(unsigned long *word, int bit,
 					       mode, timeout);
 }
 
+/*
+ * bch2_alloc_percpu_init(): run init() on every per-cpu instance of a
+ * dynamically-allocated percpu variable.
+ *
+ * Kernel: iterates for_each_possible_cpu and calls init() once per cpu
+ * at allocation time.
+ *
+ * Userspace: alloc_percpu() returns an offset into a per-thread chunk;
+ * threads come and go dynamically, so init() must also be called for
+ * each thread that's spawned later. The userspace shim stashes the
+ * (init, ctx) pair alongside the percpu variable so it can call init()
+ * for every existing chunk now and every future chunk at thread
+ * creation time.
+ *
+ * The init function takes (per-instance ptr, caller ctx, cpu id).
+ */
+#ifdef __KERNEL__
+#define bch2_alloc_percpu_init(_pcv, _init, _ctx)			\
+do {									\
+	int _cpu;							\
+	for_each_possible_cpu(_cpu)					\
+		(_init)(per_cpu_ptr((_pcv), _cpu), (_ctx), _cpu);	\
+} while (0)
+#else
+void __bch2_alloc_percpu_init(void *pcv,
+			      void (*init)(void *, void *, unsigned),
+			      void *ctx);
+#define bch2_alloc_percpu_init(_pcv, _init, _ctx)			\
+	__bch2_alloc_percpu_init((_pcv),				\
+		(void (*)(void *, void *, unsigned))(_init), (_ctx))
+#endif
+
 #endif /* _BCACHEFS_UTIL_H */
