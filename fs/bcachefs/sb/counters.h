@@ -13,6 +13,8 @@ void bch2_fs_counters_init_early(struct bch_fs *);
 int bch2_fs_counters_init(struct bch_fs *);
 int bch2_fs_counters_init_late(struct bch_fs *);
 
+void bch2_counter_reset(struct bch_fs *, unsigned);
+
 extern const char * const bch2_counter_names[];
 extern const enum bch_counters_flags bch2_counter_flags_map[];
 extern const u16 bch2_counter_stable_map[];

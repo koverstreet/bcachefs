@@ -173,6 +173,12 @@ int bch2_fs_counters_init_late(struct bch_fs *c)
 	return 0;
 }
 
+void bch2_counter_reset(struct bch_fs *c, unsigned idx)
+{
+	if (idx < BCH_COUNTER_NR)
+		percpu_u64_set(&c->counters.now[idx], 0);
+}
+
 const struct bch_sb_field_ops bch_sb_field_ops_counters = {
 	.validate	= bch2_sb_counters_validate,
 	.to_text	= bch2_sb_counters_to_text,
