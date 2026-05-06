@@ -237,7 +237,7 @@ static int bch2_discards_complete(struct btree_trans *trans,
 	struct bch_fs_discards *d = &c->discards;
 	int ret = 0;
 
-	closure_wait_event(&d->wait, !discards_pending(d, fastpath, all));
+	trans_wait_event(trans, &d->wait, !discards_pending(d, fastpath, all));
 
 	u64 dev_bucket = 0;
 	size_t iter = 0;

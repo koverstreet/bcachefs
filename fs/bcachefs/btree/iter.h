@@ -6,6 +6,7 @@
 #include "btree/cache.h"
 #include "btree/types.h"
 
+#include "closure.h"
 #include "sb/counters.h"
 
 void bch2_trans_updates_to_text(struct printbuf *, struct btree_trans *);
@@ -346,6 +347,104 @@ int bch2_trans_relock(struct btree_trans *);
 int bch2_trans_relock_notrace(struct btree_trans *);
 void bch2_trans_unlock(struct btree_trans *);
 void bch2_trans_unlock_long(struct btree_trans *);
+
+/*
+ * Returns the timeout to use for the next blocking wait done by this trans.
+ *
+ * The trans takes an SRCU read lock on bch2_trans_begin(); holding it across
+ * a long blocking wait stalls memory reclaim. So if SRCU has been held for
+ * longer than HZ when we're about to wait, drop it now (via unlock_long) and
+ * let the caller wait the full timeout SRCU-free.
+ *
+ * Otherwise cap the returned timeout at the unconsumed portion of HZ — the
+ * caller's wait will time out before SRCU has been held too long, and on
+ * the next call (after the caller's natural retry) we'll be in the
+ * elapsed >= HZ branch and drop SRCU here.
+ */
+static inline long bch2_trans_short_wait_budget(struct btree_trans *trans, long timeout)
+{
+	if (!trans || !trans->srcu_held)
+		return timeout;
+
+	long elapsed = jiffies - trans->srcu_lock_time;
+	if (elapsed >= HZ) {
+		bch2_trans_unlock_long(trans);
+		return timeout;
+	}
+	return min(HZ - elapsed, timeout);
+}
+
+/*
+ * SRCU-aware wrappers around closure_sync{,_timeout}: short waits under SRCU
+ * until the budget is exhausted, then drop SRCU and wait the remainder.
+ *
+ * trans_closure_sync_timeout() returns 0 on success (closure drained),
+ * -ETIME if timeout fully elapsed.
+ */
+static inline int trans_closure_sync_timeout(struct btree_trans *trans,
+					     struct closure *cl,
+					     long timeout)
+{
+	long remaining = timeout;
+
+	while (remaining > 0) {
+		if (closure_nr_remaining(cl) <= 1)
+			return 0;
+
+		unsigned long start = jiffies;
+		long wait = bch2_trans_short_wait_budget(trans, remaining);
+
+		if (!closure_sync_timeout(cl, wait))
+			return 0;
+		remaining -= (long)(jiffies - start);
+	}
+	return -ETIME;
+}
+
+static inline void trans_closure_sync(struct btree_trans *trans, struct closure *cl)
+{
+	trans_closure_sync_timeout(trans, cl, MAX_SCHEDULE_TIMEOUT);
+}
+
+/*
+ * Wrappers around closure_wait_event{,_timeout} that drop SRCU before
+ * blocking long. Use these instead of closure_wait_event() directly when a
+ * btree_trans is in scope.
+ *
+ * Mirrors closure_wait_event_timeout(); the only change is that the inner
+ * sync uses trans_closure_sync_timeout() so the SRCU short-wait budget is
+ * honoured on each blocking pass.
+ */
+#define __trans_wait_event_timeout(_trans, waitlist, _cond, _until)		\
+({										\
+	CLASS(closure_stack, cl)();						\
+	long _t;								\
+										\
+	while (1) {								\
+		bch2_closure_wait(waitlist, &cl);				\
+		if (_cond) {							\
+			_t = max_t(long, 1L, _until - jiffies);			\
+			break;							\
+		}								\
+		_t = max_t(long, 0L, _until - jiffies);				\
+		if (!_t)							\
+			break;							\
+		trans_closure_sync_timeout(_trans, &cl, _t);			\
+	}									\
+	closure_wake_up(waitlist);						\
+	_t;									\
+})
+
+#define trans_wait_event_timeout(_trans, waitlist, _cond, _timeout)		\
+({										\
+	unsigned long _until = jiffies + (_timeout);				\
+	(_cond)									\
+		? max_t(long, 1L, _until - jiffies)				\
+		: __trans_wait_event_timeout(_trans, waitlist, _cond, _until);	\
+})
+
+#define trans_wait_event(_trans, _waitlist, _condition)				\
+	trans_wait_event_timeout(_trans, _waitlist, _condition, MAX_SCHEDULE_TIMEOUT)
 
 static inline int trans_was_restarted(struct btree_trans *trans, u32 restart_count)
 {

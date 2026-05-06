@@ -807,26 +807,17 @@ int bch2_journal_res_get_slowpath(struct journal *j, struct journal_res *res,
 				  unsigned flags,
 				  struct btree_trans *trans)
 {
-	int ret;
-
-	if (closure_wait_event_timeout(&j->async_wait,
-		   !bch2_err_matches(ret = __journal_res_get(j, res, flags), BCH_ERR_operation_blocked) ||
-		   (flags & JOURNAL_RES_GET_NONBLOCK),
-		   HZ))
-		return ret;
-
-	if (trans)
-		bch2_trans_unlock_long(trans);
+	if (flags & JOURNAL_RES_GET_NONBLOCK)
+		return __journal_res_get(j, res, flags);
 
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
-	int remaining_wait = max(max_dev_latency(c) * 2, HZ * 10);
+	long total_wait = max(max_dev_latency(c) * 2, HZ * 10);
+	int ret;
 
-	remaining_wait = max(0, remaining_wait - HZ);
-
-	if (closure_wait_event_timeout(&j->async_wait,
+	if (trans_wait_event_timeout(trans, &j->async_wait,
 		   !bch2_err_matches(ret = __journal_res_get(j, res, flags), BCH_ERR_operation_blocked) ||
 		   (flags & JOURNAL_RES_GET_NONBLOCK),
-		   remaining_wait))
+		   total_wait))
 		return ret;
 
 	CLASS(printbuf, buf)();
@@ -836,7 +827,7 @@ int bch2_journal_res_get_slowpath(struct journal *j, struct journal_res *res,
 		bch2_btree_write_buffer_to_text(&buf, c);
 	bch2_print_str(c, KERN_ERR, buf.buf);
 
-	closure_wait_event(&j->async_wait,
+	trans_wait_event(trans, &j->async_wait,
 		   !bch2_err_matches(ret = __journal_res_get(j, res, flags), BCH_ERR_operation_blocked) ||
 		   (flags & JOURNAL_RES_GET_NONBLOCK));
 	return ret;
