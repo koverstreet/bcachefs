@@ -686,6 +686,18 @@ struct bio *bch2_bio_map_and_chain(struct block_device *bdev,
 	return tail;
 }
 
+int bch2_bio_submit_buf_wait(struct block_device *bdev,
+			     void *buf, size_t count,
+			     sector_t offset,
+			     blk_opf_t opf)
+{
+	struct bio *bio = bch2_bio_map_and_chain(bdev, buf, count, offset, opf,
+						 GFP_KERNEL, &fs_bio_set);
+	int ret = submit_bio_wait(bio);
+	bio_put(bio);
+	return ret;
+}
+
 int bch2_bio_alloc_pages(struct bio *bio, unsigned bs, size_t size, gfp_t gfp_mask)
 {
 	BUG_ON(!is_power_of_2(bs));
