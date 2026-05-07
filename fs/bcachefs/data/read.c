@@ -475,10 +475,8 @@ static inline struct bch_read_bio *bch2_rbio_free(struct bch_read_bio *rbio)
 {
 	BUG_ON(rbio->bounce && !rbio->split);
 
-	if (rbio->have_ioref) {
-		struct bch_dev *ca = bch2_dev_have_ref(rbio->c, rbio->pick.ptr.dev);
-		enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_io_read);
-	}
+	if (rbio->ca)
+		enumerated_ref_put(&rbio->ca->io_ref[READ], BCH_DEV_READ_REF_io_read);
 
 	if (rbio->split) {
 		struct bch_read_bio *parent = rbio->parent;
@@ -884,7 +882,7 @@ static int bch2_rbio_decrypt(struct bch_fs *c, struct bch_read_bio *rbio,
 static int __bch2_read_endio_work(struct bch_read_bio *rbio)
 {
 	struct bch_fs *c	= rbio->c;
-	struct bch_dev *ca = rbio->have_ioref ? bch2_dev_have_ref(c, rbio->pick.ptr.dev) : NULL;
+	struct bch_dev *ca = rbio->ca;
 	struct bch_read_bio *parent	= bch2_rbio_parent(rbio);
 	struct bio *src			= &rbio->bio;
 	struct bio *dst			= &parent->bio;
@@ -1019,7 +1017,7 @@ static void bch2_read_endio(struct bio *bio)
 	struct bch_read_bio *rbio =
 		container_of(bio, struct bch_read_bio, bio);
 	struct bch_fs *c	= rbio->c;
-	struct bch_dev *ca = rbio->have_ioref ? bch2_dev_have_ref(c, rbio->pick.ptr.dev) : NULL;
+	struct bch_dev *ca = rbio->ca;
 	struct workqueue_struct *wq = NULL;
 	enum rbio_context context = RBIO_CONTEXT_NULL;
 
@@ -1222,7 +1220,7 @@ static inline struct bch_read_bio *read_extent_rbio_alloc(struct btree_trans *tr
 	rbio->bvec_iter		= iter;
 	rbio->offset_into_extent= offset_into_extent;
 	rbio->flags		= flags;
-	rbio->have_ioref	= ca != NULL;
+	rbio->ca		= ca;
 	rbio->narrow_crcs	= narrow_crcs;
 	rbio->ret		= 0;
 	rbio->context		= 0;
@@ -1500,7 +1498,7 @@ int __bch2_read_extent(struct btree_trans *trans,
 				       bounce, read_full, narrow_crcs);
 
 	if (likely(!rbio->pick.do_ec_reconstruct)) {
-		if (unlikely(!rbio->have_ioref)) {
+		if (unlikely(!rbio->ca)) {
 			ret = bch2_rbio_error(rbio,
 				bch_err_throw(c, data_read_retry_device_offline));
 			goto out;
@@ -1703,7 +1701,7 @@ static void __bch2_read_bio_to_text(struct printbuf *out,
 	prt_printf(out, "promote:\t%u\n",	rbio->promote);
 	prt_printf(out, "bounce:\t%u\n",	rbio->bounce);
 	prt_printf(out, "split:\t%u\n",		rbio->split);
-	prt_printf(out, "have_ioref:\t%u\n",	rbio->have_ioref);
+	prt_printf(out, "have_ioref:\t%u\n",	rbio->ca != NULL);
 	prt_printf(out, "narrow_crcs:\t%u\n",	rbio->narrow_crcs);
 	prt_printf(out, "context:\t%u\n",	rbio->context);
 

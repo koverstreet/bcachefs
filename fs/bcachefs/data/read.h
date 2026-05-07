@@ -26,6 +26,7 @@ struct bch_read_err_report {
 
 struct bch_read_bio {
 	struct bch_fs		*c;
+	struct bch_dev		*ca;	/* stashed at submit; see bch_write_bio */
 	u64			start_time;
 	u64			submit_time;
 
@@ -59,7 +60,6 @@ struct bch_read_bio {
 				promote:1,
 				bounce:1,
 				split:1,
-				have_ioref:1,
 				narrow_crcs:1,
 				saw_error:1,
 				self_healing:1,
