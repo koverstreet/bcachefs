@@ -48,10 +48,28 @@ static const struct rhashtable_params bch_update_params = {
 	.automatic_shrinking	= true,
 };
 
-bool bch2_data_update_in_flight(struct bch_fs *c, struct bbpos *pos)
+bool bch2_data_update_in_flight(struct bch_fs *c, struct bbpos *pos,
+				enum bch_data_update_types type)
 {
 	guard(rcu)();
-	return rhltable_lookup(&c->update_table, pos, bch_update_params) != NULL;
+	struct rhlist_head *list = rhltable_lookup(&c->update_table, pos,
+						   bch_update_params);
+	if (!list)
+		return false;
+
+	/* non-copygc updates are excluded by any in-flight update at the same
+	 * pos */
+	if (type != BCH_DATA_UPDATE_copygc)
+		return true;
+
+	/* copygc is only excluded by another copygc — promotes, reconciles,
+	 * etc. shouldn't block bucket evacuation */
+	struct data_update *m;
+	struct rhlist_head *p;
+	rhl_for_each_entry_rcu(m, p, list, hash)
+		if (m->opts.type == BCH_DATA_UPDATE_copygc)
+			return true;
+	return false;
 }
 
 static void ptr_bits_to_text(struct printbuf *out, unsigned ptrs, const char *name)
@@ -1401,12 +1419,12 @@ int bch2_data_update_init(struct btree_trans *trans,
 			ret = __bch2_can_do_write(c, io_opts, &m->opts, &m->op.devs_have, k, NULL);
 			if (ret)
 				goto out;
+		}
 
-			if (bch2_data_update_in_flight(c, &m->pos)) {
-				event_inc(c, data_update_in_flight);
-				ret = bch_err_throw(c, data_update_fail_in_flight);
-				goto out;
-			}
+		if (bch2_data_update_in_flight(c, &m->pos, data_opts.type)) {
+			event_inc(c, data_update_in_flight);
+			ret = bch_err_throw(c, data_update_fail_in_flight);
+			goto out;
 		}
 
 		if (!rhltable_insert_key(&c->update_table, &m->pos, &m->hash, bch_update_params))

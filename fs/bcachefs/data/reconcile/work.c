@@ -757,7 +757,7 @@ static int do_reconcile_extent_phys(struct moving_context *ctxt,
 	struct bkey_s_c_backpointer bp = bkey_s_c_to_backpointer(bp_k);
 
 	struct bbpos pos = BBPOS(bp.v->btree_id, bp.v->pos);
-	if (bch2_data_update_in_flight(c, &pos))
+	if (bch2_data_update_in_flight(c, &pos, BCH_DATA_UPDATE_reconcile))
 		return 0;
 
 	/* We require holding an intent lock when calling

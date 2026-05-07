@@ -84,7 +84,8 @@ void bch2_data_update_opts_to_text(struct printbuf *, struct bch_fs *,
 				   struct bch_inode_opts *, struct data_update_opts *);
 void bch2_data_update_to_text(struct printbuf *, struct data_update *);
 void bch2_data_update_inflight_to_text(struct printbuf *, struct data_update *);
-bool bch2_data_update_in_flight(struct bch_fs *, struct bbpos *);
+bool bch2_data_update_in_flight(struct bch_fs *, struct bbpos *,
+				enum bch_data_update_types);
 
 int bch2_data_update_index_update(struct bch_write_op *);
 
