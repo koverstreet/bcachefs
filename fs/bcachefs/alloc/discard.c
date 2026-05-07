@@ -107,7 +107,8 @@ static void discard_endio(struct bio *_bio)
 	bio_put(&bio->bio);
 }
 
-static int discard_in_flight_add(struct bch_fs *c, struct bpos bucket,
+static int discard_in_flight_add(struct bch_fs *c, struct bch_dev *ca,
+				 struct bpos bucket,
 				 bool fastpath, bool check)
 {
 	u64 dev_bucket = bucket_to_u64(bucket);
@@ -122,7 +123,10 @@ static int discard_in_flight_add(struct bch_fs *c, struct bpos bucket,
 
 	if (!check) {
 		try(darray_push_gfp(&d->in_flight,
-				    ((discard_in_flight) { .dev_bucket = dev_bucket } ),
+				    ((discard_in_flight) {
+					.dev_bucket = dev_bucket,
+					.ca = ca,
+				    }),
 				    GFP_NOWAIT));
 
 		d->refs[bucket.inode]++;
@@ -229,6 +233,14 @@ static bool discards_pending(struct bch_fs_discards *d, bool fastpath, bool all)
 	return false;
 }
 
+/*
+ * The io_ref taken in discard_mark_free is held until here (rather than
+ * dropped at discard_endio) to block dev_remove from reaching
+ * bch2_dev_remove_alloc — which deletes the alloc btree range for the
+ * dev — until our discard_mark_free alloc updates have committed.
+ * Otherwise dev_remove and discards_complete would race on the same
+ * alloc-btree range.
+ */
 static int bch2_discards_complete(struct btree_trans *trans,
 				  struct discard_state *s,
 				  bool fastpath, bool all)
@@ -244,7 +256,7 @@ static int bch2_discards_complete(struct btree_trans *trans,
 
 	while ((dev_bucket = next_to_complete(d, &iter))) {
 		struct bpos bucket = u64_to_bucket(dev_bucket);
-		struct bch_dev *ca = bch2_dev_have_ref(c, bucket.inode);
+		struct bch_dev *ca;
 
 		ret = lockrestart_do(trans, discard_mark_free(trans, bucket, s, fastpath)) ?: ret;
 
@@ -254,6 +266,7 @@ static int bch2_discards_complete(struct btree_trans *trans,
 			if (i > &darray_last(d->in_flight) || i->dev_bucket != dev_bucket)
 				i = darray_find_p(d->in_flight, i, i->dev_bucket == dev_bucket);
 			BUG_ON(!i->marking_free);
+			ca = i->ca;
 			darray_remove_item(&d->in_flight, i);
 		}
 
@@ -274,7 +287,7 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 	if (unlikely(dev_bucket_nouse(c, bucket)))
 		return 0;
 
-	int ret = discard_in_flight_add(c, bucket, fastpath, true);
+	int ret = discard_in_flight_add(c, NULL, bucket, fastpath, true);
 	if (ret) {
 		if (ret == -EEXIST) {
 			s->eexist += bucket_size;
@@ -321,7 +334,7 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 			return 0;
 		}
 
-		ret = discard_in_flight_add(c, bucket, fastpath, false);
+		ret = discard_in_flight_add(c, ca, bucket, fastpath, false);
 		if (!ret) {
 			bch2_trans_unlock(trans);
 			discard_submit(ca, bucket, fastpath);

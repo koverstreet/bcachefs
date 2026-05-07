@@ -192,6 +192,12 @@ struct bch_fs_allocator {
 
 typedef struct {
 	u64				dev_bucket;
+	/*
+	 * Stashed at add time so completion doesn't have to re-derive ca via
+	 * c->devs[idx], which dev_remove may have cleared while our io_ref
+	 * still pins the dev object.
+	 */
+	struct bch_dev			*ca;
 	bool				complete;
 	bool				marking_free;
 } discard_in_flight;
