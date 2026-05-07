@@ -81,27 +81,42 @@ static void ptr_bits_to_text(struct printbuf *out, unsigned ptrs, const char *na
 	}
 }
 
-static void bkey_put_dev_refs(struct bch_fs *c, struct bkey_s_c k, unsigned ptrs_held)
+/*
+ * Walks @cas (parallel to the ptrs in @k) and drops refs taken in
+ * bkey_get_dev_refs.  Doesn't re-derive ca via c->devs[idx] — dev_remove
+ * may have cleared that slot while our refs still pin the dev objects.
+ */
+static void bkey_put_dev_refs(struct bch_fs *c, struct bkey_s_c k,
+			      struct bch_dev **cas)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	unsigned ptr_bit = 1;
+	unsigned i = 0;
 
 	bkey_for_each_ptr(ptrs, ptr) {
-		if (ptrs_held & ptr_bit)
-			bch2_dev_put(bch2_dev_have_ref(c, ptr->dev));
-		ptr_bit <<= 1;
+		if (cas[i])
+			bch2_dev_put(cas[i]);
+		i++;
 	}
 }
 
-static unsigned bkey_get_dev_refs(struct bch_fs *c, struct bkey_s_c k)
+/*
+ * Take a dev ref per ptr, populating @cas (NULL where tryget failed) and
+ * returning a bitmask of held positions.  The bitmask is consumed by
+ * nocow_lock/unlock callers that want a per-ptr mask; @cas is consumed by
+ * bkey_put_dev_refs at exit.
+ */
+static unsigned bkey_get_dev_refs(struct bch_fs *c, struct bkey_s_c k,
+				  struct bch_dev **cas)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	unsigned ptrs_held = 0, ptr_bit = 1;
+	unsigned ptrs_held = 0, ptr_bit = 1, i = 0;
 
 	bkey_for_each_ptr(ptrs, ptr) {
-		if (likely(bch2_dev_bkey_tryget(c, k, ptr->dev)))
+		cas[i] = bch2_dev_bkey_tryget(c, k, ptr->dev);
+		if (likely(cas[i]))
 			ptrs_held |= ptr_bit;
 		ptr_bit <<= 1;
+		i++;
 	}
 
 	return ptrs_held;
@@ -791,7 +806,7 @@ void bch2_data_update_exit(struct data_update *update, int ret)
 
 	if (c->opts.nocow_enabled)
 		bch2_bkey_nocow_unlock(c, k, update->ptrs_held, 0);
-	bkey_put_dev_refs(c, k, update->ptrs_held);
+	bkey_put_dev_refs(c, k, update->cas);
 	bch2_disk_reservation_put(c, &update->op.res);
 	bch2_bkey_buf_exit(&update->k);
 }
@@ -1441,7 +1456,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 	 * read from the pointer we're operating on
 	 */
 
-	m->ptrs_held = bkey_get_dev_refs(c, k);
+	m->ptrs_held = bkey_get_dev_refs(c, k, m->cas);
 
 	if (c->opts.nocow_enabled) {
 		if (!bch2_bkey_nocow_trylock(c, ptrs, m->ptrs_held, 0)) {
@@ -1498,7 +1513,8 @@ out:
 		m->on_hashtable = false;
 	}
 
-	bkey_put_dev_refs(c, k, m->ptrs_held);
+	bkey_put_dev_refs(c, k, m->cas);
+	memset(m->cas, 0, sizeof(m->cas));
 	m->ptrs_held = 0;
 	bch2_disk_reservation_put(c, &m->op.res);
 	bch2_bkey_buf_exit(&m->k);
