@@ -861,7 +861,7 @@ static void btree_node_read_work(struct work_struct *work)
 	struct btree_read_bio *rb =
 		container_of(work, struct btree_read_bio, work);
 	struct bch_fs *c	= rb->c;
-	struct bch_dev *ca	= rb->have_ioref ? bch2_dev_have_ref(c, rb->pick.ptr.dev) : NULL;
+	struct bch_dev *ca	= rb->ca;
 	struct btree *b		= rb->b;
 	struct bio *bio		= &rb->bio;
 	int ret = 0;
@@ -901,6 +901,7 @@ static void btree_node_read_work(struct work_struct *work)
 			break;
 
 		ca = bch2_dev_get_ioref(c, rb->pick.ptr.dev, READ, BCH_DEV_READ_REF_btree_node_read);
+		rb->ca			= ca;
 		rb->have_ioref		= ca != NULL;
 		rb->start_time		= local_clock();
 		bio_reset(bio, NULL, REQ_OP_READ|REQ_SYNC|REQ_META);
@@ -986,8 +987,7 @@ static void btree_node_read_endio(struct bio *bio)
 	struct btree_read_bio *rb =
 		container_of(bio, struct btree_read_bio, bio);
 	struct bch_fs *c	= rb->c;
-	struct bch_dev *ca	= rb->have_ioref
-		? bch2_dev_have_ref(c, rb->pick.ptr.dev) : NULL;
+	struct bch_dev *ca	= rb->ca;
 
 	bch2_account_io_completion(ca, BCH_MEMBER_ERROR_read,
 				   rb->start_time, !bio->bi_status);
@@ -1042,6 +1042,7 @@ void bch2_btree_node_read(struct btree_trans *trans, struct btree *b,
 			       &c->btree.bio);
 	rb = container_of(bio, struct btree_read_bio, bio);
 	rb->c			= c;
+	rb->ca			= ca;
 	rb->b			= b;
 	rb->start_time		= local_clock();
 	rb->have_ioref		= ca != NULL;
