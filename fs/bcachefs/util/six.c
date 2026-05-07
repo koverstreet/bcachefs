@@ -92,6 +92,35 @@ static inline void six_set_owner(struct six_lock *lock, enum six_lock_type type,
 	}
 }
 
+#ifdef CONFIG_BCACHEFS_DEBUG
+/*
+ * Capture the acquire stack for diagnostic prints (e.g. cache_exit
+ * "intent held on freeable node"). Called from the public API after a
+ * successful intent acquire — by then wait_lock has been dropped and
+ * we hold intent (sleepable), so allocation is safe.
+ */
+static void six_lock_record_acquire(struct six_lock *lock, enum six_lock_type type)
+{
+	if (type == SIX_LOCK_intent)
+		bch2_save_backtrace(&lock->owner_stack, current, 1, GFP_NOFS);
+}
+#else
+static inline void six_lock_record_acquire(struct six_lock *lock, enum six_lock_type type) {}
+#endif
+
+void six_lock_owner_stack_to_text(struct printbuf *out, struct six_lock *lock)
+{
+#ifdef CONFIG_BCACHEFS_DEBUG
+	if (lock->owner_stack.nr) {
+		prt_printf(out, "Intent acquired at:\n");
+		bch2_prt_backtrace(out, &lock->owner_stack);
+	}
+#else
+	(void) out;
+	(void) lock;
+#endif
+}
+
 static inline unsigned pcpu_read_count(struct six_lock *lock)
 {
 	unsigned read_count = 0;
@@ -406,6 +435,7 @@ bool six_trylock_ip(struct six_lock *lock, enum six_lock_type type, unsigned lon
 
 	if (type != SIX_LOCK_write)
 		six_acquire(&lock->dep_map, 1, type == SIX_LOCK_read, ip);
+	six_lock_record_acquire(lock, type);
 	return true;
 }
 EXPORT_SYMBOL_GPL(six_trylock_ip);
@@ -719,8 +749,10 @@ int six_lock_ip_waiter(struct six_lock *lock, enum six_lock_type type,
 
 	if (ret && type != SIX_LOCK_write)
 		six_release(&lock->dep_map, ip);
-	if (!ret)
+	if (!ret) {
 		lock_acquired(&lock->dep_map, ip);
+		six_lock_record_acquire(lock, type);
+	}
 
 	return ret;
 }
@@ -1026,6 +1058,10 @@ void six_lock_exit(struct six_lock *lock)
 	if (wf != (struct six_lock_wait_fifo *) &lock->inline_fifo)
 		kfree(wf);
 	RCU_INIT_POINTER(lock->wait_fifo, NULL);
+
+#ifdef CONFIG_BCACHEFS_DEBUG
+	darray_exit(&lock->owner_stack);
+#endif
 }
 EXPORT_SYMBOL_GPL(six_lock_exit);
 

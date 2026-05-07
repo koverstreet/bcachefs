@@ -1564,6 +1564,8 @@ static noinline __cold void btree_cache_exit_locked_dump(struct bch_fs *c,
 		bch2_prt_task_backtrace(&msg.m, owner, 0, GFP_NOWAIT);
 	} else
 		prt_printf(&msg.m, "owner not recorded");
+
+	six_lock_owner_stack_to_text(&msg.m, &b->c.lock);
 }
 
 static void btree_cache_exit_drain_node(struct bch_fs *c,
