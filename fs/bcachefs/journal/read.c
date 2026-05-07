@@ -301,7 +301,6 @@ static void journal_entry_null_range(void *start, void *end)
 		memset(entry, 0, sizeof(*entry));
 }
 
-#define JOURNAL_ENTRY_REREAD	5
 #define JOURNAL_ENTRY_NONE	6
 #define JOURNAL_ENTRY_BAD	7
 
@@ -1060,8 +1059,7 @@ fsck_err:
 static int jset_validate_early(struct bch_fs *c,
 			 struct bch_dev *ca,
 			 struct jset *jset, u64 sector,
-			 unsigned bucket_sectors_left,
-			 unsigned sectors_read)
+			 unsigned bucket_sectors_left)
 {
 	struct bkey_validate_context from = {
 		.from		= BKEY_VALIDATE_journal,
@@ -1086,9 +1084,6 @@ static int jset_validate_early(struct bch_fs *c,
 	}
 
 	size_t bytes = vstruct_bytes(jset);
-	if (bytes > (sectors_read << 9) &&
-	    sectors_read < bucket_sectors_left)
-		return JOURNAL_ENTRY_REREAD;
 
 	if (journal_entry_err_on(bytes > bucket_sectors_left << 9,
 			c, version, jset, NULL,
@@ -1128,67 +1123,39 @@ static int journal_read_bucket(struct bch_dev *ca,
 {
 	struct bch_fs *c = ca->fs;
 	struct journal_device *ja = &ca->journal;
-	struct jset *j = NULL;
-	unsigned sectors, sectors_read = 0;
+	struct jset *j = buf->data;
 	u64 offset = bucket_to_sector(ca, ja->buckets[bucket]),
 	    end = offset + ca->mi.bucket_size;
 	bool saw_bad = false, csum_good;
-	int ret = 0;
 
 	pr_debug("reading %u", bucket);
 
-	while (offset < end) {
-		if (!sectors_read) {
-			struct bio *bio;
-			unsigned nr_bvecs;
-reread:
-			sectors_read = min_t(unsigned,
-				end - offset, buf->size >> 9);
-			nr_bvecs = buf_nr_bvecs(buf->data, sectors_read << 9);
+	u64 submit_time = local_clock();
+	int ret = bch2_bio_submit_buf_wait(ca->disk_sb.bdev, buf->data, bucket_bytes(ca),
+					   offset, REQ_OP_READ);
 
-			bio = kmalloc(sizeof(struct bio) + sizeof(struct bio_vec) * nr_bvecs, GFP_KERNEL);
-			if (!bio)
-				return bch_err_throw(c, ENOMEM_journal_read_bucket);
-			bio_init(bio, ca->disk_sb.bdev, bio_inline_vecs(bio), nr_bvecs, REQ_OP_READ);
+	bch2_account_io_completion(ca, BCH_MEMBER_ERROR_read, submit_time, !ret);
 
-			bio->bi_iter.bi_sector = offset;
-			bch2_bio_map(bio, buf->data, sectors_read << 9);
-
-			u64 submit_time = local_clock();
-			ret = submit_bio_wait(bio);
-			kfree(bio);
-
-			if (!ret && bch2_meta_read_fault("journal"))
-				ret = bch_err_throw(c, EIO_fault_injected);
-
-			bch2_account_io_completion(ca, BCH_MEMBER_ERROR_read,
-						   submit_time, !ret);
-
-			if (ret) {
-				bch_err_dev_ratelimited(ca,
+	if (ret) {
+		bch_err_dev_ratelimited(ca,
 					"journal read error: sector %llu", offset);
-				/*
-				 * We don't error out of the recovery process
-				 * here, since the relevant journal entry may be
-				 * found on a different device, and missing or
-				 * no journal entries will be handled later
-				 */
-				return 0;
-			}
+		/*
+		 * We don't error out of the recovery process
+		 * here, since the relevant journal entry may be
+		 * found on a different device, and missing or
+		 * no journal entries will be handled later
+		 */
+		return 0;
+	}
 
-			j = buf->data;
-		}
+	while (offset < end) {
+		unsigned sectors;
 
-		ret = jset_validate_early(c, ca, j, offset,
-				    end - offset, sectors_read);
+		ret = jset_validate_early(c, ca, j, offset, end - offset);
 		switch (ret) {
 		case 0:
 			sectors = vstruct_sectors(j, c->block_bits);
 			break;
-		case JOURNAL_ENTRY_REREAD:
-			if (vstruct_bytes(j) > buf->size)
-				try(journal_read_buf_realloc(c, buf, vstruct_bytes(j)));
-			goto reread;
 		case JOURNAL_ENTRY_NONE:
 			if (!saw_bad)
 				return 0;
@@ -1204,10 +1171,9 @@ reread:
 		}
 
 		if (le64_to_cpu(j->seq) > ja->highest_seq_found) {
-			ja->highest_seq_found = le64_to_cpu(j->seq);
-			ja->cur_idx = bucket;
-			ja->sectors_free = ca->mi.bucket_size -
-				bucket_remainder(ca, offset) - sectors;
+			ja->highest_seq_found	= le64_to_cpu(j->seq);
+			ja->cur_idx		= bucket;
+			ja->sectors_free	= end - offset - sectors;
 		}
 
 		/*
@@ -1261,7 +1227,6 @@ reread:
 next_block:
 		pr_debug("next");
 		offset		+= sectors;
-		sectors_read	-= sectors;
 		j = ((void *) j) + (sectors << 9);
 	}
 
@@ -1295,27 +1260,11 @@ static int journal_peek_bucket(struct bch_dev *ca,
 {
 	struct bch_fs *c = ca->fs;
 	struct journal_device *ja = &ca->journal;
-	u64 offset = bucket_to_sector(ca, ja->buckets[bucket]);
 
-	if (buf->size < block_bytes(c)) {
-		int ret = journal_read_buf_realloc(c, buf, block_bytes(c));
-		if (ret)
-			return ret;
-	}
-
-	unsigned nr_bvecs = buf_nr_bvecs(buf->data, block_bytes(c));
-	struct bio *bio = kmalloc(sizeof(struct bio) +
-				  sizeof(struct bio_vec) * nr_bvecs, GFP_KERNEL);
-	if (!bio)
-		return bch_err_throw(c, ENOMEM_journal_read_bucket);
-
-	bio_init(bio, ca->disk_sb.bdev, bio_inline_vecs(bio), nr_bvecs, REQ_OP_READ);
-	bio->bi_iter.bi_sector = offset;
-	bch2_bio_map(bio, buf->data, block_bytes(c));
-
-	int ret = submit_bio_wait(bio);
-	kfree(bio);
-
+	int ret = bch2_bio_submit_buf_wait(ca->disk_sb.bdev,
+					   buf->data, block_bytes(c),
+					   bucket_to_sector(ca, ja->buckets[bucket]),
+					   REQ_OP_READ);
 	if (ret)
 		return 0; /* not fatal - bucket may be readable on another device */
 
@@ -1341,7 +1290,7 @@ static CLOSURE_CALLBACK(bch2_journal_read_device)
 	if (!ja->nr)
 		goto out;
 
-	ret = journal_read_buf_realloc(c, &buf, PAGE_SIZE);
+	ret = journal_read_buf_realloc(c, &buf, bucket_bytes(ca));
 	if (ret)
 		goto err;
 
