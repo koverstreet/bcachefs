@@ -45,6 +45,13 @@ struct bch_write_bio {
 	struct_group(wbio,
 	struct bch_fs		*c;
 	struct bch_write_bio	*parent;
+	/*
+	 * Stashed at submit so endio doesn't have to re-derive the dev pointer
+	 * from @dev — c->devs[@dev] may be NULL by then (dev_remove clears the
+	 * lookup table before draining refs), but @ca stays valid as long as
+	 * @have_ioref keeps a ref pinned.
+	 */
+	struct bch_dev		*ca;
 
 	u64			submit_time;
 	u64			inode_offset;

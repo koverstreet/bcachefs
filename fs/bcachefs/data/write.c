@@ -1200,6 +1200,7 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 		}
 
 		n->c			= c;
+		n->ca			= ca;
 		n->dev			= ptr->dev;
 		n->have_ioref		= ca != NULL;
 		n->nocow		= nocow;
@@ -1447,9 +1448,7 @@ static void bch2_write_endio(struct bio *bio)
 	struct bch_write_bio *wbio	= to_wbio(bio);
 	struct bch_write_bio *parent	= wbio->split ? wbio->parent : NULL;
 	struct bch_fs *c		= wbio->c;
-	struct bch_dev *ca		= wbio->have_ioref
-		? bch2_dev_have_ref(c, wbio->dev)
-		: NULL;
+	struct bch_dev *ca		= wbio->ca;
 
 	bch2_account_io_completion(ca, BCH_MEMBER_ERROR_write,
 				   wbio->submit_time, !bio->bi_status);
