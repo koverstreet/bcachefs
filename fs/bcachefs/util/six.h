@@ -128,6 +128,7 @@
 #include <linux/types.h>
 
 #include "util/fifo.h"
+#include "util/util.h"
 
 enum six_lock_type {
 	SIX_LOCK_read,
@@ -191,6 +192,9 @@ struct six_lock {
 	unsigned		intent_lock_recurse;
 	unsigned		write_lock_recurse;
 	struct task_struct	*owner;
+#ifdef CONFIG_BCACHEFS_DEBUG
+	bch_stacktrace		owner_stack;
+#endif
 	unsigned __percpu	*readers;
 	raw_spinlock_t		wait_lock;
 

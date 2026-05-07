@@ -1545,7 +1545,6 @@ static noinline __cold void btree_cache_exit_locked_dump(struct bch_fs *c,
 							 const char *what)
 {
 	struct six_lock_count counts = six_lock_counts(&b->c.lock);
-	struct task_struct *owner = READ_ONCE(b->c.lock.owner);
 
 	CLASS(bch_log_msg, msg)(c);
 	prt_printf(&msg.m, "%s on %s node at cache_exit\n", what,
@@ -1559,11 +1558,16 @@ static noinline __cold void btree_cache_exit_locked_dump(struct bch_fs *c,
 		   counts.n[SIX_LOCK_write],
 		   b->c.lock.intent_lock_recurse,
 		   b->c.lock.write_lock_recurse);
-	if (owner) {
-		prt_printf(&msg.m, "Owner: %s\n", owner->comm);
+
+	struct task_struct *owner = READ_ONCE(b->c.lock.owner);
+	prt_printf(&msg.m, "Owner: %s\n", owner ? owner->comm : "(not recorded)");
+#ifdef CONFIG_BCACHEFS_DEBUG
+	prt_printf(&msg.m, "Last taken:\n");
+	bch2_prt_backtrace(&msg.m, &b->c.lock.owner_stack);
+#else
+	if (owner)
 		bch2_prt_task_backtrace(&msg.m, owner, 0, GFP_NOWAIT);
-	} else
-		prt_printf(&msg.m, "owner not recorded");
+#endif
 }
 
 static void btree_cache_exit_drain_node(struct bch_fs *c,
