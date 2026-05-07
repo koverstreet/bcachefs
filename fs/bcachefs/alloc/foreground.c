@@ -538,6 +538,34 @@ static noinline void bucket_alloc_to_text(struct printbuf *out,
 		prt_printf(out, "err\t%s\n", bch2_err_str(PTR_ERR(ob)));
 }
 
+/*
+ * Replicas can only fit across a device set when no single device exceeds
+ * 1/N of the total capacity: a block on the largest device needs N-1 copies
+ * elsewhere, and those copies must fit in (total - max). So
+ * (N-1)*max <= total - max, i.e. N*max <= total.
+ *
+ * When this is violated for the rw device set the request is allowed to
+ * write to (after data_type filtering), no amount of waiting or copygc
+ * fixes it; the request must degrade to fewer replicas or fail.
+ */
+static bool req_dev_sizes_mismatched(struct bch_fs *c, struct alloc_request *req)
+{
+	if (req->nr_replicas <= 1)
+		return false;
+
+	u64 total = 0, max = 0;
+
+	guard(rcu)();
+	for_each_rw_member_rcu(c, ca) {
+		if (!(ca->mi.data_allowed & BIT(req->data_type)))
+			continue;
+		total += ca->mi.nbuckets;
+		max = max(max, ca->mi.nbuckets);
+	}
+
+	return max > (total - max);
+}
+
 /**
  * bch2_bucket_alloc_trans - allocate a single bucket from a specific device
  * @trans:	transaction object
@@ -576,6 +604,9 @@ again:
 		    c->recovery.pass_done < BCH_RECOVERY_PASS_check_allocations)
 			goto alloc;
 
+		bool have_replicas = req->nr_effective ||
+			(req->devs_have && req->devs_have->nr);
+
 		if (bch2_copygc_can_make_progress(ca)) {
 			req->copygc_can_make_progress = true;
 			bch2_copygc_wakeup(c);
@@ -588,9 +619,10 @@ again:
 		    !req->will_retry_target_devices &&
 		    !req->will_retry_all_devices &&
 		    !req->will_retry_set_devices) {
-			if ((!req->copygc_can_make_progress ||
-			     req->watermark == BCH_WATERMARK_copygc) &&
-			    (req->nr_effective || (req->devs_have && req->devs_have->nr))) {
+			if (have_replicas &&
+			    (!req->copygc_can_make_progress ||
+			     req->watermark == BCH_WATERMARK_copygc ||
+			     req_dev_sizes_mismatched(c, req))) {
 				ob = ERR_PTR(bch_err_throw(c, bucket_alloc_no_progress));
 			} else if (!waiting) {
 				closure_wait(&c->allocator.freelist_wait, req->cl);
