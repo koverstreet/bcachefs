@@ -566,6 +566,44 @@ static bool req_dev_sizes_mismatched(struct bch_fs *c, struct alloc_request *req
 	return max > (total - max);
 }
 
+/*
+ * Decide whether an alloc that came up empty-handed on the current candidate
+ * device should bail (committing the request with whatever replicas it
+ * already has) instead of waiting on freelist_wait. Bails iff the request
+ * has at least one replica's worth to commit AND any of:
+ *
+ *  - copygc_can_make_progress is false: the per-device check (set above by
+ *    the caller from bch2_copygc_can_make_progress(ca)) says copygc can't
+ *    free buckets here. No reason to wait — copygc isn't going to help.
+ *
+ *  - watermark == copygc and data_type != btree: the request itself is
+ *    issued at copygc watermark, i.e. it IS the thing trying to free
+ *    buckets. Blocking it on freelist_wait would deadlock the freer against
+ *    its own progress signal. Btree node writes are excluded from this
+ *    carve-out: they may inherit copygc watermark for priority, but they
+ *    must not commit under-replicated (a single-ptr btree node on a failing
+ *    device → btree_node_write_all_failed → emergency_ro).
+ *
+ *  - req_dev_sizes_mismatched: the rw device topology can't satisfy
+ *    nr_replicas regardless of how much waiting or copygc happens (e.g.
+ *    after a device remove leaves max(devs) > sum(rest)). See helper above.
+ *
+ * If none of these fire and we have a closure to wait on, we register on
+ * freelist_wait and retry once the wake counter advances.
+ */
+static bool req_alloc_should_bail(struct bch_fs *c, struct alloc_request *req)
+{
+	bool have_replicas = req->nr_effective ||
+		(req->devs_have && req->devs_have->nr);
+	if (!have_replicas)
+		return false;
+
+	return !req->copygc_can_make_progress ||
+	       (req->watermark == BCH_WATERMARK_copygc &&
+		req->data_type != BCH_DATA_btree) ||
+	       req_dev_sizes_mismatched(c, req);
+}
+
 /**
  * bch2_bucket_alloc_trans - allocate a single bucket from a specific device
  * @trans:	transaction object
@@ -604,9 +642,6 @@ again:
 		    c->recovery.pass_done < BCH_RECOVERY_PASS_check_allocations)
 			goto alloc;
 
-		bool have_replicas = req->nr_effective ||
-			(req->devs_have && req->devs_have->nr);
-
 		if (bch2_copygc_can_make_progress(ca)) {
 			req->copygc_can_make_progress = true;
 			bch2_copygc_wakeup(c);
@@ -619,10 +654,7 @@ again:
 		    !req->will_retry_target_devices &&
 		    !req->will_retry_all_devices &&
 		    !req->will_retry_set_devices) {
-			if (have_replicas &&
-			    (!req->copygc_can_make_progress ||
-			     req->watermark == BCH_WATERMARK_copygc ||
-			     req_dev_sizes_mismatched(c, req))) {
+			if (req_alloc_should_bail(c, req)) {
 				ob = ERR_PTR(bch_err_throw(c, bucket_alloc_no_progress));
 			} else if (!waiting) {
 				closure_wait(&c->allocator.freelist_wait, req->cl);
