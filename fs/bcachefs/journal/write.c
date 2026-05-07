@@ -94,6 +94,10 @@ static void __journal_write_alloc(struct journal *j,
 				  .dev = ca->dev_idx,
 		});
 
+		/* Stash ca alongside the just-appended ptr; submit + no_io
+		 * walk @key.k.u64s ptrs in order, so the index lines up. */
+		w->cas[bkey_val_u64s(&w->key.k) - 1] = ca;
+
 		ja->sectors_free -= sectors;
 		ja->bucket_seq[ja->cur_idx] = le64_to_cpu(w->data->seq);
 
@@ -470,8 +474,9 @@ static CLOSURE_CALLBACK(journal_write_submit)
 	struct blk_plug plug;
 	blk_start_plug(&plug);
 
+	unsigned ptr_idx = 0;
 	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
-		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
+		struct bch_dev *ca = w->cas[ptr_idx++];
 
 		this_cpu_add(ca->io_done->sectors[WRITE][BCH_DATA_journal],
 			     sectors);
@@ -896,9 +901,12 @@ err:
 		bch2_fs_emergency_read_only(c, &msg.m);
 	}
 no_io:
-	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
-		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
-		enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_journal_write);
+	{
+		unsigned ptr_idx = 0;
+		extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
+			struct bch_dev *ca = w->cas[ptr_idx++];
+			enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_journal_write);
+		}
 	}
 
 	continue_at(cl, journal_write_done, j->wq);

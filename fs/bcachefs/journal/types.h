@@ -40,6 +40,14 @@ struct journal_buf {
 	struct jset		*data;
 
 	__BKEY_PADDED(key, BCH_REPLICAS_MAX);
+	/*
+	 * @cas mirrors the dev ptrs in @key in append order: cas[i] is the
+	 * bch_dev * for which __journal_write_alloc holds an io_ref.  Stashed
+	 * so the alloc → submit (or alloc → no_io) gap doesn't have to
+	 * re-derive ca via c->devs[idx], which dev_remove may have cleared
+	 * while our io_ref still pins the dev object.
+	 */
+	struct bch_dev		*cas[BCH_REPLICAS_MAX];
 	struct bch_devs_list	devs_written;
 	struct bch_io_failures	failed;
 
