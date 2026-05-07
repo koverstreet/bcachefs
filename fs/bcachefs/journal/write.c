@@ -460,7 +460,10 @@ static CLOSURE_CALLBACK(journal_write_submit)
 	unsigned sectors = vstruct_sectors(w->data, c->block_bits);
 
 	event_inc_trace(c, journal_write, buf, ({
-		prt_printf(&buf, "seq %llu\n", le64_to_cpu(w->data->seq));
+		prt_printf(&buf, "seq %llu flush %u sectors %u\n",
+			   le64_to_cpu(w->data->seq),
+			   !JSET_NO_FLUSH(w->data),
+			   sectors);
 		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&w->key));
 	}));
 
