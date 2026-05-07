@@ -600,27 +600,33 @@ static int __ec_stripe_create(struct ec_stripe_new *s)
 	return ret;
 }
 
-static void stripe_put_iorefs(struct bch_fs *c, struct bch_stripe *s)
+static void stripe_put_iorefs(struct bch_fs *c, struct bch_stripe *s,
+			      struct bch_dev **cas)
 {
-	for (unsigned i = 0; i < s->nr_blocks; i++) {
-		struct bch_dev *ca = bch2_dev_have_ref(c, s->ptrs[i].dev);
-		enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_stripe_update_extents);
-	}
+	for (unsigned i = 0; i < s->nr_blocks; i++)
+		enumerated_ref_put(&cas[i]->io_ref[WRITE],
+				   BCH_DEV_WRITE_REF_stripe_update_extents);
 }
 
 /*
  * Guard against racing with device removal by ensuring devices are writeable
- * while we create stripes and references to devices:
+ * while we create stripes and references to devices.
+ *
+ * @cas is an out array filled with the bch_dev pointers we hold io_refs on,
+ * so stripe_put_iorefs (and the partial-failure cleanup below) can drop the
+ * refs without re-deriving via c->devs[idx] — dev_remove may have cleared
+ * that slot while our io_ref still pins the dev object.
  */
-static int stripe_get_iorefs(struct bch_fs *c, struct bch_stripe *s)
+static int stripe_get_iorefs(struct bch_fs *c, struct bch_stripe *s,
+			     struct bch_dev **cas)
 {
 	for (unsigned i = 0; i < s->nr_blocks; i++) {
-		unsigned dev = s->ptrs[i].dev;
-		if (!bch2_dev_get_ioref(c, dev, WRITE, BCH_DEV_WRITE_REF_stripe_update_extents)) {
-			while (i--) {
-				struct bch_dev *ca = bch2_dev_have_ref(c, s->ptrs[i].dev);
-				enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_stripe_update_extents);
-			}
+		cas[i] = bch2_dev_get_ioref(c, s->ptrs[i].dev, WRITE,
+					    BCH_DEV_WRITE_REF_stripe_update_extents);
+		if (!cas[i]) {
+			while (i--)
+				enumerated_ref_put(&cas[i]->io_ref[WRITE],
+						   BCH_DEV_WRITE_REF_stripe_update_extents);
 			return bch_err_throw(c, stripe_create_device_offline);
 		}
 	}
@@ -637,10 +643,11 @@ static void ec_stripe_create(struct ec_stripe_new *s)
 	struct bch_stripe *v = &s->new_stripe.key.v;
 	unsigned nr_data = v->nr_blocks - v->nr_redundant;
 
-	int ret = stripe_get_iorefs(c, v);
+	struct bch_dev *cas[BCH_BKEY_PTRS_MAX];
+	int ret = stripe_get_iorefs(c, v, cas);
 	if (!ret) {
 		ret = __ec_stripe_create(s);
-		stripe_put_iorefs(c, v);
+		stripe_put_iorefs(c, v, cas);
 	}
 	if (ret && !s->err)
 		s->err = ret;
