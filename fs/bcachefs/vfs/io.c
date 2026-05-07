@@ -206,18 +206,20 @@ fsck_err:
  * insert trigger: look up the btree inode instead
  */
 static int bch2_flush_inode(struct bch_fs *c,
-			    struct bch_inode_info *inode)
+			    struct bch_inode_info *inode,
+			    u64 *flushed_seq)
 {
+	*flushed_seq = 0;
+
 	if (c->opts.journal_flush_disabled)
 		return 0;
 
 	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_fsync))
 		return -EROFS;
 
-	u64 seq;
 	int ret = bch2_trans_commit_do(c, NULL, NULL, 0,
-			    bch2_get_inode_journal_seq_trans(trans, inode_inum(inode), &seq)) ?:
-		  bch2_journal_flush_seq(&c->journal, seq, TASK_INTERRUPTIBLE) ?:
+			    bch2_get_inode_journal_seq_trans(trans, inode_inum(inode), flushed_seq)) ?:
+		  bch2_journal_flush_seq(&c->journal, *flushed_seq, TASK_INTERRUPTIBLE) ?:
 		  bch2_inode_flush_nocow_writes(c, inode);
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_fsync);
 	return ret;
@@ -228,6 +230,7 @@ int bch2_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	struct bch_inode_info *inode = file_bch_inode(file);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	u64 start_time = ktime_get_ns();
+	u64 flushed_seq = 0;
 	int ret, err;
 
 	ret = file_write_and_wait_range(file, start, end);
@@ -236,7 +239,7 @@ int bch2_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	ret = sync_inode_metadata(&inode->v, 1);
 	if (ret)
 		goto out;
-	ret = bch2_flush_inode(c, inode);
+	ret = bch2_flush_inode(c, inode, &flushed_seq);
 out:
 	ret = bch2_err_class(ret);
 	if (ret == -EROFS)
@@ -247,8 +250,12 @@ out:
 		ret = err;
 
 	event_inc_trace(c, fsync, buf, ({
-		prt_printf(&buf, "journal_flush_disabled: %u\n", c->opts.journal_flush_disabled);
+		prt_printf(&buf, "inum: %llu\n",  (u64) inode->ei_inum.inum);
+		prt_printf(&buf, "subvol: %llu\n", (u64) inode->ei_inum.subvol);
+		prt_printf(&buf, "flushed_seq: %llu\n", flushed_seq);
 		prt_printf(&buf, "datasync: %u\n", datasync);
+		prt_printf(&buf, "journal_flush_disabled: %u\n", c->opts.journal_flush_disabled);
+		prt_printf(&buf, "ret: %d\n", ret);
 		prt_printf(&buf, "duration: ");
 		bch2_pr_time_units(&buf, ktime_get_ns() - start_time);
 		prt_newline(&buf);
@@ -954,8 +961,10 @@ static loff_t bch2_remap_file_range_errcode(struct file *file_src, loff_t pos_sr
 			i_size_write(&dst->v, pos_dst + ret);
 
 	if ((file_dst->f_flags & (__O_SYNC | O_DSYNC)) ||
-	    IS_SYNC(file_inode(file_dst)))
-		ret = bch2_flush_inode(c, dst);
+	    IS_SYNC(file_inode(file_dst))) {
+		u64 unused;
+		ret = bch2_flush_inode(c, dst, &unused);
+	}
 err:
 	bch2_quota_reservation_put(c, dst, &quota_res);
 	bch2_unlock_inodes(INODE_PAGECACHE_BLOCK, src, dst);
