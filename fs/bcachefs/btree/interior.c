@@ -262,12 +262,45 @@ static void bch2_btree_node_free_inmem(struct btree_trans *trans,
 	bch2_trans_node_drop(trans, b);
 }
 
-static void bch2_btree_node_free_never_used(struct btree_update *as,
-					    struct btree_trans *trans,
-					    struct btree *b)
+/*
+ * Install a freshly-consumed prealloc node on @path at WRITE_LOCKED.
+ *
+ * Path takes its own intent+write recurses on top of the as-owned primary
+ * refs from bch2_btree_node_mem_alloc — that keeps the path-state-vs-lock-
+ * count invariant true.  six_lock_increment(SIX_LOCK_write) bumps both
+ * write_lock_recurse and (via fallthrough) intent_lock_recurse — one call
+ * gives both recurses.
+ *
+ * When the path eventually unlocks (trans teardown or explicit
+ * bch2_path_put), btree_node_unlock for WRITE_LOCKED drops one intent +
+ * one write balanced against the recurses we take here; the as-owned
+ * refs survive and are dropped by bch2_btree_update_done (success) or
+ * bch2_btree_reserve_put (err).
+ */
+static void btree_path_take_new_node(struct btree_trans *trans,
+				     struct btree_path *path,
+				     struct btree *b)
+{
+	six_lock_increment(&b->c.lock, SIX_LOCK_write);
+	mark_btree_node_locked(trans, path, b->c.level, BTREE_NODE_WRITE_LOCKED);
+	bch2_btree_path_level_init(trans, path, b);
+}
+
+/*
+ * Roll back a consumed (popped) prealloc node that didn't get committed,
+ * preparing it for the same NONE→FREEABLE drop the unused-reserve path takes.
+ *
+ * Callers hold the as-owned intent+write refs taken by bch2_btree_node_mem_alloc,
+ * plus the path's own intent+write recurses taken at the WRITE_LOCKED mark site.
+ * bch2_trans_node_drop's btree_node_unlock for each WRITE_LOCKED path drops the
+ * path's recurses; the as-owned refs survive and are dropped by the shared
+ * cleanup loop in bch2_btree_reserve_put().
+ */
+static void btree_reserve_drop_consumed(struct btree_update *as,
+					struct btree_trans *trans,
+					struct btree *b)
 {
 	struct bch_fs *c = as->c;
-	struct prealloc_nodes *p = &as->prealloc_nodes[b->c.lock.readers != NULL];
 
 	BUG_ON(!list_empty(&b->write_blocked));
 	BUG_ON(b->will_make_reachable != (1UL|(unsigned long) as));
@@ -281,25 +314,6 @@ static void bch2_btree_node_free_never_used(struct btree_update *as,
 	clear_btree_node_need_write(b);
 
 	bch2_btree_node_transition_state(&c->btree.cache, b, BTREE_NODE_CACHE_NONE);
-
-	BUG_ON(p->nr >= ARRAY_SIZE(p->b));
-	p->b[p->nr++] = b;
-
-	/*
-	 * Callers enter with intent+write held; @b stays intent+write-locked
-	 * on prealloc_nodes so consumers (bch2_btree_node_alloc from prealloc,
-	 * bch2_btree_reserve_put) can use it without re-taking locks.
-	 *
-	 * bch2_trans_node_drop() below releases any path-held locks on @b; for
-	 * each such path, bump the recurse counts so its unlock decrements the
-	 * recurse rather than the actual hold — leaving @b's locks held by the
-	 * original (raw) reference from bch2_btree_node_alloc.
-	 */
-	struct btree_path *path;
-	unsigned i;
-	trans_for_each_path(trans, path, i)
-		if (path->l[b->c.level].b == b)
-			six_lock_increment(&b->c.lock, SIX_LOCK_write);
 
 	bch2_trans_node_drop(trans, b);
 }
@@ -418,11 +432,16 @@ static struct btree *bch2_btree_node_alloc(struct btree_update *as,
 	int ret;
 
 	BUG_ON(level >= BTREE_MAX_DEPTH);
-	BUG_ON(!p->nr);
+	BUG_ON(p->consumed >= p->nr);
 
-	b = p->b[--p->nr];
+	b = p->b[p->consumed++];
 
-	/* Both intent and write were held across parking on prealloc_nodes. */
+	/*
+	 * @as keeps owning intent+write refs on @b until reserve_put runs at
+	 * update_done/update_free time.  Consumers (this function's callers)
+	 * additionally take their own intent+write recurses through the path
+	 * machinery at the WRITE_LOCKED mark site.
+	 */
 
 	set_btree_node_accessed(b);
 	bch2_btree_node_set_dirty(c, b);
@@ -516,6 +535,28 @@ static struct btree *__btree_root_alloc(struct btree_update *as,
 	return b;
 }
 
+/*
+ * Releases every node @as still has refs on:
+ *
+ *  - Consumed slots [0, p->consumed): popped by bch2_btree_node_alloc and
+ *    handed to a consumer (split/merge/rewrite/grow) but never committed.
+ *    Walked first to roll the live-state transition back to NONE so they
+ *    flow through the shared cleanup like any unused node.
+ *  - Unused slots [p->consumed, p->nr): still in reserve, never popped.
+ *
+ * Both ranges then run identical "shared" cleanup: the open buckets are
+ * cached for the next reserve (or released), the node transitions to
+ * FREEABLE, and the as-owned intent+write refs taken by mem_alloc are
+ * dropped.
+ *
+ * Path-side recurses on consumed nodes (taken at the WRITE_LOCKED mark)
+ * are dropped by trans_node_drop inside btree_reserve_drop_consumed —
+ * the consumer doesn't have to do it.
+ *
+ * On the success side, bch2_btree_update_done explicitly drops as's refs
+ * on consumed nodes and resets p->consumed to 0 before calling here, so
+ * this function only sees real failures or unused reserve.
+ */
 static void bch2_btree_reserve_put(struct btree_update *as, struct btree_trans *trans)
 {
 	struct bch_fs *c = as->c;
@@ -524,6 +565,17 @@ static void bch2_btree_reserve_put(struct btree_update *as, struct btree_trans *
 	for (p = as->prealloc_nodes;
 	     p < as->prealloc_nodes + ARRAY_SIZE(as->prealloc_nodes);
 	     p++) {
+		while (p->consumed) {
+			struct btree *b = p->b[--p->consumed];
+
+			btree_reserve_drop_consumed(as, trans, b);
+			/*
+			 * @b is still at p->b[p->consumed], which is now the
+			 * first slot of the unused range — the loop below
+			 * walks it like any other unused entry.
+			 */
+		}
+
 		while (p->nr) {
 			struct btree *b = p->b[--p->nr];
 
@@ -543,11 +595,10 @@ static void bch2_btree_reserve_put(struct btree_update *as, struct btree_trans *
 
 			mutex_unlock(&c->btree.reserve_cache.lock);
 
-			/* Both intent and write were held across prealloc. */
 			__btree_node_free(trans, b);
 			bch2_btree_node_transition_state(&c->btree.cache, b,
 							 BTREE_NODE_CACHE_FREEABLE);
-			six_unlock_write(&b->c.lock);
+			__bch2_btree_node_unlock_write(trans, b);
 			six_unlock_intent(&b->c.lock);
 		}
 	}
@@ -1228,6 +1279,38 @@ static void bch2_btree_update_done(struct btree_update *as, struct btree_trans *
 		up_read(&as->c->gc.lock);
 	as->took_gc_lock = false;
 
+	/*
+	 * Successful completion: drop as-owned intent+write refs on every
+	 * consumed (committed) node.  The path's own intent+write recurses
+	 * (taken at the WRITE_LOCKED mark site) outlive update_done and are
+	 * dropped by trans teardown / explicit bch2_path_put on the consumer.
+	 *
+	 * Use __bch2_btree_node_unlock_write so that if our drop is the last
+	 * write hold (recurse hits 0), the seq bump propagates to the trans's
+	 * linked paths — raw six_unlock_write would update lock->seq but leave
+	 * any linked path->l[level].lock_seq stale, tripping the lock_seq
+	 * EBUG_ON in __btree_node_lock_write later.
+	 *
+	 * Compact each consumed range out of the array so the reserve_put
+	 * below only sees genuinely unused reserve nodes.
+	 */
+	for (struct prealloc_nodes *p = as->prealloc_nodes;
+	     p < as->prealloc_nodes + ARRAY_SIZE(as->prealloc_nodes);
+	     p++) {
+		for (unsigned i = 0; i < p->consumed; i++) {
+			struct btree *b = p->b[i];
+
+			__bch2_btree_node_unlock_write(trans, b);
+			six_unlock_intent(&b->c.lock);
+		}
+		if (p->consumed) {
+			memmove(p->b, p->b + p->consumed,
+				(p->nr - p->consumed) * sizeof(p->b[0]));
+			p->nr -= p->consumed;
+			p->consumed = 0;
+		}
+	}
+
 	bch2_btree_reserve_put(as, trans);
 
 	continue_at(&as->cl, btree_update_set_nodes_written,
@@ -1869,9 +1952,7 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 
 			d->path_idx = bch2_path_get_unlocked_mut(trans, as->btree_id,
 								 d->b->c.level, d->b->key.k.p, false);
-			mark_btree_node_locked(trans, trans->paths + d->path_idx,
-					       d->b->c.level, BTREE_NODE_WRITE_LOCKED);
-			bch2_btree_path_level_init(trans, trans->paths + d->path_idx, d->b);
+			btree_path_take_new_node(trans, trans->paths + d->path_idx, d->b);
 		}
 
 		/*
@@ -1892,8 +1973,7 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 
 			trans->paths[path2].locks_want++;
 			BUG_ON(btree_node_locked(trans->paths + path2, n3->c.level));
-			mark_btree_node_locked(trans, trans->paths + path2, n3->c.level, BTREE_NODE_WRITE_LOCKED);
-			bch2_btree_path_level_init(trans, trans->paths + path2, n3);
+			btree_path_take_new_node(trans, trans->paths + path2, n3);
 
 			n3->sib_u64s[0] = U16_MAX;
 			n3->sib_u64s[1] = U16_MAX;
@@ -1920,9 +2000,7 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 
 		d->path_idx = bch2_path_get_unlocked_mut(trans, as->btree_id,
 							 d->b->c.level, d->b->key.k.p, false);
-		mark_btree_node_locked(trans, trans->paths + d->path_idx,
-				       d->b->c.level, BTREE_NODE_WRITE_LOCKED);
-		bch2_btree_path_level_init(trans, trans->paths + d->path_idx, d->b);
+		btree_path_take_new_node(trans, trans->paths + d->path_idx, d->b);
 
 		if (parent)
 			bch2_keylist_add(&as->parent_keys, &d->b->key);
@@ -2001,10 +2079,11 @@ out:
 			       start_time);
 	return ret;
 err:
-	if (n3)
-		bch2_btree_node_free_never_used(as, trans, n3);
-	darray_for_each_reverse(dsts, d)
-		bch2_btree_node_free_never_used(as, trans, d->b);
+	/*
+	 * Consumed dst nodes (and n3 if we allocated one) stay in
+	 * as->prealloc_nodes with consumed > 0; bch2_btree_update_free
+	 * → bch2_btree_reserve_put rolls them back uniformly.
+	 */
 	goto out;
 }
 
@@ -2168,8 +2247,7 @@ static int __btree_increase_depth(struct btree_update *as, struct btree_trans *t
 
 	path->locks_want++;
 	BUG_ON(btree_node_locked(path, n->c.level));
-	mark_btree_node_locked(trans, path, n->c.level, BTREE_NODE_WRITE_LOCKED);
-	bch2_btree_path_level_init(trans, path, n);
+	btree_path_take_new_node(trans, path, n);
 
 	n->sib_u64s[0] = U16_MAX;
 	n->sib_u64s[1] = U16_MAX;
@@ -2178,10 +2256,8 @@ static int __btree_increase_depth(struct btree_update *as, struct btree_trans *t
 	btree_split_insert_keys(as, trans, path_idx, n, &as->parent_keys);
 
 	ret = bch2_btree_set_root(as, trans, path, n);
-	if (ret) {
-		bch2_btree_node_free_never_used(as, trans, n);
+	if (ret)
 		return ret;
-	}
 
 	bch2_btree_update_get_open_buckets(as, n);
 	bch2_btree_node_write_trans(trans, n, SIX_LOCK_write, 0);
@@ -2975,10 +3051,7 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 
 		d->path_idx = bch2_path_get_unlocked_mut(trans, btree,
 							 d->b->c.level, d->b->key.k.p, false);
-		six_lock_increment(&d->b->c.lock, SIX_LOCK_intent);
-		mark_btree_node_locked(trans, trans->paths + d->path_idx,
-				       d->b->c.level, BTREE_NODE_WRITE_LOCKED);
-		bch2_btree_path_level_init(trans, trans->paths + d->path_idx, d->b);
+		btree_path_take_new_node(trans, trans->paths + d->path_idx, d->b);
 	}
 
 	/*
@@ -3022,7 +3095,7 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 
 	ret = bch2_btree_insert_node(as, trans, path, parent, &as->parent_keys);
 	if (ret)
-		goto err_free_new_node;
+		goto err_free_update;
 
 	event_inc_trace(c, btree_node_merge, buf, ({
 		btree_node_op_log(&buf, c, b, &srcs, &dsts);
@@ -3046,9 +3119,6 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 
 	bch2_trans_verify_paths(trans);
 
-	darray_for_each(dsts, d)
-		six_unlock_intent(&d->b->c.lock);
-
 	bch2_btree_update_done(as, trans);
 
 	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_merge], start_time);
@@ -3063,10 +3133,12 @@ err:
 	if (!ret)
 		ret = bch2_trans_relock(trans);
 	return ret;
-err_free_new_node:
-	darray_for_each(dsts, d)
-		bch2_btree_node_free_never_used(as, trans, d->b);
 err_free_update:
+	/*
+	 * Consumed dst nodes (if any) stay in as->prealloc_nodes with
+	 * consumed > 0; bch2_btree_update_free → bch2_btree_reserve_put
+	 * rolls them back uniformly.
+	 */
 	darray_for_each_reverse(srcs, s)
 		if (btree_node_write_locked(trans->paths + s->path_idx, s->b->c.level))
 			bch2_btree_node_unlock_write(trans, trans->paths + s->path_idx, s->b);
@@ -3127,8 +3199,7 @@ static int bch2_btree_node_rewrite(struct btree_trans *trans,
 	bch2_btree_update_add_new_node(as, n);
 
 	new_path = bch2_path_get_unlocked_mut(trans, iter->btree_id, n->c.level, n->key.k.p, false);
-	mark_btree_node_locked(trans, trans->paths + new_path, n->c.level, BTREE_NODE_WRITE_LOCKED);
-	bch2_btree_path_level_init(trans, trans->paths + new_path, n);
+	btree_path_take_new_node(trans, trans->paths + new_path, n);
 
 	if (parent) {
 		bch2_keylist_add(&as->parent_keys, &n->key);
@@ -3138,7 +3209,7 @@ static int bch2_btree_node_rewrite(struct btree_trans *trans,
 	}
 
 	if (ret)
-		goto err_free_node;
+		goto err_free_update;
 
 	trace_btree_node(c, b, btree_node_rewrite);
 
@@ -3158,8 +3229,6 @@ out:
 		bch2_path_put(trans, new_path, true);
 	bch2_trans_downgrade(trans);
 	return ret;
-err_free_node:
-	bch2_btree_node_free_never_used(as, trans, n);
 err_free_update:
 	bch2_btree_update_free(as, trans);
 	goto out;

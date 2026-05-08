@@ -106,10 +106,20 @@ struct btree_update {
 	 */
 	struct journal_entry_pin	journal;
 
-	/* Preallocated nodes we reserve when we start the update: */
+	/*
+	 * Preallocated nodes we reserve when we start the update.
+	 *
+	 * b[0..consumed) have been popped by bch2_btree_node_alloc and given
+	 * out to consumers (split/merge/rewrite/grow); b[consumed..nr) are
+	 * still in reserve.  bch2_btree_reserve_put walks both halves and
+	 * drops the as-owned intent+write refs uniformly — the consumed
+	 * half also runs path/state rollback (live → NONE, drops path
+	 * recurses).
+	 */
 	struct prealloc_nodes {
 		struct btree		*b[BTREE_UPDATE_NODES_MAX];
 		unsigned		nr;
+		unsigned		consumed;
 	}				prealloc_nodes[2];
 
 	btree_update_nodes		old_nodes;
