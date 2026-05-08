@@ -1446,6 +1446,18 @@ static int __bch2_fs_start(struct bch_fs *c, struct printbuf *err)
 	try(bch2_fs_counters_init_late(c));
 
 	/*
+	 * Request no_sb_user_data_replicas eagerly at startup so it gets
+	 * persisted before any user-data accounting fires. Otherwise the
+	 * bump only happens lazily inside __bch2_accounting_maybe_kill (when
+	 * a user-data accounting entry zeroes), and a fresh fs that gets
+	 * forcibly shut down before that ever fires never persists the
+	 * version_incompat bump - on next mount, bch2_replicas_marked_locked
+	 * doesn't short-circuit for user data and accounting_read fsck_err's
+	 * for replicas not in the (no-longer-storing-them) sb.
+	 */
+	bch2_request_incompat_feature(c, bcachefs_metadata_version_no_sb_user_data_replicas);
+
+	/*
 	 * just make sure this is always allocated if we might need it - mount
 	 * failing due to kthread_create() failing is _very_ annoying
 	 */
