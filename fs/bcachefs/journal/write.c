@@ -590,6 +590,18 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 
 	bool empty = jset->seq == jset->last_seq;
 
+	if (w->need_flush_to_write_buffer) {
+		bch2_journal_keys_to_write_buffer_start(c, &wb, seq);
+
+		/*
+		 * need_flush_to_write_buffer must be cleared under the write buffer's
+		 * locks, dropped by bch2_journal_keys_to_write_buffer_end(), to avoid
+		 * racing with write buffer flushing
+		 */
+		scoped_guard(spinlock, &c->journal.lock)
+			w->need_flush_to_write_buffer = false;
+	}
+
 	/*
 	 * Simple compaction, dropping empty jset_entries (from journal
 	 * reservations that weren't fully used) and merging jset_entries that
@@ -624,11 +636,6 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 			__set_bit(i->btree_id, &btree_roots_have);
 			break;
 		case BCH_JSET_ENTRY_write_buffer_keys:
-			EBUG_ON(!w->need_flush_to_write_buffer);
-
-			if (!wb.seq)
-				bch2_journal_keys_to_write_buffer_start(c, &wb, seq);
-
 			jset_entry_for_each_key(i, k) {
 				ret = bch2_journal_key_to_wb(c, &wb, i->btree_id, k);
 				if (ret) {
@@ -652,9 +659,9 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 		}
 	}
 
-	scoped_guard(spinlock, &c->journal.lock) {
-		w->need_flush_to_write_buffer = false;
-		w->empty = empty;
+	if (empty) {
+		scoped_guard(spinlock, &c->journal.lock)
+			w->empty = true;
 	}
 
 	start = end = vstruct_last(jset);
