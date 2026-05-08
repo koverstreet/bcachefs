@@ -1187,24 +1187,27 @@ static void bch2_btree_update_get_open_buckets(struct btree_update *as, struct b
 /*
  * bch2_btree_update_write_new_node:
  *
- * Hand @b off to @as for writing.  Sets dirty + need_write deferred from
- * bch2_btree_node_alloc (so journal reclaim can't pick up @b for flushing
- * during construction), sets will_make_reachable to gate any subsequent
- * writes besides the first, then submits the first write.
+ * Adds @b to @as's new_nodes list (so we capture root-status after
+ * bch2_btree_set_root has run, and so btree_update_nodes_written can
+ * iterate it for sb-mark, journal record, and will_make_reachable
+ * cleanup), then hands @b off for writing: sets dirty + need_write
+ * deferred from bch2_btree_node_alloc (so journal reclaim can't pick @b
+ * up for flushing during construction), sets will_make_reachable to
+ * gate any subsequent writes besides the first, then submits the first
+ * write.
  *
  * Must be called after the parent commit has propagated @b's key (or
  * bch2_btree_set_root has installed @b as the root).  Anything that
  * needs @b->key in its committed-to-disk form (parent_keys / set_root)
  * must instead pair with bch2_btree_update_emit_new_node_key earlier.
- *
- * @b must already be in @as's new_nodes list (via bch2_btree_update_add_node)
- * by the time this runs.
  */
 static void bch2_btree_update_write_new_node(struct btree_update *as,
 					     struct btree_trans *trans,
 					     struct btree *b)
 {
 	struct bch_fs *c = as->c;
+
+	bch2_btree_update_add_node(c, &as->new_nodes, b);
 
 	closure_get(&as->cl);
 
@@ -2066,14 +2069,10 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 
 	bch2_btree_interior_update_will_free_node(as, b);
 
-	if (n3) {
-		bch2_btree_update_add_node(c, &as->new_nodes, n3);
+	if (n3)
 		bch2_btree_update_write_new_node(as, trans, n3);
-	}
-	darray_for_each_reverse(dsts, d) {
-		bch2_btree_update_add_node(c, &as->new_nodes, d->b);
+	darray_for_each_reverse(dsts, d)
 		bch2_btree_update_write_new_node(as, trans, d->b);
-	}
 
 	/*
 	 * The old node must be freed (in memory) _before_ unlocking the new
@@ -2283,7 +2282,6 @@ static int __btree_increase_depth(struct btree_update *as, struct btree_trans *t
 	if (ret)
 		return ret;
 
-	bch2_btree_update_add_node(c, &as->new_nodes, n);
 	bch2_btree_update_write_new_node(as, trans, n);
 	bch2_trans_node_add(trans, path, n);
 
@@ -3091,7 +3089,6 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 	while (src || dst) {
 		if (src && dst && bpos_eq(src->b->key.k.p, dst->b->key.k.p)) {
 			bch2_btree_update_emit_new_node_key(as, dst->b);
-			bch2_btree_update_add_node(c, &as->new_nodes, dst->b);
 			bch2_keylist_add(&as->parent_keys, &dst->b->key);
 			src++;
 			dst++;
@@ -3104,7 +3101,6 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 			src++;
 		} else {
 			bch2_btree_update_emit_new_node_key(as, dst->b);
-			bch2_btree_update_add_node(c, &as->new_nodes, dst->b);
 			bch2_keylist_add(&as->parent_keys, &dst->b->key);
 			dst++;
 		}
@@ -3237,7 +3233,6 @@ static int bch2_btree_node_rewrite(struct btree_trans *trans,
 
 	bch2_btree_interior_update_will_free_node(as, b);
 
-	bch2_btree_update_add_node(c, &as->new_nodes, n);
 	bch2_btree_update_write_new_node(as, trans, n);
 
 	bch2_btree_node_free_inmem(trans, btree_iter_path(trans, iter), b);
