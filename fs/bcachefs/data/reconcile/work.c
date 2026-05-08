@@ -166,6 +166,13 @@ int bch2_set_fs_needs_reconcile(struct bch_fs *c)
 				true);
 }
 
+int bch2_reconcile_scan_cookie_set(struct btree_trans *trans, u64 inum)
+{
+	CLASS(btree_iter, iter)(trans, BTREE_ID_reconcile_scan, POS(0, inum), 0);
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
+	return k.k->type == KEY_TYPE_cookie;
+}
+
 static int bch2_clear_reconcile_needs_scan(struct btree_trans *trans, struct bpos pos, u64 cookie)
 {
 	struct bch_fs *c = trans->c;
@@ -1037,7 +1044,8 @@ static int reconcile_scan_stripe_can_widen_one(struct btree_trans *trans,
 				    &nr_devs));
 
 	u8 new_can_widen = stripe_widen_value(
-		stripe_widen_target_nr_data(nr_devs, cur->nr_redundant),
+		stripe_widen_target_nr_data(nr_devs, cur->nr_redundant,
+					    c->opts.ec_max_data_blocks),
 		cur->nr_blocks - cur->nr_redundant);
 
 	if (cur->can_widen == new_can_widen)

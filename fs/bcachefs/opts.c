@@ -604,6 +604,16 @@ static int opt_hook_io(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum bch_
 		try(bch2_set_reconcile_needs_scan(c,
 			(struct reconcile_scan) { .type = RECONCILE_SCAN_device, .dev = inum }, post));
 		break;
+	case Opt_ec_max_data_blocks:
+		/*
+		 * Cap participates in stripe.can_widen (via
+		 * stripe_widen_target_nr_data); bracket the change with a
+		 * stripes scan so existing stripes converge to the new
+		 * target.
+		 */
+		try(bch2_set_reconcile_needs_scan(c,
+			(struct reconcile_scan) { .type = RECONCILE_SCAN_stripes }, post));
+		break;
 	default:
 		break;
 	}

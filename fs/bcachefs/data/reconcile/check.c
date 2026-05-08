@@ -12,6 +12,7 @@
 #include "data/ec/trigger.h"
 #include "data/reconcile/check.h"
 #include "data/reconcile/trigger.h"
+#include "data/reconcile/work.h"
 
 #include "init/error.h"
 #include "init/progress.h"
@@ -420,11 +421,15 @@ static int check_reconcile_btree_bps(struct btree_trans *trans)
  * refreshes can_widen when devs change RW state, and get_old_stripe demotes
  * lazily at reuse time, but fsck verifies it explicitly so a stripe stuck
  * out of sync gets surfaced and fixed.
+ *
+ * If the stripes scan cookie is set, a refresh is already pending — drift is
+ * expected, so don't flag.
  */
 static int check_stripe_can_widen_one(struct btree_trans *trans,
 				      struct btree_iter *iter,
 				      struct bkey_s_c k,
-				      widen_cache *cache)
+				      widen_cache *cache,
+				      bool scan_pending)
 {
 	struct bch_fs *c = trans->c;
 	int ret = 0;
@@ -439,10 +444,14 @@ static int check_stripe_can_widen_one(struct btree_trans *trans,
 				    &nr_devs));
 
 	u8 correct_can_widen = stripe_widen_value(
-		stripe_widen_target_nr_data(nr_devs, s->nr_redundant),
+		stripe_widen_target_nr_data(nr_devs, s->nr_redundant,
+					    c->opts.ec_max_data_blocks),
 		s->nr_blocks - s->nr_redundant);
 
 	if (s->can_widen == correct_can_widen)
+		return 0;
+
+	if (scan_pending)
 		return 0;
 
 	CLASS(printbuf, buf)();
@@ -469,11 +478,16 @@ static int check_stripe_can_widen(struct btree_trans *trans)
 	CLASS(widen_cache, cache)();
 	try(bch2_widen_cache_init(&cache));
 
+	int cookie = bch2_reconcile_scan_cookie_set(trans, RECONCILE_SCAN_COOKIE_stripes);
+	if (cookie < 0)
+		return cookie;
+	bool scan_pending = cookie > 0;
+
 	return for_each_btree_key_commit(trans, iter, BTREE_ID_stripes,
 			POS_MIN, BTREE_ITER_prefetch, k,
 			NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
 		bch2_progress_update_iter(trans, &progress, &iter) ?:
-		check_stripe_can_widen_one(trans, &iter, k, &cache);
+		check_stripe_can_widen_one(trans, &iter, k, &cache, scan_pending);
 	}));
 }
 

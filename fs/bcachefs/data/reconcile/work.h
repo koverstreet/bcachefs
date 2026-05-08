@@ -32,6 +32,8 @@ int bch2_set_reconcile_needs_scan_trans(struct btree_trans *, struct reconcile_s
 int bch2_set_reconcile_needs_scan(struct bch_fs *, struct reconcile_scan, bool);
 int bch2_set_fs_needs_reconcile(struct bch_fs *);
 
+int bch2_reconcile_scan_cookie_set(struct btree_trans *, u64);
+
 static inline void bch2_reconcile_wakeup(struct bch_fs *c)
 {
 	c->reconcile.kick++;

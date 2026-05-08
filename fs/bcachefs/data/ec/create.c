@@ -887,6 +887,19 @@ static void ec_stripe_key_init(struct bch_fs *c,
 	s->v.csum_type			= BCH_CSUM_crc32c;
 	s->v.disk_label			= disk_label;
 
+	/*
+	 * Initialize can_widen against the RW-member set so newly-created
+	 * stripes (including replacements from the repair path) can be picked
+	 * up by the widening machinery. Without this they're stuck at 0 until
+	 * a reconcile_scan_stripes pass or fsck visits them.
+	 */
+	struct bch_devs_mask rw_member_devs;
+	bch2_disk_label_ec_rw_member_devs(c, disk_label, &rw_member_devs, stripe_size);
+	s->v.can_widen = stripe_widen_value(
+		stripe_widen_target_nr_data(dev_mask_nr(&rw_member_devs), nr_parity,
+					    c->opts.ec_max_data_blocks),
+		nr_data);
+
 	while ((u64s = stripe_val_u64s(&s->v)) > BKEY_VAL_U64s_MAX) {
 		BUG_ON(1 << s->v.csum_granularity_bits >=
 		       le16_to_cpu(s->v.sectors) ||
@@ -1222,7 +1235,8 @@ static int get_old_stripe(struct btree_trans *trans,
 					  le16_to_cpu(old.v->sectors));
 	u8 correct_can_widen = stripe_widen_value(
 		stripe_widen_target_nr_data(dev_mask_nr(&rw_member_devs),
-					    old.v->nr_redundant),
+					    old.v->nr_redundant,
+					    c->opts.ec_max_data_blocks),
 		old.v->nr_blocks - old.v->nr_redundant);
 
 	if (old.v->can_widen > correct_can_widen) {

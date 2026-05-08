@@ -2329,7 +2329,7 @@ again:
 						  op->flags,
 						  !io_in_flight ? &op->cl : NULL);
 			if (!IS_ERR(req))
-				req->ec_max_data_blocks = op->opts.ec_max_data_blocks;
+				req->ec_max_data_blocks = c->opts.ec_max_data_blocks;
 			int ret2 = PTR_ERR_OR_ZERO(req) ?:
 			bch2_alloc_sectors_req(trans, req, op->write_point, &wp);
 

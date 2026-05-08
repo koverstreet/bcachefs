@@ -608,10 +608,9 @@ static int check_reconcile_scan_cookie(struct btree_trans *trans, u64 inum, bool
 	 * If opts need to be propagated to the extent, a scan cookie should be
 	 * present:
 	 */
-	CLASS(btree_iter, iter)(trans, BTREE_ID_reconcile_scan, POS(0, inum), 0);
-	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
-
-	int ret = k.k->type == KEY_TYPE_cookie;
+	int ret = bch2_reconcile_scan_cookie_set(trans, inum);
+	if (ret < 0)
+		return ret;
 	if (v)
 		*v = ret;
 	return ret;

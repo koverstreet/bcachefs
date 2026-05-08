@@ -105,7 +105,7 @@ struct bch_inode_generation {
 	x(bi_depth,			32)	\
 	x(bi_inodes_32bit,		8)	\
 	x(bi_casefold,			8)	\
-	x(bi_ec_max_data_blocks,	8)
+	x(bi_unused_ec_max_data_blocks,	8)
 
 /* subset of BCH_INODE_FIELDS */
 #define BCH_INODE_OPTS()			\
@@ -118,7 +118,6 @@ struct bch_inode_generation {
 	x(foreground_target,		16)	\
 	x(background_target,		16)	\
 	x(erasure_code,			16)	\
-	x(ec_max_data_blocks,		8)	\
 	x(nocow,			8)	\
 	x(inodes_32bit,			8)	\
 	x(casefold,			8)

@@ -227,7 +227,7 @@ enum fsck_err_opts {
 	  BCH_SB_ERASURE_CODE,		false,				\
 	  NULL,		"Enable erasure coding (DO NOT USE YET)")	\
 	x(ec_max_data_blocks,		u8,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\
 	  OPT_UINT(0, 15),						\
 	  BCH_SB_EC_MAX_DATA_BLOCKS,	0,				\
 	  NULL,		"Cap data blocks per EC stripe (0 = use all active devs)")\
@@ -730,8 +730,6 @@ static inline void bch2_io_opts_fixups(struct bch_inode_opts *opts)
 	if (!opts->background_compression)
 		opts->background_compression = opts->compression;
 	if (opts->data_replicas == 1)
-		opts->erasure_code = 0;
-	if (opts->ec_max_data_blocks && opts->ec_max_data_blocks < 2)
 		opts->erasure_code = 0;
 	if (opts->nocow) {
 		opts->compression = opts->background_compression = 0;

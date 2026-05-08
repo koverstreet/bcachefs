@@ -368,6 +368,31 @@ int bch2_trigger_stripe(struct btree_trans *trans, struct btree_trigger_op op)
 	}
 
 	if (op.flags & BTREE_TRIGGER_transactional) {
+		/*
+		 * Refresh can_widen from current rw_member_devs and the
+		 * fs-level ec_max_data_blocks cap before consumers (lru_pos
+		 * below) read it. This races against reconcile_scan_stripes:
+		 * without the trigger doing the update, a stripe-mod that
+		 * commits after the scan walked past that pos would carry a
+		 * stale can_widen and the cookie clear before fsck would miss
+		 * it. Same shape as the reconcile-opts split-fragment fix.
+		 */
+		if (new_s) {
+			struct bch_devs_mask rw_member_devs;
+			bch2_disk_label_ec_rw_member_devs(c, new_s->disk_label,
+							  &rw_member_devs,
+							  le16_to_cpu(new_s->sectors));
+			u8 want_can_widen = stripe_widen_value(
+				stripe_widen_target_nr_data(
+					dev_mask_nr(&rw_member_devs),
+					new_s->nr_redundant,
+					c->opts.ec_max_data_blocks),
+				new_s->nr_blocks - new_s->nr_redundant);
+
+			if (new_s->can_widen != want_can_widen)
+				bkey_s_to_stripe(op.new).v->can_widen = want_can_widen;
+		}
+
 		u64 old_lru_pos = stripe_lru_pos(old_s);
 		u64 new_lru_pos = stripe_lru_pos(new_s);
 
