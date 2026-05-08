@@ -895,10 +895,23 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 	}
 
 	/*
-	 * gc.data_type doesn't yet include need_discard & need_gc_gen states -
-	 * fix that here:
+	 * gc tracks sector counts via extent triggers but does not follow
+	 * empty-state transitions (need_discard, need_gc_gens) - those are
+	 * decided by bch2_trigger_alloc() using old vs new state and stick
+	 * in data_type until the discard / gc_gens path clears them.
+	 *
+	 * For nonempty buckets gc.data_type is authoritative from the
+	 * extent walk. For empty buckets gc.data_type is BCH_DATA_free
+	 * (gc never sets need_*); use the on-disk hint instead so a bucket
+	 * correctly in need_discard or need_gc_gens compares equal.
+	 *
+	 * Using new.data_type unconditionally would break reconstruct_alloc:
+	 * post-kill_btree the on-disk key is zeros, hint=free, and
+	 * alloc_data_type() falls into bucket_data_type(free) → free even
+	 * with dirty_sectors > 0, contradicting the rebuilt counters.
 	 */
-	alloc_data_type_set(&gc, gc.data_type);
+	alloc_data_type_set(&gc,
+		!data_type_is_empty(gc.data_type) ? gc.data_type : new.data_type);
 	if (gc.data_type != old_gc.data_type ||
 	    gc.dirty_sectors != old_gc.dirty_sectors) {
 		try(bch2_alloc_key_to_dev_counters(trans, ca, &old_gc, &gc, BTREE_TRIGGER_gc));
@@ -924,10 +937,10 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 		new.data_type = gc.data_type;
 
 		/*
-		 * Transitions to free must go through need_discard; reconstruct
-		 * runs under BTREE_TRIGGER_gc which skips the transactional path
-		 * that sets NEED_DISCARD, so set it here for any bucket that
-		 * will need discarding when eventually freed.
+		 * Reconstruct runs under BTREE_TRIGGER_gc which skips the
+		 * transactional path that maintains NEED_DISCARD. Set it
+		 * here on non-empty buckets for downgrade compat (older
+		 * kernels read the bit to decide need_discard state).
 		 */
 		if (!data_type_is_empty(new.data_type) &&
 		    new.data_type != BCH_DATA_sb &&

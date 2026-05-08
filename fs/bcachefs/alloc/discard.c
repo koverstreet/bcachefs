@@ -175,7 +175,9 @@ static int __discard_mark_free(struct btree_trans *trans,
 	bch2_bkey_buf_init(&orig_k);
 	bch2_bkey_buf_copy(&orig_k, &a->k_i);
 
+	/* Bit kept in sync for downgrade compat; alloc_data_type() no longer reads it. */
 	SET_BCH_ALLOC_V4_NEED_DISCARD(&a->v, false);
+	a->v.data_type = BCH_DATA_free;
 	alloc_data_type_set(&a->v, a->v.data_type);
 
 	try(bch2_trans_update(trans, iter, &a->k_i, BTREE_TRIGGER_is_discard));

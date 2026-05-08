@@ -114,7 +114,12 @@ static inline s64 bch2_bucket_sectors_unstriped(struct bch_alloc_v4 a)
 /*
  * Compute data_type from bucket state. The data_type parameter is a hint for
  * what kind of data the bucket contains; the actual type is determined by
- * sector counts, flags, and stripe_refcount.
+ * sector counts, stripe_refcount, and gc_gen.
+ *
+ * For non-empty buckets the result is fully determined here. For empty
+ * buckets, need_discard is sticky (set by bch2_trigger_alloc() on
+ * non-empty -> empty, cleared by the discard path), and free vs need_gc_gens
+ * is derived from gc_gen.
  */
 static inline enum bch_data_type alloc_data_type(struct bch_alloc_v4 a,
 						 enum bch_data_type data_type)
@@ -125,11 +130,11 @@ static inline enum bch_data_type alloc_data_type(struct bch_alloc_v4 a,
 		return bucket_data_type(data_type);
 	if (a.cached_sectors)
 		return BCH_DATA_cached;
-	if (BCH_ALLOC_V4_NEED_DISCARD(&a))
+	if (data_type == BCH_DATA_need_discard)
 		return BCH_DATA_need_discard;
-	if (alloc_gc_gen(a) >= BUCKET_GC_GEN_MAX)
-		return BCH_DATA_need_gc_gens;
-	return BCH_DATA_free;
+	return alloc_gc_gen(a) >= BUCKET_GC_GEN_MAX
+		? BCH_DATA_need_gc_gens
+		: BCH_DATA_free;
 }
 
 static inline void alloc_data_type_set(struct bch_alloc_v4 *a, enum bch_data_type data_type)

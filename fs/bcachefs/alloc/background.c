@@ -1248,6 +1248,17 @@ int bch2_trigger_alloc(struct btree_trans *trans, struct btree_trigger_op op)
 	if (op.flags & BTREE_TRIGGER_transactional) {
 		alloc_data_type_set(new_a, new_a->data_type);
 
+		/*
+		 * Non-empty -> empty: bucket had data, needs discarding before
+		 * reuse. Skip for sb/journal (those don't go empty via the
+		 * normal path; if one does we catch it via the WARN further
+		 * down).
+		 */
+		if (statechange_from(!data_type_is_empty(a->data_type)) &&
+		    old_a->data_type != BCH_DATA_sb &&
+		    old_a->data_type != BCH_DATA_journal)
+			new_a->data_type = BCH_DATA_need_discard;
+
 		if (statechange_to(!data_type_is_empty(a->data_type))) {
 			if ((new_a->data_type != BCH_DATA_sb &&
 			     new_a->data_type != BCH_DATA_journal) &&
@@ -1265,6 +1276,8 @@ int bch2_trigger_alloc(struct btree_trans *trans, struct btree_trigger_op op)
 			new_a->io_time[READ] = bch2_current_io_time(c, READ);
 			new_a->io_time[WRITE]= bch2_current_io_time(c, WRITE);
 			SET_BCH_ALLOC_V4_NEED_INC_GEN(new_a, true);
+			/* Maintain bit for downgrade compat: alloc_data_type()
+			 * on older kernels reads this to gate need_discard. */
 			SET_BCH_ALLOC_V4_NEED_DISCARD(new_a, true);
 		}
 
@@ -1338,18 +1351,15 @@ int bch2_trigger_alloc(struct btree_trans *trans, struct btree_trigger_op op)
 
 		if (statechange_to(a->data_type == BCH_DATA_free)) {
 			/*
-			 * Transitioning to free: should not have NEED_DISCARD set.
-			 * Two legitimate paths:
+			 * Legitimate paths to free:
 			 *   - from need_discard via the discard path (with
 			 *     BTREE_TRIGGER_is_discard)
 			 *   - from need_gc_gens via bch2_gc_gens() bumping
-			 *     oldest_gen (bucket has been empty the whole time,
-			 *     no discard needed - alloc_data_type() just stopped
-			 *     returning need_gc_gens)
+			 *     oldest_gen (bucket was empty the whole time;
+			 *     no discard needed)
 			 */
-			WARN_ON(BCH_ALLOC_V4_NEED_DISCARD(new_a));
-			BUG_ON(old_a->data_type != BCH_DATA_need_discard &&
-			       old_a->data_type != BCH_DATA_need_gc_gens);
+			WARN_ON(old_a->data_type != BCH_DATA_need_discard &&
+				old_a->data_type != BCH_DATA_need_gc_gens);
 
 			new_a->journal_seq_nonempty = new_a->journal_seq_empty = 0;
 
@@ -1376,9 +1386,6 @@ int bch2_trigger_alloc(struct btree_trans *trans, struct btree_trigger_op op)
 		}
 
 		if (statechange_to(a->data_type == BCH_DATA_need_discard)) {
-			/* Transitioning to need_discard: NEED_DISCARD must be set */
-			WARN_ON(!BCH_ALLOC_V4_NEED_DISCARD(new_a));
-
 			/*
 			 * Bucket becomes empty: mark it as waiting for a
 			 * journal flush, unless updates since empty -> nonempty
@@ -1411,6 +1418,17 @@ int bch2_trigger_alloc(struct btree_trans *trans, struct btree_trigger_op op)
 
 		if (statechange_to(a->data_type == BCH_DATA_need_gc_gens))
 			bch2_gc_gens_async(c);
+
+		/*
+		 * Catch bad transitions that leave the bucket pretending to be
+		 * free while still carrying empty/discard bookkeeping. If the
+		 * bucket really transitioned to free legitimately the discard
+		 * path / statechange_to(free) clears these.
+		 */
+		BUG_ON(new_a->data_type == BCH_DATA_free &&
+		       (BCH_ALLOC_V4_NEED_DISCARD(new_a) ||
+			new_a->journal_seq_nonempty ||
+			new_a->journal_seq_empty));
 	}
 
 	if ((op.flags & BTREE_TRIGGER_gc) && (op.flags & BTREE_TRIGGER_insert)) {
