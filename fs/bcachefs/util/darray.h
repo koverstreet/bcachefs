@@ -80,6 +80,9 @@ DEFINE_DARRAY_CLASS(darray_##_type)
 typedef DARRAY(_type)	_name;						\
 DEFINE_DARRAY_CLASS_FREE_ITEM(_name, _free)
 
+#define DEFINE_DARRAY_FREE_ITEM(_type, _free)				\
+DEFINE_DARRAY_NAMED_FREE_ITEM(darray_##_type, _type, _free)
+
 DEFINE_DARRAY(char);
 DEFINE_DARRAY(u8)
 DEFINE_DARRAY(u16)

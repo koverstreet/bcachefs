@@ -1103,14 +1103,9 @@ static void write_super_endio(struct bio *bio)
 
 	bch2_account_io_success_fail(ca, bio_data_dir(bio), !bio->bi_status);
 
-	/* XXX: return errors directly */
-
-	if (bio->bi_status) {
-		bch_err_dev_ratelimited(ca, "superblock %s error: %s",
-			       str_write_read(bio_data_dir(bio)),
-			       bch2_blk_status_to_str(bio->bi_status));
-		ca->sb_write_error = 1;
-	}
+	if (bio->bi_status)
+		ca->sb_write_error =
+			__bch2_err_throw(ca->fs, -blk_status_to_bch_err(bio->bi_status));
 
 	closure_put(&ca->fs->sb_write);
 }
@@ -1163,19 +1158,30 @@ static void write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 	closure_bio_submit(bio, &c->sb_write);
 }
 
-static inline void bch_dev_write_super_ref_put(struct bch_dev *ca)
+typedef struct {
+	int		err;
+	u64		offset;
+} sb_offset_err;
+DEFINE_DARRAY(sb_offset_err);
+
+typedef struct {
+	struct bch_dev		*ca;
+	darray_sb_offset_err	failures;
+} write_sb_dev;
+
+static void write_sb_dev_put(write_sb_dev d)
 {
-	enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_write_super);
+	enumerated_ref_put(&d.ca->io_ref[READ], BCH_DEV_READ_REF_write_super);
+	darray_exit(&d.failures);
 }
 
-DEFINE_DARRAY_NAMED_FREE_ITEM(darray_bch_dev_write_super_ref, struct bch_dev *,
-			      bch_dev_write_super_ref_put);
+DEFINE_DARRAY_FREE_ITEM(write_sb_dev, write_sb_dev_put);
 
 static int __bch2_write_super(struct bch_fs *c)
 {
 	struct closure *cl = &c->sb_write;
 	unsigned degraded_flags = BCH_FORCE_IF_DEGRADED;
-	CLASS(darray_bch_dev_write_super_ref, online_devices)();
+	CLASS(darray_write_sb_dev, online_devices)();
 
 	if (!test_bit(BCH_FS_may_upgrade_downgrade, &c->flags))
 		return 0;
@@ -1202,11 +1208,9 @@ static int __bch2_write_super(struct bch_fs *c)
 	 * yet RW:
 	 */
 	for_each_online_member(c, ca, BCH_DEV_READ_REF_write_super) {
-		int ret = darray_push(&online_devices, ca);
-		if (bch2_fs_fatal_err_on(ret, c, "%s: error allocating online devices", __func__)) {
-			enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_write_super);
+		int ret = darray_push(&online_devices, ((write_sb_dev) { ca }));
+		if (bch2_fs_fatal_err_on(ret, c, "%s: error allocating online devices", __func__))
 			return ret;
-		}
 		enumerated_ref_get(&ca->io_ref[READ], BCH_DEV_READ_REF_write_super);
 	}
 
@@ -1217,8 +1221,8 @@ static int __bch2_write_super(struct bch_fs *c)
 	le64_add_cpu(&c->disk_sb.sb->seq, 1);
 
 	struct bch_sb_field_members_v2 *mi = bch2_sb_field_get(c->disk_sb.sb, members_v2);
-	darray_for_each(online_devices, ca)
-		__bch2_members_v2_get_mut(mi, (*ca)->dev_idx)->seq = c->disk_sb.sb->seq;
+	darray_for_each(online_devices, i)
+		__bch2_members_v2_get_mut(mi, i->ca->dev_idx)->seq = c->disk_sb.sb->seq;
 	c->disk_sb.sb->write_time = cpu_to_le64(ktime_get_real_seconds());
 
 	if (test_bit(BCH_FS_error, &c->flags))
@@ -1235,14 +1239,14 @@ static int __bch2_write_super(struct bch_fs *c)
 	bch2_sb_downgrade_update(c);
 	try(bch2_sb_extent_type_u64s_from_cpu(c));
 
-	darray_for_each(online_devices, ca)
-		bch2_sb_from_fs(c, (*ca));
+	darray_for_each(online_devices, i)
+		bch2_sb_from_fs(c, i->ca);
 
-	darray_for_each(online_devices, ca) {
+	darray_for_each(online_devices, i) {
 		struct bch_opts opts = bch2_opts_empty();
 		CLASS(printbuf, err)();
 
-		int ret = bch2_sb_validate((*ca)->disk_sb.sb, &opts, 0, BCH_VALIDATE_write, &err);
+		int ret = bch2_sb_validate(i->ca->disk_sb.sb, &opts, 0, BCH_VALIDATE_write, &err);
 		if (ret) {
 			bch2_fs_inconsistent(c, "sb invalid before write: %s", err.buf);
 			return 0;
@@ -1270,105 +1274,129 @@ static int __bch2_write_super(struct bch_fs *c)
 		return bch_err_throw(c, sb_not_downgraded);
 	}
 
-	struct bch_devs_mask sb_written;
-	memset(&sb_written, 0, sizeof(sb_written));
+	struct bch_devs_mask sb_written = {};
 
-	darray_for_each(online_devices, ca) {
-		__set_bit((*ca)->dev_idx, sb_written.d);
-		(*ca)->sb_write_error = 0;
-	}
+	darray_for_each(online_devices, i)
+		i->ca->sb_write_error = 0;
 
-	darray_for_each(online_devices, ca)
-		read_back_super(c, *ca);
+	darray_for_each(online_devices, i)
+		read_back_super(c, i->ca);
 	closure_sync(cl);
 
-	darray_for_each(online_devices, cap) {
-		struct bch_dev *ca = *cap;
+	darray_for_each(online_devices, i) {
+		struct bch_dev *ca = i->ca;
 
 		if (ca->sb_write_error)
 			continue;
 
 		if (le64_to_cpu(ca->sb_read_scratch->seq) < ca->disk_sb.seq) {
-			CLASS(printbuf, buf)();
-			prt_char(&buf, ' ');
-			prt_bdevname(&buf, ca->disk_sb.bdev);
-			prt_printf(&buf,
-				": Superblock write was silently dropped! (seq %llu expected %llu)",
-				le64_to_cpu(ca->sb_read_scratch->seq),
-				ca->disk_sb.seq);
+			CLASS(bch_log_msg, msg)(c);
+			prt_bdevname(&msg.m, ca->disk_sb.bdev);
+			prt_printf(&msg.m, ": Superblock write was silently dropped! (seq %llu expected %llu)",
+				   le64_to_cpu(ca->sb_read_scratch->seq),
+				   ca->disk_sb.seq);
 
 			if (c->opts.errors != BCH_ON_ERROR_continue &&
 			    c->opts.errors != BCH_ON_ERROR_fix_safe) {
-				bch2_fs_fatal_error(c, "%s", buf.buf);
+				bch2_fs_emergency_read_only(c, &msg.m);
 				return bch_err_throw(c, erofs_sb_err);
-			} else {
-				bch_err(c, "%s", buf.buf);
 			}
 		}
 
 		if (le64_to_cpu(ca->sb_read_scratch->seq) > ca->disk_sb.seq) {
-			CLASS(printbuf, buf)();
-			prt_char(&buf, ' ');
-			prt_bdevname(&buf, ca->disk_sb.bdev);
-			prt_printf(&buf,
-				": Superblock modified by another process (seq %llu expected %llu)",
-				le64_to_cpu(ca->sb_read_scratch->seq),
-				ca->disk_sb.seq);
-			bch2_fs_fatal_error(c, "%s", buf.buf);
+			CLASS(bch_log_msg, msg)(c);
+			prt_bdevname(&msg.m, ca->disk_sb.bdev);
+			prt_printf(&msg.m, ": Superblock modified by another process (seq %llu expected %llu)",
+				   le64_to_cpu(ca->sb_read_scratch->seq),
+				   ca->disk_sb.seq);
+			bch2_fs_emergency_read_only(c, &msg.m);
 			return bch_err_throw(c, erofs_sb_err);
 		}
 	}
 
 	unsigned sb = 0;
-	bool wrote;
+	bool have_errors = false, wrote;
 	do {
+		darray_for_each(online_devices, i)
+			i->ca->sb_write_error = 0;
+
 		wrote = false;
-		darray_for_each(online_devices, cap) {
-			struct bch_dev *ca = *cap;
-			if (!ca->sb_write_error &&
-			    sb < ca->disk_sb.sb->layout.nr_superblocks) {
-				write_one_super(c, ca, sb);
-				wrote = true;
+		darray_for_each(online_devices, i) {
+			struct bch_sb_layout *l = &i->ca->disk_sb.sb->layout;
+			if (sb >= l->nr_superblocks)
+				continue;
+
+			write_one_super(c, i->ca, sb);
+			wrote = true;
+		}
+
+		closure_sync(cl);
+
+		darray_for_each(online_devices, i) {
+			struct bch_sb_layout *l = &i->ca->disk_sb.sb->layout;
+			if (sb >= l->nr_superblocks)
+				continue;
+
+			if (i->ca->sb_write_error) {
+				darray_push(&i->failures, ((sb_offset_err) {
+							   i->ca->sb_write_error,
+							   le64_to_cpu(l->sb_offset[sb])
+				}));
+				have_errors = true;
+			} else {
+				__set_bit(i->ca->dev_idx, sb_written.d);
 			}
 		}
-		closure_sync(cl);
 		sb++;
 	} while (wrote);
 
-	darray_for_each(online_devices, cap) {
-		struct bch_dev *ca = *cap;
-		if (ca->sb_write_error)
-			__clear_bit(ca->dev_idx, sb_written.d);
-		else
-			ca->disk_sb.seq = le64_to_cpu(ca->disk_sb.sb->seq);
-	}
-
-	struct bch_devs_mask sb_unwritten;
-	for (unsigned i = 0; i < ARRAY_SIZE(sb_written.d); i++)
-		sb_unwritten.d[i] = ~sb_written.d[i];
+	darray_for_each(online_devices, i)
+		if (test_bit(i->ca->dev_idx, sb_written.d))
+			i->ca->disk_sb.seq = le64_to_cpu(i->ca->disk_sb.sb->seq);
 
 	unsigned nr_wrote =	dev_mask_nr(&sb_written);
 	unsigned nr_members =	bch2_sb_nr_devices(c->disk_sb.sb);
+	bool fatal = !nr_wrote ||
+		!bch2_can_read_fs_with_devs(c, &sb_written, degraded_flags, NULL);
 
-	if (!nr_wrote ||
-	    !bch2_can_read_fs_with_devs(c, &sb_written, degraded_flags, NULL)) {
-		CLASS(bch_log_msg, msg)(c);
-		msg.m.suppress = true; /* bch2_fs_emergency_read_only will unsuppress */
+	if (!have_errors && !fatal)
+		return 0;
 
+	CLASS(bch_log_msg, msg)(c);
+
+	prt_printf(&msg.m, "Error writing superblock, wrote to %u/%u devices:\n",
+		   nr_wrote, nr_members);
+
+	struct bch_devs_mask sb_unwritten;
+	memset(sb_unwritten.d, 0xFF, sizeof(sb_unwritten));
+
+	darray_for_each(online_devices, i) {
+		__clear_bit(i->ca->dev_idx, sb_unwritten.d);
+		bch2_member_to_text_short_locked(&msg.m, c, i->ca);
+
+		if (i->failures.nr) {
+			darray_for_each(i->failures, j)
+				prt_printf(&msg.m, " %llu=%s", j->offset, bch2_err_str(j->err));
+
+			if (!test_bit(i->ca->dev_idx, sb_written.d))
+				prt_str(&msg.m, " (all failed)");
+			else
+				prt_str(&msg.m, " (partial success)");
+		} else {
+			prt_str(&msg.m, " (success)");
+		}
+		prt_newline(&msg.m);
+	}
+
+	prt_printf(&msg.m, "Offline devices:\n");
+	scoped_guard(printbuf_indent, &msg.m)
+		bch2_devs_mask_to_text_locked(&msg.m, c, &sb_unwritten);
+
+	if (fatal) {
 		prt_printf(&msg.m, "Unable to write superblock to sufficient devices (from %ps)\n",
 			   (void *) _RET_IP_);
 		prt_printf(&msg.m, "Would not be able to mount with written devices\n");
-
 		bch2_can_read_fs_with_devs(c, &sb_written, degraded_flags, &msg.m);
-
-		prt_printf(&msg.m, "Wrote to %u/%u devices:\n", nr_wrote, nr_members);
-		scoped_guard(printbuf_indent, &msg.m)
-			bch2_devs_mask_to_text_locked(&msg.m, c, &sb_written);
-
-		prt_printf(&msg.m, "Failed to write to devices:\n");
-		scoped_guard(printbuf_indent, &msg.m)
-			bch2_devs_mask_to_text_locked(&msg.m, c, &sb_unwritten);
-
 		bch2_fs_emergency_read_only(c, &msg.m);
 	}
 
