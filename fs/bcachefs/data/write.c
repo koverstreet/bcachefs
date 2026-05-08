@@ -1213,7 +1213,6 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 		n->c			= c;
 		n->ca			= ca;
 		n->dev			= ptr->dev;
-		n->have_ioref		= ca != NULL;
 		n->nocow		= nocow;
 		n->submit_time		= local_clock();
 		n->inode_offset		= bkey_start_offset(&k->k);
@@ -1221,7 +1220,7 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 			n->nocow_bucket	= PTR_BUCKET_NR(ca, ptr);
 		n->bio.bi_iter.bi_sector = ptr->offset;
 
-		if (likely(n->have_ioref)) {
+		if (likely(n->ca)) {
 			this_cpu_add(ca->io_done->sectors[WRITE][type],
 				     bio_sectors(&n->bio));
 
@@ -1478,7 +1477,7 @@ static void bch2_write_endio(struct bio *bio)
 		set_bit(wbio->dev, op->devs_need_flush->d);
 	}
 
-	if (wbio->have_ioref)
+	if (ca)
 		enumerated_ref_put(&ca->io_ref[WRITE],
 				   BCH_DEV_WRITE_REF_io_write);
 

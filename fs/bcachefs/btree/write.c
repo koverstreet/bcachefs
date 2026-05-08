@@ -205,7 +205,7 @@ static void btree_node_write_endio(struct bio *bio)
 	 * XXX: we should be using io_ref[WRITE], but we aren't retrying failed
 	 * btree writes yet (due to device removal/ro):
 	 */
-	if (wbio->have_ioref)
+	if (ca)
 		enumerated_ref_put(&ca->io_ref[READ],
 				   BCH_DEV_READ_REF_btree_node_write);
 

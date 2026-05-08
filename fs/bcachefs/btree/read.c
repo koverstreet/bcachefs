@@ -876,9 +876,9 @@ static void btree_node_read_work(struct work_struct *work)
 	prt_newline(&buf);
 
 	while (1) {
-		if (rb->have_ioref)
+		if (rb->ca)
 			enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_btree_node_read);
-		rb->have_ioref = false;
+		rb->ca = NULL;
 
 		if (!bio->bi_status) {
 			memset(&bio->bi_iter, 0, sizeof(bio->bi_iter));
@@ -902,13 +902,12 @@ static void btree_node_read_work(struct work_struct *work)
 
 		ca = bch2_dev_get_ioref(c, rb->pick.ptr.dev, READ, BCH_DEV_READ_REF_btree_node_read);
 		rb->ca			= ca;
-		rb->have_ioref		= ca != NULL;
 		rb->start_time		= local_clock();
 		bio_reset(bio, NULL, REQ_OP_READ|REQ_SYNC|REQ_META);
 		bio->bi_iter.bi_sector	= rb->pick.ptr.offset;
 		bio->bi_iter.bi_size	= btree_buf_bytes(b);
 
-		if (rb->have_ioref) {
+		if (rb->ca) {
 			bio_set_dev(bio, ca->disk_sb.bdev);
 			submit_bio_wait(bio);
 		} else {
@@ -1045,7 +1044,6 @@ void bch2_btree_node_read(struct btree_trans *trans, struct btree *b,
 	rb->ca			= ca;
 	rb->b			= b;
 	rb->start_time		= local_clock();
-	rb->have_ioref		= ca != NULL;
 	rb->pick		= pick;
 	INIT_WORK(&rb->work, btree_node_read_work);
 	bio->bi_iter.bi_sector	= pick.ptr.offset;
@@ -1054,7 +1052,7 @@ void bch2_btree_node_read(struct btree_trans *trans, struct btree *b,
 
 	async_object_list_add(c, btree_read_bio, rb, &rb->list_idx);
 
-	if (rb->have_ioref) {
+	if (rb->ca) {
 		this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_btree],
 			     bio_sectors(bio));
 		bio_set_dev(bio, ca->disk_sb.bdev);

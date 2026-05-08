@@ -48,8 +48,8 @@ struct bch_write_bio {
 	/*
 	 * Stashed at submit so endio doesn't have to re-derive the dev pointer
 	 * from @dev — c->devs[@dev] may be NULL by then (dev_remove clears the
-	 * lookup table before draining refs), but @ca stays valid as long as
-	 * @have_ioref keeps a ref pinned.
+	 * lookup table before draining refs).  Non-NULL iff we hold an io_ref;
+	 * doubles as the "we hold the ref" indicator.
 	 */
 	struct bch_dev		*ca;
 
@@ -63,7 +63,6 @@ struct bch_write_bio {
 	unsigned		split:1,
 				bounce:1,
 				put_bio:1,
-				have_ioref:1,
 				nocow:1,
 				used_mempool:1,
 				first_btree_write:1;
