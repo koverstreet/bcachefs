@@ -20,7 +20,6 @@ static bool discard_opt_enabled_idx(struct bch_fs *c, unsigned dev)
 {
 	guard(rcu)();
 	struct bch_dev *ca = bch2_dev_rcu_noerror(c, dev);
-	BUG_ON(!ca);
 	return ca && bch2_discard_opt_enabled(c, ca);
 }
 
