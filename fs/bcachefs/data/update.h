@@ -50,13 +50,13 @@ struct data_update {
 
 	bool			on_hashtable;
 	bool			read_done;
-	u8			ptrs_held;
 	/*
 	 * cas[i] is the bch_dev * for which we hold a ref (taken in
 	 * bkey_get_dev_refs), parallel to the ptrs in @k.  Stashed so the
 	 * exit path doesn't have to re-derive ca via c->devs[idx], which
 	 * dev_remove may have cleared while our ref still pins the dev.
-	 * NULL = no ref held for that ptr position.
+	 * NULL = no ref held for that ptr position; also serves as the
+	 * "we locked this bucket" indicator for nocow lock/unlock.
 	 */
 	struct bch_dev		*cas[BCH_BKEY_PTRS_MAX];
 

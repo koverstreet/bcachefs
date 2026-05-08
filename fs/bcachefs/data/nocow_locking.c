@@ -91,62 +91,55 @@ static inline bool bch2_bucket_nocow_trylock(struct bch_fs *c, struct bpos bucke
 	return !__bch2_bucket_nocow_trylock(c, l, dev_bucket, flags);
 }
 
+/*
+ * @cas is parallel to the ptrs in @k: cas[i] is the bch_dev * we hold a ref
+ * for at ptr index i, or NULL where no ref was taken (failed tryget, or
+ * dev == BCH_SB_MEMBER_INVALID).  cas[i] non-NULL is the authoritative
+ * "we locked this bucket" indicator — never re-derive ca via c->devs[idx],
+ * which dev_remove may have cleared while our ref still pins the dev.
+ */
 void bch2_bkey_nocow_unlock(struct bch_fs *c, struct bkey_s_c k,
-			    unsigned ptrs_held, int flags)
+			    struct bch_dev **cas, int flags)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	unsigned ptr_bit = 1;
+	unsigned i = 0;
 
 	bkey_for_each_ptr(ptrs, ptr) {
-		if ((ptrs_held & ptr_bit) && ptr->dev != BCH_SB_MEMBER_INVALID) {
-			struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
-			if (ca) {
-				struct bpos bucket = PTR_BUCKET_POS(ca, ptr);
-				bch2_bucket_nocow_unlock(&c->nocow_locks, bucket, flags);
-			}
+		if (cas[i]) {
+			struct bpos bucket = PTR_BUCKET_POS(cas[i], ptr);
+			bch2_bucket_nocow_unlock(&c->nocow_locks, bucket, flags);
 		}
-		ptr_bit <<= 1;
+		i++;
 	}
 }
 
 bool bch2_bkey_nocow_trylock(struct bch_fs *c, struct bkey_ptrs_c ptrs,
-			    unsigned ptrs_held, int flags)
+			    struct bch_dev **cas, int flags)
 {
-	unsigned ptr_bit = 1;
+	unsigned i = 0;
 
 	bkey_for_each_ptr(ptrs, ptr) {
-		if (!(ptrs_held & ptr_bit) || ptr->dev == BCH_SB_MEMBER_INVALID) {
-			ptr_bit <<= 1;
+		if (!cas[i]) {
+			i++;
 			continue;
 		}
 
-		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
-		if (!ca) {
-			ptr_bit <<= 1;
-			continue;
-		}
-		struct bpos bucket = PTR_BUCKET_POS(ca, ptr);
+		struct bpos bucket = PTR_BUCKET_POS(cas[i], ptr);
 
 		if (unlikely(!bch2_bucket_nocow_trylock(c, bucket, flags))) {
-			unsigned ptr_bit2 = 1;
+			unsigned i2 = 0;
 			bkey_for_each_ptr(ptrs, ptr2) {
 				if (ptr2 == ptr)
 					break;
-				if ((ptrs_held & ptr_bit2) &&
-				    ptr2->dev != BCH_SB_MEMBER_INVALID) {
-					ca = bch2_dev_have_ref(c, ptr2->dev);
-					if (!ca) {
-						ptr_bit2 <<= 1;
-						continue;
-					}
-					bucket = PTR_BUCKET_POS(ca, ptr2);
+				if (cas[i2]) {
+					bucket = PTR_BUCKET_POS(cas[i2], ptr2);
 					bch2_bucket_nocow_unlock(&c->nocow_locks, bucket, flags);
 				}
-				ptr_bit2 <<= 1;
+				i2++;
 			}
 			return false;
 		}
-		ptr_bit <<= 1;
+		i++;
 	}
 
 	return true;
@@ -164,23 +157,22 @@ static inline int bucket_to_lock_cmp(struct bucket_to_lock l,
 }
 
 void bch2_bkey_nocow_lock(struct bch_fs *c, struct bkey_ptrs_c ptrs,
-			  unsigned ptrs_held, int flags)
+			  struct bch_dev **cas, int flags)
 {
-	if (bch2_bkey_nocow_trylock(c, ptrs, ptrs_held, flags))
+	if (bch2_bkey_nocow_trylock(c, ptrs, cas, flags))
 		return;
 
 	DARRAY_PREALLOCATED(struct bucket_to_lock, 3) buckets;
 	darray_init(&buckets);
 
-	unsigned ptr_bit = 1;
+	unsigned i = 0;
 	bkey_for_each_ptr(ptrs, ptr) {
-		if (!(ptrs_held & ptr_bit) || ptr->dev == BCH_SB_MEMBER_INVALID) {
-			ptr_bit <<= 1;
+		if (!cas[i]) {
+			i++;
 			continue;
 		}
 
-		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
-		u64 b = bucket_to_u64(PTR_BUCKET_POS(ca, ptr));
+		u64 b = bucket_to_u64(PTR_BUCKET_POS(cas[i], ptr));
 		struct nocow_lock_bucket *l =
 			bucket_nocow_lock(&c->nocow_locks, b);
 		prefetch(l);
@@ -188,7 +180,7 @@ void bch2_bkey_nocow_lock(struct bch_fs *c, struct bkey_ptrs_c ptrs,
 		/* XXX allocating memory with btree locks held - rare */
 		darray_push_gfp(&buckets, ((struct bucket_to_lock) { .b = b, .l = l, }),
 				GFP_KERNEL|__GFP_NOFAIL);
-		ptr_bit <<= 1;
+		i++;
 	}
 
 	WARN_ON_ONCE(buckets.nr > NOCOW_LOCK_BUCKET_SIZE);

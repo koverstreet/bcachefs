@@ -2163,7 +2163,7 @@ retry:
 
 		bch2_trans_unlock(trans);
 
-		bch2_bkey_nocow_lock(c, ptrs, ~0U, BUCKET_NOCOW_LOCK_UPDATE);
+		bch2_bkey_nocow_lock(c, ptrs, cas, BUCKET_NOCOW_LOCK_UPDATE);
 
 		/*
 		 * This could be handled better: If we're able to trylock the
@@ -2261,7 +2261,7 @@ err_bucket_stale:
 			ret = bch_err_throw(c, transaction_restart);
 		}
 
-		bch2_bkey_nocow_unlock(c, k, ~0U, BUCKET_NOCOW_LOCK_UPDATE);
+		bch2_bkey_nocow_unlock(c, k, cas, BUCKET_NOCOW_LOCK_UPDATE);
 
 		for (int i = 0; i < nr_cas; i++)
 			enumerated_ref_put(&cas[i]->io_ref[WRITE],
