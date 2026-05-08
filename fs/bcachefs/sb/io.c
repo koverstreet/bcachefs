@@ -38,11 +38,60 @@
  * be recorded. The layout structure has its own magic number so that it can be
  * found independently.
  *
+ * Only the primary superblock and the layout structure are at fixed,
+ * known-without-context offsets. Backup superblock locations are recorded only
+ * inside the layout (and inside each superblock's own embedded layout copy);
+ * recovery from a lost layout therefore requires either falling back to a
+ * second known offset, or scanning the device. The end-of-device backup is at
+ * an offset computable from the device size, which gives a second escape valve
+ * when sector 7 itself is unreadable.
+ *
+ * The layout structure is intentionally minimal---a magic number, a small
+ * offset table, no checksum---and lives in its own 512-byte sector so that it
+ * shares a physical block with as little else as possible. All checksumming
+ * and validation logic lives in the superblock itself. The embedded
+ * \texttt{bch\_sb\_layout} inside each superblock is what's used in the
+ * common case (the standalone copy at sector 7 is consulted only when the
+ * primary superblock cannot be read).
+ *
  * The superblock is written with a monotonically increasing sequence number
  * (\texttt{seq}); on read, the copy with the highest valid sequence number is
  * authoritative. The \texttt{bcachefs recover-super} command can reconstruct a
  * device's superblock from backup copies or from another device in the same
  * filesystem.
+ *
+ * \subsubsection{Threat model}
+ *
+ * Redundancy exists to survive several distinct failure modes, in roughly
+ * descending order of how often they're observed in practice:
+ *
+ * \begin{itemize}
+ * \item \textbf{Torn writes during power loss}. The actual superblock size
+ *   varies---a few kilobytes on a single-device laptop filesystem, larger on
+ *   big multi-device filesystems---but is generally well beyond a single
+ *   sector or physical block, and the on-disk reservation can grow to 32\,MB.
+ *   That's beyond any device's atomic write granularity, so power loss
+ *   mid-write can leave a torn superblock; the checksum catches it and a
+ *   backup is consulted. This was the original driver for redundant
+ *   superblocks.
+ * \item \textbf{Media errors and bit rot}. Bad sectors, single-sector unrecoverable
+ *   reads, slow long-term decay on backup copies that are written infrequently.
+ *   Front-of-device and end-of-device backups are physically separated on
+ *   rotating media, providing some independence.
+ * \item \textbf{Legacy bootloader coexistence and large physical block sizes}.
+ *   Sector 7 is adjacent to sector 0 (where ancient-style bootloaders live)
+ *   and the start of the primary superblock (sector 8). On disks with logical
+ *   sector size 512 and physical block size $\geq$\,4\,KB---increasingly
+ *   common, especially on SSDs reporting 8\,KB or 16\,KB physical blocks---a
+ *   sub-physical-block write triggers a read-modify-write of the whole
+ *   physical block. A torn RMW on physical block 0 can take out the boot
+ *   sector, the layout, and the start of the primary superblock together.
+ *   The end-of-device backup superblock is the escape valve here, since it
+ *   lives in its own physical block far away.
+ * \item \textbf{Whole-device failure}. A single device dropping out: covered
+ *   trivially by replication of the filesystem-wide state across all member
+ *   devices' superblocks.
+ * \end{itemize}
  *
  * \subsubsection{Fixed fields}
  *
