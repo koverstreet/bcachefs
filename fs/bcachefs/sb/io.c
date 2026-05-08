@@ -1149,7 +1149,7 @@ static void write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 	 * and REQ_IDLE set...
 	 */
 
-	bio_reset(bio, ca->disk_sb.bdev, REQ_OP_WRITE|REQ_SYNC|REQ_IDLE|REQ_META);
+	bio_reset(bio, ca->disk_sb.bdev, REQ_OP_WRITE|REQ_SYNC|REQ_IDLE|REQ_META|REQ_FUA);
 	bio->bi_iter.bi_sector	= le64_to_cpu(sb->offset);
 	bio->bi_end_io		= write_super_endio;
 	bio->bi_private		= ca;
