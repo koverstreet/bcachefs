@@ -857,41 +857,94 @@ static int read_one_super(struct bch_sb_handle *sb, u64 offset, struct printbuf 
 	}
 }
 
-static int read_backup_supers(struct bch_sb_handle *sb,
-			      struct bch_opts *opts,
+static int read_layout_sector(struct bch_sb_handle *sb,
+			      struct bch_sb_layout *layout,
 			      struct printbuf *err)
 {
-	/*
-	 * Error reading primary superblock - read location of backup
-	 * superblocks:
-	 */
 	bio_reset(sb->bio, sb->bdev, REQ_OP_READ|REQ_SYNC|REQ_META);
 	sb->bio->bi_iter.bi_sector = BCH_SB_LAYOUT_SECTOR;
 	/*
 	 * use sb buffer to read layout, since sb buffer is page aligned but
 	 * layout won't be:
 	 */
-	bch2_bio_map(sb->bio, sb->sb, sizeof(struct bch_sb_layout));
+	bch2_bio_map(sb->bio, sb->sb, sizeof(*layout));
 
 	try(submit_bio_wait(sb->bio));
 
-	struct bch_sb_layout layout;
-	memcpy(&layout, sb->sb, sizeof(layout));
+	memcpy(layout, sb->sb, sizeof(*layout));
+	return validate_sb_layout(layout, err);
+}
 
-	try(validate_sb_layout(&layout, err));
+/*
+ * Scan the backup superblock copies in @layout (the primary is already
+ * attempted by the caller) and return the offset of the highest-seq valid
+ * copy across primary + backups. On exit sb->sb holds the authoritative copy
+ * at *best_offset.
+ *
+ * The caller passes primary_seq = 0 if the primary read failed; nonzero
+ * otherwise (in which case sb->sb holds the primary's content on entry and is
+ * a candidate for best).
+ *
+ * Reading every copy defends against several failure modes:
+ *   - torn write to the primary (csum fails; pick a backup at the same seq)
+ *   - stale primary from a write that succeeded against slot 1+ but not the
+ *     primary (older seq on slot 0; pick the higher-seq backup)
+ *   - bit rot on a backup we didn't visit since last write (gets noticed when
+ *     the primary is also down)
+ *
+ * The "highest seq, last-scanned wins on a tie" rule keeps the common case
+ * (all slots at the same seq) free of re-reads.
+ */
+static int read_backup_supers(struct bch_sb_handle *sb,
+			      struct bch_sb_layout *layout,
+			      bool primary_valid,
+			      u64 *best_offset,
+			      struct printbuf *err)
+{
+	u64 primary_offset = le64_to_cpu(layout->sb_offset[0]);
+	u64 best_seq	= primary_valid ? le64_to_cpu(sb->sb->seq) : 0;
+	u64 last_read	= primary_valid ? primary_offset : 0;
+	bool any_valid	= primary_valid;
 
-	int ret = -BCH_ERR_invalid;
-	for (__le64 *i = layout.sb_offset; i < layout.sb_offset + layout.nr_superblocks; i++) {
-		u64 offset = le64_to_cpu(*i);
-		if (offset == opt_get(*opts, sb))
+	*best_offset	= primary_offset;
+
+	for (unsigned i = 1; i < layout->nr_superblocks; i++) {
+		u64 offset = le64_to_cpu(layout->sb_offset[i]);
+
+		struct printbuf slot_err = PRINTBUF;
+		int ret = read_one_super(sb, offset, &slot_err);
+		/*
+		 * read_one_super reads into sb->sb before validating; on
+		 * failure the buffer holds the unvalidated data. Track
+		 * last_read regardless of success so the post-loop check
+		 * knows whether to re-read the winning slot.
+		 */
+		last_read = offset;
+		if (ret) {
+			prt_printf(err, "  sb @ %llu: %s\n", offset, slot_err.buf);
+			printbuf_exit(&slot_err);
 			continue;
+		}
+		printbuf_exit(&slot_err);
 
-		ret = read_one_super(sb, offset, err);
-		if (!ret)
-			break;
+		any_valid = true;
+		if (sb->seq >= best_seq) {
+			best_seq = sb->seq;
+			*best_offset = offset;
+		}
 	}
 
-	return ret;
+	if (!any_valid)
+		return -BCH_ERR_invalid;
+
+	/*
+	 * If the winning slot wasn't the one we read last, re-read it so
+	 * sb->sb holds the authoritative copy on return.
+	 */
+	if (last_read != *best_offset)
+		try(read_one_super(sb, *best_offset, err));
+
+	return 0;
 }
 
 static int read_super_and_backups(struct bch_sb_handle *sb,
@@ -942,14 +995,34 @@ static int read_super_and_backups(struct bch_sb_handle *sb,
 	if (bch2_fs_init_fault("read_super"))
 		return -EFAULT;
 
-	u64 offset = opt_get(*opts, sb);
-	int ret = read_one_super(sb, offset, err);
-	if (ret) {
-		if (opt_defined(*opts, sb))
-			return ret;
+	u64 sb_offset;
 
-		prt_printf(err, "attempting backup superblocks\n");
-		try(read_backup_supers(sb, opts, err));
+	/*
+	 * If the user requested a specific superblock offset (recovery /
+	 * debug), respect it: don't scan, don't fall back.
+	 */
+	if (opt_defined(*opts, sb)) {
+		sb_offset = opt_get(*opts, sb);
+		try(read_one_super(sb, sb_offset, err));
+	} else {
+		struct bch_sb_layout layout;
+
+		/*
+		 * Read the primary first so we can pick up its embedded
+		 * layout in the common case; if it fails, fall back to the
+		 * standalone layout sector.
+		 */
+		CLASS(printbuf, primary_err)();
+		int ret = read_one_super(sb, BCH_SB_SECTOR, &primary_err);
+		if (!ret) {
+			memcpy(&layout, &sb->sb->layout, sizeof(layout));
+			try(validate_sb_layout(&layout, err));
+			try(read_backup_supers(sb, &layout, true, &sb_offset, err));
+		} else {
+			prt_printf(err, "primary superblock unreadable: %s\n", primary_err.buf);
+			try(read_layout_sector(sb, &layout, err));
+			try(read_backup_supers(sb, &layout, false, &sb_offset, err));
+		}
 	}
 
 	if (le16_to_cpu(sb->sb->block_size) << 9 <
@@ -966,7 +1039,7 @@ static int read_super_and_backups(struct bch_sb_handle *sb,
 	}
 
 	sb->have_layout = true;
-	try(bch2_sb_validate(sb->sb, opts, offset, 0, err));
+	try(bch2_sb_validate(sb->sb, opts, sb_offset, 0, err));
 
 	return 0;
 }
