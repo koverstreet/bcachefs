@@ -1444,10 +1444,6 @@ int __bch2_read_extent(struct btree_trans *trans,
 					     bch_err_throw(c, data_read_ptr_stale_dirty));
 	}
 
-	if (!(flags & BCH_READ_last_fragment) ||
-	    bio_flagged(&orig->bio, BIO_CHAIN))
-		flags |= BCH_READ_must_clone;
-
 	bool narrow_crcs = !orig->data_update &&
 		!(flags & BCH_READ_in_retry) &&
 		can_narrow_crc(pick.crc);
