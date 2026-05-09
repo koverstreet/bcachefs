@@ -341,7 +341,22 @@ do_write:
 	BUG_ON((type == BTREE_WRITE_initial) != (b->written == 0));
 
 	BUG_ON(btree_node_fake(b));
-	BUG_ON((b->will_make_reachable != 0) != !b->written);
+
+	if (unlikely((b->will_make_reachable != 0) != !b->written)) {
+		CLASS(bch_log_msg, msg)(c);
+		prt_printf(&msg.m, "btree node write lifecycle invariant violated at ");
+		bch2_btree_pos_to_text(&msg.m, c, b);
+		prt_newline(&msg.m);
+		prt_printf(&msg.m, "  written: %u\n", b->written);
+		prt_printf(&msg.m, "  will_make_reachable: %lx\n", b->will_make_reachable);
+		prt_printf(&msg.m, "  flags: ");
+		bch2_prt_bitflags(&msg.m, bch2_btree_node_flags, b->flags);
+		prt_newline(&msg.m);
+		prt_printf(&msg.m, "  write_type: %u\n", type);
+		prt_printf(&msg.m, "  already_started: %d\n",
+			   !!(flags & BTREE_WRITE_already_started));
+		BUG();
+	}
 
 	BUG_ON(b->written >= btree_sectors(c));
 	BUG_ON(b->written & (block_sectors(c) - 1));
