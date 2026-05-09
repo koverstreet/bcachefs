@@ -1628,6 +1628,8 @@ int bch2_read(struct btree_trans *trans, struct bch_read_bio *rbio,
 
 		if (bvec_iter.bi_size == bytes)
 			flags |= BCH_READ_last_fragment;
+		else
+			flags |= BCH_READ_must_clone;
 
 		ret = __bch2_read_extent(trans, rbio, bvec_iter, iter.pos,
 					 data_btree, k,

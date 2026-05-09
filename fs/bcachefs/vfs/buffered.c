@@ -244,6 +244,8 @@ static void bchfs_read(struct btree_trans *trans,
 
 		if (rbio->bio.bi_iter.bi_size == bytes)
 			flags |= BCH_READ_last_fragment;
+		else
+			flags |= BCH_READ_must_clone;
 
 		bch2_bio_page_state_set(c, &rbio->bio, k);
 
