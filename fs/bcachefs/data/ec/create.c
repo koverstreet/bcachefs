@@ -1787,12 +1787,15 @@ int bch2_stripe_repair(struct moving_context *ctxt,
 
 		for (unsigned i = 0; i < need_evacuate; i++) {
 			const struct bch_extent_ptr *ptr = old_s->ptrs + blocks_used[i];
+			u64 end = ptr->offset + le16_to_cpu(old_s->sectors);
 
-			u64 dev = ptr->dev != BCH_SB_MEMBER_INVALID
-				? ptr->dev
-				: bp_dev_for_ec_removed_dev(s.k->p.offset, blocks_used[i]);
-
-			try(bch2_evacuate_data(ctxt, dev, ptr->offset, ptr->offset + le16_to_cpu(old_s->sectors)));
+			if (ptr->dev != BCH_SB_MEMBER_INVALID)
+				try(bch2_evacuate_data(ctxt, ptr->dev,
+						       ptr->offset, end));
+			else
+				try(bch2_evacuate_ec_orphan(ctxt,
+						s.k->p.offset, blocks_used[i],
+						ptr->offset, end));
 		}
 
 		return bch_err_throw(c, stripe_needs_block_evacuate);
