@@ -390,13 +390,24 @@ void bch2_dev_io_ref_stop(struct bch_dev *ca, int rw)
 
 static void __bch2_dev_read_only(struct bch_fs *c, struct bch_dev *ca)
 {
-	bch2_dev_io_ref_stop(ca, WRITE);
-
 	/*
 	 * The allocator thread itself allocates btree nodes, so stop it first:
 	 */
 	bch2_dev_allocator_remove(c, ca);
 	bch2_recalc_capacity(c);
+
+	/*
+	 * bch2_dev_allocator_remove() above blocks until every open_bucket on
+	 * this device has been released. Submitting write bios and taking
+	 * write io_refs both happen while we hold open_bucket refs, so that
+	 * drain also waits for any in-flight submits to complete. Only then
+	 * is it safe to stop write io_refs: stopping them sooner would cause
+	 * bch2_dev_get_ioref() to fail at submit time for in-flight writes,
+	 * surfacing as -EIO to userspace even though the underlying block
+	 * device is still healthy (we're going read-only, not removing).
+	 */
+	bch2_dev_io_ref_stop(ca, WRITE);
+
 	bch2_dev_journal_stop(&c->journal, ca);
 	bch2_do_discards_async(c);
 
