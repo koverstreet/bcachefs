@@ -102,6 +102,19 @@ struct btree {
 
 	struct bkey_format	format;
 
+	/*
+	 * Per-field unpack constants, derived from @format at node init.
+	 * Lets __bch2_bkey_unpack_key skip the per-field state machine in
+	 * the common case where the field can be extracted by a single
+	 * aligned load + shift + mask.
+	 */
+	struct bkey_unpack_field {
+		u8	byte_offset;	/* byte within packed key */
+		u8	load_size;	/* 1, 2, 4, 8; 0 = no bits in packed; 0xff = fallback */
+		u8	shift;		/* shift right after load */
+		u8	_pad;
+	} unpack[BKEY_NR_FIELDS];
+
 	struct btree_node	*data;
 	void			*aux_data;
 

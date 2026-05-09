@@ -384,6 +384,9 @@ bool bch2_bkey_transform(const struct bkey_format *,
 
 struct bkey __bch2_bkey_unpack_key(const struct bkey_format *,
 				   const struct bkey_packed *);
+struct bkey __bch2_bkey_unpack_key_b(const struct btree *,
+				     const struct bkey_packed *);
+void bch2_compute_bkey_unpack_consts(struct btree *);
 
 #ifndef HAVE_BCACHEFS_COMPILED_UNPACK
 struct bpos __bkey_unpack_pos(const struct bkey_format *,
@@ -430,7 +433,13 @@ __bkey_unpack_key_format_checked(const struct btree *b,
 			BUG_ON(memcmp(dst, &dst2, sizeof(*dst)));
 		}
 	} else {
-		*dst = __bch2_bkey_unpack_key(&b->format, src);
+		*dst = __bch2_bkey_unpack_key_b(b, src);
+
+		if (static_branch_unlikely(&bch2_debug_check_bkey_unpack)) {
+			struct bkey dst2 = __bch2_bkey_unpack_key(&b->format, src);
+
+			BUG_ON(memcmp(dst, &dst2, sizeof(*dst)));
+		}
 	}
 }
 
