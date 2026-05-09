@@ -8,7 +8,7 @@
 #include "darray.h"
 
 int __bch2_darray_resize_noprof(darray_char *d, size_t element_size, size_t new_size, gfp_t gfp,
-				bool rcu)
+				bool rcu, bool have_prealloc)
 {
 	if (new_size > d->size) {
 		new_size = roundup_pow_of_two(new_size);
@@ -42,7 +42,7 @@ int __bch2_darray_resize_noprof(darray_char *d, size_t element_size, size_t new_
 		rcu_assign_pointer(d->data, new);
 		d->size = new_size;
 
-		if (old != d->preallocated) {
+		if (!have_prealloc || old != d->preallocated) {
 			if (!rcu)
 				kvfree(old);
 			else
