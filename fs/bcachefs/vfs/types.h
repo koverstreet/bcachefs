@@ -2,6 +2,8 @@
 #ifndef _BCACHEFS_VFS_TYPES_H
 #define _BCACHEFS_VFS_TYPES_H
 
+#include <linux/mempool.h>
+
 struct bch_fs_vfs {
 	struct list_head	inodes_list;
 	struct mutex		inodes_lock;
@@ -12,6 +14,7 @@ struct bch_fs_vfs {
 	struct bio_set		dio_write_bioset;
 	struct bio_set		dio_read_bioset;
 	struct bio_set		nocow_flush_bioset;
+	mempool_t		writepage_buf_pool;
 	struct workqueue_struct	*writeback_wq;
 };
 

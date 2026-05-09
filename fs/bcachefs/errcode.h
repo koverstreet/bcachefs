@@ -115,6 +115,7 @@
 	x(ENOMEM,			ENOMEM_promote_limit_init)		\
 	x(ENOMEM,			ENOMEM_bio_bounce_pages_init)		\
 	x(ENOMEM,			ENOMEM_writepage_bioset_init)		\
+	x(ENOMEM,			ENOMEM_writepage_buf_pool_init)		\
 	x(ENOMEM,			ENOMEM_dio_read_bioset_init)		\
 	x(ENOMEM,			ENOMEM_dio_write_bioset_init)		\
 	x(ENOMEM,			ENOMEM_nocow_flush_bioset_init)		\

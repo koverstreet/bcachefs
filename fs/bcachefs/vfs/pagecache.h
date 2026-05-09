@@ -59,6 +59,15 @@ struct bch_folio_sector {
 	u8			state;
 };
 
+/*
+ * Worst-case bytes for a per-folio bch_folio_sector snapshot: a folio can be up
+ * to MAX_PAGECACHE_ORDER pages, each contributing PAGE_SECTORS sector entries.
+ * Used to size the writepage_buf_pool reserve.
+ */
+#define BCH_WRITEPAGE_BUF_BYTES						\
+	((PAGE_SECTORS << MAX_PAGECACHE_ORDER) *			\
+	 sizeof(struct bch_folio_sector))
+
 struct bch_folio {
 	spinlock_t		lock;
 	atomic_t		write_count;
