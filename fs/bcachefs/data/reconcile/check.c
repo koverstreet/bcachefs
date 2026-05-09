@@ -478,7 +478,8 @@ static int check_stripe_can_widen(struct btree_trans *trans)
 	CLASS(widen_cache, cache)();
 	try(bch2_widen_cache_init(&cache));
 
-	int cookie = bch2_reconcile_scan_cookie_set(trans, RECONCILE_SCAN_COOKIE_stripes);
+	int cookie = lockrestart_do(trans,
+		bch2_reconcile_scan_cookie_is_set(trans, RECONCILE_SCAN_COOKIE_stripes));
 	if (cookie < 0)
 		return cookie;
 	bool scan_pending = cookie > 0;

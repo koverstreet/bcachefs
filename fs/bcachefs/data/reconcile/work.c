@@ -166,7 +166,7 @@ int bch2_set_fs_needs_reconcile(struct bch_fs *c)
 				true);
 }
 
-int bch2_reconcile_scan_cookie_set(struct btree_trans *trans, u64 inum)
+int bch2_reconcile_scan_cookie_is_set(struct btree_trans *trans, u64 inum)
 {
 	CLASS(btree_iter, iter)(trans, BTREE_ID_reconcile_scan, POS(0, inum), 0);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
