@@ -1121,6 +1121,14 @@ int bch2_dev_add(struct bch_fs *c, const char *path, struct printbuf *err)
 			bool write_sb = false;
 			__bch2_dev_mi_field_upgrades(c, ca, &write_sb);
 
+			/*
+			 * We don't call bch2_sb_update() until after the
+			 * superblock write finishes - but without sync
+			 * c->sb.nr_devices, write_super won't write to the new
+			 * device:
+			 */
+			c->sb.nr_devices = c->disk_sb.sb->nr_devices;
+
 			bch2_write_super(c);
 		}
 
