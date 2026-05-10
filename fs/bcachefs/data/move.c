@@ -557,6 +557,8 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		bp_pos_inode	= bp_dev_for_ec_removed_dev(w->ec_orphan.ec_idx,
 							    w->ec_orphan.ec_block);
 		break;
+	default:
+		BUG();
 	}
 
 	u64 sector_start = w->sector_start;
