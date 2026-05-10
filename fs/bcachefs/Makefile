@@ -87,6 +87,7 @@ bcachefs-y		:=			\
 	journal/reclaim.o			\
 	journal/sb.o				\
 	journal/seq_blacklist.o			\
+	journal/validate.o			\
 	journal/write.o				\
 	opts.o					\
 	sb/clean.o				\

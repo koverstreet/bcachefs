@@ -160,7 +160,7 @@
 #include "init/fs.h"
 
 #include "journal/journal.h"
-#include "journal/read.h"
+#include "journal/validate.h"
 
 #include "sb/counters.h"
 

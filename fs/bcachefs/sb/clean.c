@@ -9,6 +9,7 @@
 
 #include "journal/read.h"
 #include "journal/write.h"
+#include "journal/validate.h"
 
 #include "sb/clean.h"
 #include "sb/io.h"

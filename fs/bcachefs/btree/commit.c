@@ -19,6 +19,7 @@
 #include "journal/journal.h"
 #include "journal/read.h"
 #include "journal/reclaim.h"
+#include "journal/validate.h"
 
 #include "init/error.h"
 #include "init/fs.h"
