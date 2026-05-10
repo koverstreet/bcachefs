@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
+#include <linux/unaligned.h>
+
 #include "bcachefs.h"
 
 #include "btree/bkey.h"
