@@ -49,15 +49,19 @@ bch2_btree_iter_peek_in_subvolume_max_type(struct btree_iter *iter, struct bpos 
 	int _ret3 = 0;								\
 										\
 	do {									\
-		_ret3 = lockrestart_do(_trans, ({				\
-			struct bkey_s_c _k = bch2_btree_iter_peek_in_subvolume_max_type(&(_iter),\
-						_end, _subvolid, (_flags));	\
-			if (!(_k).k)						\
-				break;						\
+		u32 _restart_count = bch2_trans_begin(_trans);			\
+		_ret3 = 0;							\
 										\
-			bkey_err(_k) ?: (_do);					\
-		}));								\
-	} while (!_ret3 && bch2_btree_iter_advance(&(_iter)));			\
+		struct bkey_s_c _k = bch2_btree_iter_peek_in_subvolume_max_type(&(_iter),\
+						_end, _subvolid, (_flags));	\
+		if (!(_k).k)							\
+			break;							\
+										\
+		_ret3 = bkey_err(_k) ?: (_do);					\
+		if (!_ret3)							\
+			bch2_trans_verify_not_restarted(_trans, _restart_count);\
+	} while (bch2_err_matches(_ret3, BCH_ERR_transaction_restart) ||	\
+		 (!_ret3 && bch2_btree_iter_advance(&(_iter))));		\
 										\
 	_ret3;									\
 })

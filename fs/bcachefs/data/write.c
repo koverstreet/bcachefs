@@ -2333,10 +2333,8 @@ again:
 			int ret2 = PTR_ERR_OR_ZERO(req) ?:
 			bch2_alloc_sectors_req(trans, req, op->write_point, &wp);
 
-			if (bch2_err_matches(ret2, BCH_ERR_operation_blocked)) {
-				if (!wait_on_allocator_sync)
-					break;
-
+			if (bch2_err_matches(ret2, BCH_ERR_operation_blocked) &&
+			    wait_on_allocator_sync) {
 				bch2_wait_on_allocator(trans, c, req, ret2, &op->cl);
 				__bch2_write_index(op);
 				op->wbio.failed.nr = 0;

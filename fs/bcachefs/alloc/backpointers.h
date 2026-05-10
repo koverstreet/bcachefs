@@ -262,16 +262,21 @@ static inline void bch2_bp_scan_iter_advance(struct bp_scan_iter *iter)
 	int _ret3 = 0;										\
 												\
 	while (true) {										\
-		_ret3 = lockrestart_do(trans, ({						\
-			struct bkey_s_c_backpointer _bp =					\
-				bch2_bp_scan_iter_peek(_trans, &_bp_iter, _end, _last_flushed);	\
-			if (!_bp.k)								\
-				break;								\
-			bkey_err(_bp) ?: (_do);							\
-		}));										\
+		u32 _restart_count = bch2_trans_begin(_trans);					\
+		_ret3 = 0;									\
+												\
+		struct bkey_s_c_backpointer _bp =						\
+			bch2_bp_scan_iter_peek(_trans, &_bp_iter, _end, _last_flushed);		\
+		if (!_bp.k)									\
+			break;									\
+												\
+		_ret3 = bkey_err(_bp) ?: (_do);							\
+		if (bch2_err_matches(_ret3, BCH_ERR_transaction_restart))			\
+			continue;								\
 		if (_ret3)									\
 			break;									\
 												\
+		bch2_trans_verify_not_restarted(_trans, _restart_count);			\
 		bch2_bp_scan_iter_advance(&_bp_iter);						\
 	}											\
 												\
