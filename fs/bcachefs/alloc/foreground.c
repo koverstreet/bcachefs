@@ -1803,6 +1803,52 @@ static void alloc_trace_to_text(struct printbuf *out, struct bch_fs *c,
 		}
 }
 
+static void bch2_alloc_request_to_text(struct printbuf *out, struct bch_fs *c,
+				       struct alloc_request *req)
+{
+	prt_printf(out, "nr_replicas:\t%u\n", req->nr_replicas);
+	prt_str(out, "target:\t");
+	bch2_target_to_text(out, c, req->target);
+	prt_newline(out);
+
+	prt_printf(out, "watermark:\t%s\n", bch2_watermarks[req->watermark]);
+	prt_printf(out, "data_type:\t%s\n", bch2_data_type_str(req->data_type));
+
+	prt_str(out, "flags:\t");
+	prt_bitflags(out, bch2_write_flags, req->flags);
+	prt_newline(out);
+
+	prt_printf(out, "ec:\t%u\n", req->ec);
+	prt_printf(out, "will_retry_all_devices:\t%u\n", req->will_retry_all_devices);
+	prt_printf(out, "will_retry_target_devices:\t%u\n", req->will_retry_target_devices);
+	prt_printf(out, "will_retry_set_devices:\t%u\n", req->will_retry_set_devices);
+	prt_printf(out, "copygc_can_make_progress:\t%u\n", req->copygc_can_make_progress);
+	prt_printf(out, "have_cl:\t%u\n", req->cl != NULL);
+
+	if (req->devs_have && req->devs_have->nr) {
+		prt_printf(out, "devs_have:\t");
+		bch2_devs_list_to_text(out, c, req->devs_have);
+		prt_newline(out);
+	}
+
+	prt_printf(out, "devs_may_alloc:\t");
+	{
+		unsigned i;
+		for_each_set_bit(i, req->devs_may_alloc.d, BCH_SB_MEMBERS_MAX)
+			prt_printf(out, "%u ", i);
+	}
+	prt_newline(out);
+
+	prt_printf(out, "devs_sorted:\t");
+	darray_for_each(req->devs_sorted, i)
+		prt_printf(out, "%u ", *i);
+	prt_newline(out);
+
+	prt_printf(out, "allocated:\t%u\n", req->nr_effective);
+
+	alloc_trace_to_text(out, c, req);
+}
+
 static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_request *req, int err)
 {
 	CLASS(printbuf, buf)();
@@ -1815,47 +1861,7 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_r
 		printbuf_tabstop_push(&buf, 28);
 		prt_str(&buf, "Allocation:\n");
 		guard(printbuf_indent)(&buf);
-		prt_printf(&buf, "nr_replicas:\t%u\n", req->nr_replicas);
-		prt_str(&buf, "target:\t");
-		bch2_target_to_text(&buf, c, req->target);
-		prt_newline(&buf);
-
-		prt_printf(&buf, "watermark:\t%s\n", bch2_watermarks[req->watermark]);
-		prt_printf(&buf, "data_type:\t%s\n", bch2_data_type_str(req->data_type));
-
-		prt_str(&buf, "flags:\t");
-		prt_bitflags(&buf, bch2_write_flags, req->flags);
-		prt_newline(&buf);
-
-		prt_printf(&buf, "ec:\t%u\n", req->ec);
-		prt_printf(&buf, "will_retry_all_devices:\t%u\n", req->will_retry_all_devices);
-		prt_printf(&buf, "will_retry_target_devices:\t%u\n", req->will_retry_target_devices);
-		prt_printf(&buf, "will_retry_set_devices:\t%u\n", req->will_retry_set_devices);
-		prt_printf(&buf, "copygc_can_make_progress:\t%u\n", req->copygc_can_make_progress);
-		prt_printf(&buf, "have_cl:\t%u\n", req->cl != NULL);
-
-		if (req->devs_have && req->devs_have->nr) {
-			prt_printf(&buf, "devs_have:\t");
-			bch2_devs_list_to_text(&buf, c, req->devs_have);
-			prt_newline(&buf);
-		}
-
-		prt_printf(&buf, "devs_may_alloc:\t");
-		{
-			unsigned i;
-			for_each_set_bit(i, req->devs_may_alloc.d, BCH_SB_MEMBERS_MAX)
-				prt_printf(&buf, "%u ", i);
-		}
-		prt_newline(&buf);
-
-		prt_printf(&buf, "devs_sorted:\t");
-		darray_for_each(req->devs_sorted, i)
-			prt_printf(&buf, "%u ", *i);
-		prt_newline(&buf);
-
-		prt_printf(&buf, "allocated:\t%u\n", req->nr_effective);
-
-		alloc_trace_to_text(&buf, c, req);
+		bch2_alloc_request_to_text(&buf, c, req);
 		prt_newline(&buf);
 	}
 
