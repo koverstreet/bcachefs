@@ -46,7 +46,7 @@ static int bch2_set_nr_journal_buckets_iter(struct bch_dev *ca, unsigned nr,
 			 PTR_ERR_OR_ZERO(ob[nr_got] = bch2_bucket_alloc_trans(trans, req)));
 
 			if (bch2_err_matches(ret2, BCH_ERR_operation_blocked)) {
-				bch2_wait_on_allocator(trans, c, req, ret2, cl);
+				bch2_wait_on_allocator(trans, req, ret2, cl);
 				ret2 = bch_err_throw(c, transaction_restart_nested);
 			}
 

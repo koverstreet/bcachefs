@@ -1939,14 +1939,14 @@ static bool alloc_wait_advanced(struct bch_fs *c, struct alloc_request *req)
 	return false;
 }
 
-void __bch2_wait_on_allocator(struct btree_trans *trans, struct bch_fs *c,
+void __bch2_wait_on_allocator(struct btree_trans *trans,
 			      struct alloc_request *req,
 			      int err, struct closure *cl)
 {
+	struct bch_fs *c = trans->c;
 	unsigned long until = jiffies + c->opts.allocator_stuck_timeout * HZ;
 
-	if (trans)
-		bch2_trans_unlock(trans);
+	bch2_trans_unlock(trans);
 
 	while (1) {
 		long t = until - jiffies;

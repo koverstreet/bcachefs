@@ -448,17 +448,16 @@ void bch2_dev_alloc_debug_to_text(struct printbuf *, struct bch_dev *);
 
 void bch2_alloc_request_to_text(struct printbuf *, struct bch_fs *,
 				struct alloc_request *);
-void __bch2_wait_on_allocator(struct btree_trans *, struct bch_fs *,
-			      struct alloc_request *, int, struct closure *);
+void __bch2_wait_on_allocator(struct btree_trans *, struct alloc_request *,
+			      int, struct closure *);
 
 static inline void bch2_wait_on_allocator(struct btree_trans *trans,
-					  struct bch_fs *c,
 					  struct alloc_request *req,
 					  int err,
 					  struct closure *cl)
 {
 	if (closure_nr_remaining(cl) > 1)
-		__bch2_wait_on_allocator(trans, c, req, err, cl);
+		__bch2_wait_on_allocator(trans, req, err, cl);
 }
 
 #endif /* _BCACHEFS_ALLOC_FOREGROUND_H */
