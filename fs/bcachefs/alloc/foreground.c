@@ -611,8 +611,8 @@ static bool req_alloc_should_bail(struct bch_fs *c, struct alloc_request *req)
  *
  * Returns:	an open_bucket on success, or an ERR_PTR() on failure.
  */
-static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
-						   struct alloc_request *req)
+struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
+					    struct alloc_request *req)
 {
 	struct bch_fs *c = trans->c;
 	struct bch_dev *ca = req->ca;
@@ -710,26 +710,6 @@ err:
 
 	alloc_trace_add(req, ca->dev_idx, ret, wake_counter_snapshot);
 
-	return ob;
-}
-
-struct open_bucket *bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
-				      enum bch_watermark watermark,
-				      enum bch_data_type data_type,
-				      struct closure *cl)
-{
-	struct open_bucket *ob;
-	struct alloc_request req = {
-		.cl		= cl,
-		.watermark	= watermark,
-		.data_type	= data_type,
-		.ca		= ca,
-	};
-	darray_init(&req.trace);
-
-	CLASS(btree_trans, trans)(c);
-	lockrestart_do(trans, PTR_ERR_OR_ZERO(ob = bch2_bucket_alloc_trans(trans, &req)));
-	darray_exit(&req.trace);
 	return ob;
 }
 
@@ -1803,8 +1783,8 @@ static void alloc_trace_to_text(struct printbuf *out, struct bch_fs *c,
 		}
 }
 
-static void bch2_alloc_request_to_text(struct printbuf *out, struct bch_fs *c,
-				       struct alloc_request *req)
+void bch2_alloc_request_to_text(struct printbuf *out, struct bch_fs *c,
+				struct alloc_request *req)
 {
 	prt_printf(out, "nr_replicas:\t%u\n", req->nr_replicas);
 	prt_str(out, "target:\t");

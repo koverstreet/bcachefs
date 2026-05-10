@@ -150,9 +150,7 @@ static inline unsigned bch2_open_buckets_reserved(enum bch_watermark watermark)
 	}
 }
 
-struct open_bucket *bch2_bucket_alloc(struct bch_fs *, struct bch_dev *,
-				      enum bch_watermark, enum bch_data_type,
-				      struct closure *);
+struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *, struct alloc_request *);
 
 /*
  * freelist_wait wake helpers. Every wake_up site on
@@ -334,15 +332,21 @@ static inline struct alloc_request *alloc_request_get(struct btree_trans *trans,
 	if (ec_replicas < 2)
 		erasure_code = false;
 
-	req->cl			= cl;
-	req->nr_replicas	= nr_replicas;
-	req->ec_replicas	= ec_replicas;
-	req->ec			= erasure_code;
-	req->target		= target;
-	req->watermark		= watermark;
-	req->flags		= flags;
-	req->devs_have		= devs_have;
-	req->have_cache		= false;
+	req->ca				= NULL;
+	req->cl				= cl;
+	req->nr_replicas		= nr_replicas;
+	req->ec_replicas		= ec_replicas;
+	req->ec				= erasure_code;
+	req->target			= target;
+	req->watermark			= watermark;
+	req->flags			= flags;
+	req->devs_have			= devs_have;
+	req->have_cache			= false;
+	req->will_retry_all_devices	= false;
+	req->will_retry_target_devices	= false;
+	req->will_retry_set_devices	= false;
+	req->copygc_can_make_progress	= false;
+	req->trace_alloc_failed		= false;
 	darray_init(&req->trace);
 	return req;
 }
@@ -442,6 +446,8 @@ void bch2_fs_open_buckets_to_text(struct printbuf *, struct bch_fs *);
 void bch2_fs_alloc_debug_to_text(struct printbuf *, struct bch_fs *);
 void bch2_dev_alloc_debug_to_text(struct printbuf *, struct bch_dev *);
 
+void bch2_alloc_request_to_text(struct printbuf *, struct bch_fs *,
+				struct alloc_request *);
 void __bch2_wait_on_allocator(struct btree_trans *, struct bch_fs *,
 			      struct alloc_request *, int, struct closure *);
 

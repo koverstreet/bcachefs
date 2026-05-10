@@ -34,19 +34,27 @@ static int bch2_set_nr_journal_buckets_iter(struct bch_dev *ca, unsigned nr,
 		return bch_err_throw(c, ENOMEM_set_nr_journal_buckets);
 
 	for (nr_got = 0; nr_got < nr_want; nr_got++) {
-		ob[nr_got] = bch2_bucket_alloc(c, ca, watermark,
-					       BCH_DATA_journal, cl);
-		ret = PTR_ERR_OR_ZERO(ob[nr_got]);
+		CLASS(btree_trans, trans)(c);
 
-		if (ret == -BCH_ERR_bucket_alloc_blocked)
-			ret = bch_err_throw(c, freelist_empty);
-		if (ret == -BCH_ERR_freelist_empty) /* don't if we're actually out of buckets */
-			bch2_alloc_wake_dev(ca);
+		ret = lockrestart_do(trans, ({
+			struct alloc_request *req __free(alloc_request_put) =
+				alloc_request_get(trans,
+						  0, false, NULL, 1, 0, watermark, 0,
+						  !nr_got ? cl : 0);
+			int ret2 = PTR_ERR_OR_ZERO(req) ?:
+			(req->ca = ca,
+			 PTR_ERR_OR_ZERO(ob[nr_got] = bch2_bucket_alloc_trans(trans, req)));
 
+			if (bch2_err_matches(ret2, BCH_ERR_operation_blocked)) {
+				bch2_wait_on_allocator(trans, c, req, ret2, cl);
+				ret2 = bch_err_throw(c, transaction_restart_nested);
+			}
+
+			ret2;
+		}));
 		if (ret)
 			break;
 
-		CLASS(btree_trans, trans)(c);
 		ret = bch2_trans_mark_metadata_bucket(trans, ca,
 					ob[nr_got]->bucket, BCH_DATA_journal,
 					ca->mi.bucket_size, BTREE_TRIGGER_transactional);
@@ -144,6 +152,7 @@ static int bch2_set_nr_journal_buckets_loop(struct bch_fs *c, struct bch_dev *ca
 		return 0;
 
 	while (!ret && ja->nr < nr) {
+
 		/*
 		 * note: journal buckets aren't really counted as _sectors_ used yet, so
 		 * we don't need the disk reservation to avoid the BUG_ON() in buckets.c
@@ -160,10 +169,6 @@ static int bch2_set_nr_journal_buckets_loop(struct bch_fs *c, struct bch_dev *ca
 						bucket_to_sector(ca, nr - ja->nr), 1, 0));
 
 		ret = bch2_set_nr_journal_buckets_iter(ca, nr, new_fs, watermark, &cl);
-		if (bch2_err_matches(ret, BCH_ERR_operation_blocked))
-			ret = 0; /* wait and retry */
-
-		bch2_wait_on_allocator(NULL, c, NULL, ret, &cl);
 	}
 
 	return ret;
