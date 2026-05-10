@@ -883,10 +883,10 @@ int bch2_bucket_alloc_set_trans(struct btree_trans *trans,
 
 	BUG_ON(req->nr_effective >= req->nr_replicas);
 
+	bch2_dev_alloc_list(c, stripe, &req->devs_may_alloc, &req->devs_sorted);
+
 	if (req->devs_sorted.nr <= 1)
 		req->will_retry_target_devices = false;
-
-	bch2_dev_alloc_list(c, stripe, &req->devs_may_alloc, &req->devs_sorted);
 
 	darray_for_each(req->devs_sorted, i) {
 		req->ca = bch2_dev_tryget_noerror(c, *i);
