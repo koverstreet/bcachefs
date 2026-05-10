@@ -415,8 +415,10 @@ int bch2_fs_journal_start(struct journal *j, struct journal_start_info info)
 	j->in_flight.front = j->in_flight.back = cur_seq;
 
 	u64 seq;
-	fifo_for_each_entry_ptr(p, &j->pin, seq)
+	fifo_for_each_entry_ptr(p, &j->pin, seq) {
 		journal_pin_list_init(p, 1);
+		p->unreplayed = true;
+	}
 
 	genradix_for_each(&c->journal_entries, iter, _i) {
 		i = *_i;

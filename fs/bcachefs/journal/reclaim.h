@@ -26,6 +26,7 @@ static inline void journal_pin_list_init(struct journal_entry_pin_list *p, int c
 	for (unsigned i = 0; i < ARRAY_SIZE(p->flushed); i++)
 		INIT_LIST_HEAD(&p->flushed[i]);
 	atomic_set(&p->count, count);
+	p->unreplayed = false;
 	p->devs.e.nr_devs = 0;
 	p->bytes = 0;
 }
@@ -55,8 +56,14 @@ DEFINE_DARRAY_PREALLOCATED(replicas_entry_refs, 16);
 int bch2_journal_update_last_seq_ondisk(struct journal *, u64,
 					darray_replicas_entry_refs *);
 
-bool __bch2_journal_pin_put(struct journal *, u64);
-void bch2_journal_pin_put(struct journal *, u64);
+static inline bool __bch2_journal_pin_put(struct journal *j, u64 seq)
+{
+	struct journal_entry_pin_list *pin_list = journal_seq_pin(j, seq);
+
+	return atomic_dec_and_test(&pin_list->count);
+}
+
+void bch2_journal_replay_pins_put(struct journal *, u64);
 void bch2_journal_pin_drop(struct journal *, struct journal_entry_pin *);
 
 void bch2_journal_pin_set(struct journal *, u64, struct journal_entry_pin *,

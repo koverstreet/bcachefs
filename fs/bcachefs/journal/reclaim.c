@@ -414,18 +414,23 @@ int bch2_journal_update_last_seq_ondisk(struct journal *j, u64 last_seq_ondisk,
 	return 0;
 }
 
-bool __bch2_journal_pin_put(struct journal *j, u64 seq)
+void bch2_journal_replay_pins_put(struct journal *j, u64 seq)
 {
-	struct journal_entry_pin_list *pin_list = journal_seq_pin(j, seq);
+	BUG_ON(seq < j->replay_journal_seq);
 
-	return atomic_dec_and_test(&pin_list->count);
-}
+	seq = min(seq, j->replay_journal_seq_end);
 
-void bch2_journal_pin_put(struct journal *j, u64 seq)
-{
-	if (__bch2_journal_pin_put(j, seq)) {
-		guard(spinlock)(&j->lock);
-		bch2_journal_update_last_seq(j);
+	while (j->replay_journal_seq < seq) {
+		struct journal_entry_pin_list *pin_list =
+			journal_seq_pin(j, j->replay_journal_seq++);
+
+		BUG_ON(!pin_list->unreplayed);
+		pin_list->unreplayed = false;
+
+		if (atomic_dec_and_test(&pin_list->count)) {
+			guard(spinlock)(&j->lock);
+			bch2_journal_update_last_seq(j);
+		}
 	}
 }
 
@@ -599,6 +604,14 @@ journal_get_next_pin(struct journal *j,
 	struct journal_entry_pin *ret = NULL;
 
 	fifo_for_each_entry_ptr(pin_list, &j->pin, *seq) {
+		/*
+		 * Flushing journal pins (writing btree nodes) requires
+		 * consuming journal space: don't get ahead of journal replay to
+		 * avoid deadlocking
+		 */
+		if (pin_list->unreplayed)
+			break;
+
 		if (*seq > seq_to_flush && !allowed_above_seq)
 			break;
 
@@ -1064,7 +1077,10 @@ bool bch2_journal_seq_pins_to_text(struct printbuf *out, struct journal *j, u64 
 
 	pin_list = journal_seq_pin(j, *seq);
 
-	prt_printf(out, "%llu: count %u\n", *seq, atomic_read(&pin_list->count));
+	prt_printf(out, "%llu: count %u", *seq, atomic_read(&pin_list->count));
+	if (pin_list->unreplayed)
+		prt_str(out, " unreplayed");
+	prt_newline(out);
 	guard(printbuf_indent)(out);
 
 	bch2_replicas_entry_to_text(out, &pin_list->devs.e);

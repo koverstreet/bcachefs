@@ -251,16 +251,6 @@ int bch2_set_may_go_rw(struct bch_fs *c)
 
 /* journal replay: */
 
-static void replay_now_at(struct journal *j, u64 seq)
-{
-	BUG_ON(seq < j->replay_journal_seq);
-
-	seq = min(seq, j->replay_journal_seq_end);
-
-	while (j->replay_journal_seq < seq)
-		bch2_journal_pin_put(j, j->replay_journal_seq++);
-}
-
 static int bch2_journal_replay_accounting_key(struct btree_trans *trans,
 					      struct journal_key *k)
 {
@@ -473,9 +463,9 @@ int bch2_journal_replay(struct bch_fs *c)
 		struct journal_key *k = *kp;
 
 		if (!k->allocated)
-			replay_now_at(j, c->journal_entries_base_seq + k->journal_seq_offset);
+			bch2_journal_replay_pins_put(j, c->journal_entries_base_seq + k->journal_seq_offset);
 		else
-			replay_now_at(j, j->replay_journal_seq_end);
+			bch2_journal_replay_pins_put(j, j->replay_journal_seq_end);
 
 		ret = commit_do(trans, NULL, NULL,
 				BCH_TRANS_COMMIT_no_enospc|
@@ -501,7 +491,7 @@ int bch2_journal_replay(struct bch_fs *c)
 	    c->recovery.pass_done >= BCH_RECOVERY_PASS_journal_replay)
 		bch2_journal_keys_put_initial(c);
 
-	replay_now_at(j, j->replay_journal_seq_end);
+	bch2_journal_replay_pins_put(j, j->replay_journal_seq_end);
 	j->replay_journal_seq = 0;
 
 	bch2_journal_set_replay_done(j);

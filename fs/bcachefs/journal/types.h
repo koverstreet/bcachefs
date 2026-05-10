@@ -108,6 +108,7 @@ struct journal_entry_pin_list {
 	struct list_head		unflushed[JOURNAL_PIN_TYPE_NR];
 	struct list_head		flushed[JOURNAL_PIN_TYPE_NR];
 	atomic_t			count;
+	bool				unreplayed;
 	union bch_replicas_padded	devs;
 	size_t				bytes;
 };

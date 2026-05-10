@@ -1163,6 +1163,13 @@ static noinline int bch2_trans_commit_btree_write_ratelimit(struct btree_trans *
 {
 	struct bch_fs_btree_cache *bc = &trans->c->btree.cache;
 
+	/*
+	 * Journal reclaim doesn't run ahead of journal replay, to avoid journal
+	 * deadlocks - it'll be blocked if replay isn't done:
+	 */
+	if (unlikely(!test_bit(JOURNAL_replay_done, &trans->c->journal.flags)))
+		return 0;
+
 	return drop_locks_do(trans, ({
 		trans_wait_event(trans, &bc->nr_in_flight_wait,
 			atomic_long_read(&bc->nr_in_flight_inner) < BTREE_WRITE_IO_LIMIT(c) * 3 / 4 &&
