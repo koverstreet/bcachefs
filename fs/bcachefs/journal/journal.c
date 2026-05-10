@@ -348,19 +348,14 @@ static void __journal_entry_close(struct journal *j, unsigned closed_val, bool t
 	sectors = vstruct_blocks_plus(buf->data, c->block_bits,
 				      buf->u64s_reserved) << c->block_bits;
 	if (unlikely(sectors > buf->sectors)) {
-		CLASS(printbuf, err)();
-		guard(printbuf_atomic)(&err);
-
-		prt_printf(&err, "journal entry overran reserved space: %u > %u\n",
+		CLASS(bch_log_msg_atomic, msg)(c);
+		prt_printf(&msg.m, "journal entry overran reserved space: %u > %u\n",
 			   sectors, buf->sectors);
-		prt_printf(&err, "buf u64s %u u64s reserved %u cur_entry_u64s %u block_bits %u\n",
+		prt_printf(&msg.m, "buf u64s %u u64s reserved %u cur_entry_u64s %u block_bits %u\n",
 			   le32_to_cpu(buf->data->u64s), buf->u64s_reserved,
 			   j->cur_entry_u64s,
 			   c->block_bits);
-		prt_printf(&err, "fatal error - emergency read only");
-		bch2_journal_halt_locked(j);
-
-		bch_err(c, "%s", err.buf);
+		bch2_fs_emergency_read_only_locked(c, &msg.m);
 		return;
 	}
 
@@ -473,16 +468,14 @@ static int journal_entry_open(struct journal *j)
 		return bch_err_throw(c, journal_max_open);
 
 	if (unlikely(journal_cur_seq(j) >= JOURNAL_SEQ_MAX)) {
-		CLASS(bch_log_msg, msg)(c);
-		msg.m.suppress = true;
+		CLASS(bch_log_msg_atomic, msg)(c);
 		prt_printf(&msg.m, "cannot start: journal seq overflow");
 		bch2_fs_emergency_read_only_locked(c, &msg.m);
 		return bch_err_throw(c, journal_shutdown);
 	}
 
 	if (unlikely(bch2_journal_seq_is_blacklisted(c, journal_cur_seq(j) + 1, false))) {
-		CLASS(bch_log_msg, msg)(c);
-		msg.m.suppress = true;
+		CLASS(bch_log_msg_atomic, msg)(c);
 		prt_printf(&msg.m, "attempting to open blacklisted journal seq %llu",
 			   journal_cur_seq(j));
 		bch2_fs_emergency_read_only_locked(c, &msg.m);
