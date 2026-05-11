@@ -175,7 +175,7 @@ static int __btree_err(enum bch_fsck_flags flags,
 	true;								\
 })
 
-#define btree_err_on(cond, ...)	((cond) ? btree_err(__VA_ARGS__) : false)
+#define btree_err_on(cond, ...)	(unlikely(cond) ? btree_err(__VA_ARGS__) : false)
 
 /*
  * When btree topology repair changes the start or end of a node, that might
@@ -490,9 +490,9 @@ int bch2_validate_bset_keys(struct bch_fs *c,
 		u = __bkey_disassemble(b, k, &tmp);
 
 		ret = bset_key_validate(c, b, u.s_c, updated_range, write);
-		if (ret == -BCH_ERR_fsck_delete_bkey)
+		if (unlikely(ret == -BCH_ERR_fsck_delete_bkey))
 			goto drop_this_key;
-		if (ret)
+		if (unlikely(ret))
 			goto fsck_err;
 
 		if (write)
@@ -500,7 +500,8 @@ int bch2_validate_bset_keys(struct bch_fs *c,
 				    BSET_BIG_ENDIAN(i), write,
 				    &b->format, k);
 
-		if (prev && btree_node_read_bkey_cmp(b, prev, k) >= 0) {
+		if (prev &&
+		    unlikely(btree_node_read_bkey_cmp(b, prev, k) >= 0)) {
 			struct bkey up = bkey_unpack_key(b, prev);
 
 			printbuf_reset(&buf);
