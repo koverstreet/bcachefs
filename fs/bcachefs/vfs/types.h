@@ -4,9 +4,10 @@
 
 #include <linux/mempool.h>
 
+#include "util/fast_list.h"
+
 struct bch_fs_vfs {
-	struct list_head	inodes_list;
-	struct mutex		inodes_lock;
+	struct fast_list	inodes;
 	struct rhashtable	inodes_table;
 	struct rhltable		inodes_by_inum_table;
 

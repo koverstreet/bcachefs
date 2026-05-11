@@ -10,6 +10,24 @@
 
 #include <linux/seqlock.h>
 #include <linux/stat.h>
+#include <linux/version.h>
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,19,0)
+static inline unsigned inode_state_read(struct inode *inode)
+{
+	return inode->i_state;
+}
+
+static inline unsigned inode_state_read_once(struct inode *inode)
+{
+	return READ_ONCE(inode->i_state);
+}
+
+static inline void inode_state_set_raw(struct inode *inode, unsigned flags)
+{
+	WRITE_ONCE(inode->i_state, inode->i_state|flags);
+}
+#endif
 
 struct bch_inode_info {
 	struct inode		v;
@@ -17,7 +35,7 @@ struct bch_inode_info {
 	struct rhlist_head	by_inum_hash;
 	subvol_inum		ei_inum;
 
-	struct list_head	ei_vfs_inode_list;
+	unsigned		ei_inodes_idx;
 	unsigned long		ei_flags;
 
 	struct mutex		ei_update_lock;
