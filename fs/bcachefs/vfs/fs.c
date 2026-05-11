@@ -1934,9 +1934,6 @@ static void bch2_evict_inode(struct inode *vinode)
 
 void bch2_evict_subvolume_inodes(struct bch_fs *c, snapshot_id_list *s)
 {
-	struct bch_inode_info *inode;
-	bool clean_pass = false, this_pass_clean;
-
 	/*
 	 * Initially, we scan for inodes without I_DONTCACHE, then mark them to
 	 * be pruned with d_mark_dontcache().
@@ -1948,19 +1945,16 @@ void bch2_evict_subvolume_inodes(struct bch_fs *c, snapshot_id_list *s)
 	 * around the dcache work (held safe by our igrab ref) and resume from
 	 * the same slot on the next iteration.
 	 */
-again:
-	cond_resched();
-	this_pass_clean = true;
-
 	rcu_read_lock();
 	struct genradix_iter iter;
+	struct bch_inode_info *inode;
+
 	fast_list_for_each(&c->vfs.inodes, iter, inode) {
 		if (!snapshot_list_has_id(s, inode->ei_inum.subvol))
 			continue;
 
-		if (!(inode_state_read_once(&inode->v) & (I_DONTCACHE|I_FREEING)) &&
+		if (!(inode_state_read_once(&inode->v) & I_DONTCACHE) &&
 		    igrab(&inode->v)) {
-			this_pass_clean = false;
 			rcu_read_unlock();
 
 			d_mark_dontcache(&inode->v);
@@ -1968,26 +1962,31 @@ again:
 			iput(&inode->v);
 
 			rcu_read_lock();
-		} else if (clean_pass && this_pass_clean) {
-			struct wait_bit_queue_entry wqe;
-			struct wait_queue_head *wq_head;
+		}
+	}
 
-			wq_head = inode_bit_waitqueue(&wqe, &inode->v, __I_NEW);
+	bool found = false;
+	do {
+		found = false;
+
+		fast_list_for_each(&c->vfs.inodes, iter, inode) {
+			if (!snapshot_list_has_id(s, inode->ei_inum.subvol))
+				continue;
+
+			found = true;
+
+			struct wait_bit_queue_entry wqe;
+			struct wait_queue_head *wq_head = inode_bit_waitqueue(&wqe, &inode->v, __I_NEW);
 			prepare_to_wait_event(wq_head, &wqe.wq_entry,
 					      TASK_UNINTERRUPTIBLE);
 			rcu_read_unlock();
 
 			schedule();
 			finish_wait(wq_head, &wqe.wq_entry);
-			goto again;
+			rcu_read_lock();
 		}
-	}
+	} while (found);
 	rcu_read_unlock();
-
-	if (!clean_pass || !this_pass_clean) {
-		clean_pass = this_pass_clean;
-		goto again;
-	}
 }
 
 static int bch2_statfs(struct dentry *dentry, struct kstatfs *buf)
