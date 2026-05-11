@@ -318,7 +318,8 @@ int bch2_subvol_is_ro_trans(struct btree_trans *trans, u32 subvol)
 	struct bch_subvolume s;
 	try(bch2_subvolume_get_inlined(trans, subvol, true, &s));
 
-	if (BCH_SUBVOLUME_RO(&s))
+	if (BCH_SUBVOLUME_RO(&s) ||
+	    BCH_SUBVOLUME_UNLINKED(&s))
 		return -EROFS;
 	return 0;
 }
