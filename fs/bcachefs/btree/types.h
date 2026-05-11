@@ -104,15 +104,30 @@ struct btree {
 
 	/*
 	 * Per-field unpack constants, derived from @format at node init.
-	 * Lets __bch2_bkey_unpack_key skip the per-field state machine in
-	 * the common case where the field can be extracted by a single
-	 * aligned load + shift + mask.
+	 * Extract each field with:
+	 *
+	 *   field = (load_8_unaligned(bytes + byte_offset) >> (64 - bits))
+	 *           + field_offset
+	 *
+	 * Load position chosen so the field ends at the top of the loaded
+	 * value (load_offset + 8 == byte after field's MSB byte); junk from
+	 * earlier-in-memory fields lands in the low bits and shifts off.
+	 *
+	 * byte_offset is signed: for a field near the start of @in, the
+	 * load can need to start before @in. The byte(s) before @in are
+	 * always valid memory in the callers we care about (bset payload
+	 * after the bset header, or other bkeys in the same bset).
+	 *
+	 * Only handles formats where every field's MSB sits at a byte
+	 * boundary (field_msb_bit % 8 == 7). bch2_bkey_format_done()
+	 * rounds fields up to byte width when there are spare bits, so
+	 * this is the common case. Formats too tight to byte-align take
+	 * the slow path via byte_aligned_fields = false.
 	 */
+	bool				byte_aligned_fields;
 	struct bkey_unpack_field {
-		u8	byte_offset;	/* byte within packed key */
-		u8	load_size;	/* 1, 2, 4, 8; 0 = no bits in packed; 0xff = fallback */
-		u8	shift;		/* shift right after load */
-		u8	_pad;
+		s8	byte_offset;
+		u8	shift_right;	/* 64 - bits, or 64 if field has no bits in packed */
 	} unpack[BKEY_NR_FIELDS];
 
 	struct btree_node	*data;
