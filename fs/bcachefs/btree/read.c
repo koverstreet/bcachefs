@@ -394,17 +394,11 @@ static int btree_node_bkey_val_validate(struct bch_fs *c, struct btree *b,
 static int bset_key_validate(struct bch_fs *c, struct btree *b,
 			     struct bkey_s_c k,
 			     bool updated_range,
-			     enum bch_validate_flags flags)
+			     struct bkey_validate_context from)
 {
-	struct bkey_validate_context from = (struct bkey_validate_context) {
-		.from	= BKEY_VALIDATE_btree_node,
-		.level	= b->c.level,
-		.btree	= b->c.btree_id,
-		.flags	= flags,
-	};
 	return __bch2_bkey_validate(c, k, from) ?:
 		(!updated_range ? bch2_bkey_in_btree_node(c, b, k, from) : 0) ?:
-		(flags & BCH_VALIDATE_write ? btree_node_bkey_val_validate(c, b, k, flags) : 0);
+		(from.flags & BCH_VALIDATE_write ? btree_node_bkey_val_validate(c, b, k, from.flags) : 0);
 }
 
 static bool bkey_packed_valid(struct bch_fs *c, struct btree *b,
@@ -450,6 +444,12 @@ int bch2_validate_bset_keys(struct bch_fs *c,
 	CLASS(printbuf, buf)();
 	bool updated_range = b->key.k.type == KEY_TYPE_btree_ptr_v2 &&
 		BTREE_PTR_RANGE_UPDATED(&bkey_i_to_btree_ptr_v2(&b->key)->v);
+	struct bkey_validate_context from = (struct bkey_validate_context) {
+		.from	= BKEY_VALIDATE_btree_node,
+		.level	= b->c.level,
+		.btree	= b->c.btree_id,
+		.flags	= write,
+	};
 	int ret = 0;
 
 	for (k = i->start;
@@ -490,7 +490,7 @@ int bch2_validate_bset_keys(struct bch_fs *c,
 
 		u = __bkey_disassemble(b, k, &tmp);
 
-		ret = bset_key_validate(c, b, u.s_c, updated_range, write);
+		ret = bset_key_validate(c, b, u.s_c, updated_range, from);
 		if (unlikely(ret == -BCH_ERR_fsck_delete_bkey))
 			goto drop_this_key;
 		if (unlikely(ret))
