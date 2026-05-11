@@ -7,6 +7,7 @@
 #include "btree/locking.h"
 #include "data/checksum.h"
 #include "data/extents.h"
+#include "init/error.h"
 
 struct bch_fs;
 struct btree;
@@ -16,6 +17,23 @@ static inline unsigned btree_ptr_sectors_written(struct bkey_s_c k)
 	return k.k->type == KEY_TYPE_btree_ptr_v2
 		? le16_to_cpu(bkey_s_c_to_btree_ptr_v2(k).v->sectors_written)
 		: 0;
+}
+
+static inline int bch2_bkey_in_btree_node(struct bch_fs *c, struct btree *b,
+					  struct bkey_s_c k,
+					  struct bkey_validate_context from)
+{
+	int ret = 0;
+
+	bkey_fsck_err_on(bpos_lt(k.k->p, b->data->min_key),
+			 c, bkey_before_start_of_btree_node,
+			 "key before start of btree node");
+
+	bkey_fsck_err_on(bpos_gt(k.k->p, b->data->max_key),
+			 c, bkey_after_end_of_btree_node,
+			 "key past end of btree node");
+fsck_err:
+	return ret;
 }
 
 struct btree_read_bio {

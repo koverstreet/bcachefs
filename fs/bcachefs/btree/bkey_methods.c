@@ -295,23 +295,6 @@ int bch2_bkey_validate(struct bch_fs *c, struct bkey_s_c k,
 		bch2_bkey_val_validate(c, k, from);
 }
 
-int bch2_bkey_in_btree_node(struct bch_fs *c, struct btree *b,
-			    struct bkey_s_c k,
-			    struct bkey_validate_context from)
-{
-	int ret = 0;
-
-	bkey_fsck_err_on(bpos_lt(k.k->p, b->data->min_key),
-			 c, bkey_before_start_of_btree_node,
-			 "key before start of btree node");
-
-	bkey_fsck_err_on(bpos_gt(k.k->p, b->data->max_key),
-			 c, bkey_after_end_of_btree_node,
-			 "key past end of btree node");
-fsck_err:
-	return ret;
-}
-
 void bch2_bpos_to_text(struct printbuf *out, struct bpos pos)
 {
 	if (bpos_eq(pos, POS_MIN))

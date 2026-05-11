@@ -5,6 +5,7 @@
 #include "alloc/buckets.h"
 
 #include "btree/bkey_buf.h"
+#include "btree/bkey_cmp.h"
 #include "btree/bkey_methods.h"
 #include "btree/cache.h"
 #include "btree/iter.h"
@@ -433,7 +434,7 @@ static inline int btree_node_read_bkey_cmp(const struct btree *b,
 				const struct bkey_packed *l,
 				const struct bkey_packed *r)
 {
-	return bch2_bkey_cmp_packed(b, l, r)
+	return bch2_bkey_cmp_packed_inlined(b, l, r)
 		?: (int) bkey_deleted(r) - (int) bkey_deleted(l);
 }
 

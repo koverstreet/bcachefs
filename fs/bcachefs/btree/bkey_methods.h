@@ -51,9 +51,6 @@ int __bch2_bkey_validate(struct bch_fs *, struct bkey_s_c,
 			 struct bkey_validate_context);
 int bch2_bkey_validate(struct bch_fs *, struct bkey_s_c,
 		       struct bkey_validate_context);
-int bch2_bkey_in_btree_node(struct bch_fs *, struct btree *, struct bkey_s_c,
-			    struct bkey_validate_context from);
-
 void bch2_bpos_to_text(struct printbuf *, struct bpos);
 void bch2_bkey_to_text(struct printbuf *, const struct bkey *);
 void bch2_val_to_text(struct printbuf *, struct bch_fs *,
