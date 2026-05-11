@@ -62,7 +62,7 @@ static void __bch2_bkey_pack_verify(const struct bkey_packed *packed,
 
 	BUG_ON(packed->u64s < bkeyp_key_u64s(format, packed));
 
-	tmp = __bch2_bkey_unpack_key(format, packed);
+	__bch2_bkey_unpack_key(format, &tmp, packed);
 
 	if (memcmp(&tmp, unpacked, sizeof(struct bkey))) {
 		struct printbuf buf = PRINTBUF;
@@ -267,28 +267,26 @@ bool bch2_bkey_transform(const struct bkey_format *out_f,
 	return true;
 }
 
-struct bkey __bch2_bkey_unpack_key(const struct bkey_format *format,
-			      const struct bkey_packed *in)
+void __bch2_bkey_unpack_key(const struct bkey_format *format,
+			    struct bkey *out,
+			    const struct bkey_packed *in)
 {
 	struct unpack_state state = unpack_state_init(format, in);
-	struct bkey out;
 
 	EBUG_ON(format->nr_fields != BKEY_NR_FIELDS);
 	EBUG_ON(in->u64s < format->key_u64s);
 	EBUG_ON(in->format != KEY_FORMAT_LOCAL_BTREE);
 	EBUG_ON(in->u64s - format->key_u64s + BKEY_U64s > U8_MAX);
 
-	out.u64s	= BKEY_U64s + in->u64s - format->key_u64s;
-	out.format	= KEY_FORMAT_CURRENT;
-	out.needs_whiteout = in->needs_whiteout;
-	out.type	= in->type;
-	out.pad[0]	= 0;
+	out->u64s	= BKEY_U64s + in->u64s - format->key_u64s;
+	out->format	= KEY_FORMAT_CURRENT;
+	out->needs_whiteout = in->needs_whiteout;
+	out->type	= in->type;
+	out->pad[0]	= 0;
 
-#define x(id, field)	out.field = get_inc_field(&state, id);
+#define x(id, field)	out->field = get_inc_field(&state, id);
 	bkey_fields()
 #undef x
-
-	return out;
 }
 
 /*
@@ -392,10 +390,10 @@ static u64 unpack_field_fast(const u8 *bytes,
 	return ((raw >> uf->shift) & (~0ULL >> (64 - bits))) + offset;
 }
 
-struct bkey __bch2_bkey_unpack_key_b(const struct btree *b,
-				     const struct bkey_packed *in)
+void __bch2_bkey_unpack_key_b(const struct btree *b,
+			      struct bkey *out,
+			      const struct bkey_packed *in)
 {
-	struct bkey out;
 	const u8 *bytes = (const u8 *) in;
 
 	/*
@@ -409,8 +407,10 @@ struct bkey __bch2_bkey_unpack_key_b(const struct btree *b,
 	EBUG_ON(in->u64s - b->format.key_u64s + BKEY_U64s > U8_MAX);
 
 	/* fall back to slow path if any field flagged */
-	if (unlikely(b->unpack[0].load_size == 0xff))
-		return __bch2_bkey_unpack_key(&b->format, in);
+	if (unlikely(b->unpack[0].load_size == 0xff)) {
+		__bch2_bkey_unpack_key(&b->format, out, in);
+		return;
+	}
 
 	/*
 	 * Header trick (mirrors compile_bkey_field's prologue): the first 4
@@ -430,30 +430,31 @@ struct bkey __bch2_bkey_unpack_key_b(const struct btree *b,
 		hdr += (u32)(BKEY_U64s - b->format.key_u64s) |
 		       ((u32)(KEY_FORMAT_CURRENT - KEY_FORMAT_LOCAL_BTREE) << 8);
 		hdr &= 0x00ffffff;	/* clear pad byte */
-		put_unaligned(hdr, (u32 *) &out);
+		put_unaligned(hdr, (u32 *) out);
 	}
 
 #define x(id, field)							\
-	out.field = unpack_field_fast(bytes, &b->unpack[id],		\
-				      b->format.bits_per_field[id],	\
-				      le64_to_cpu(b->format.field_offset[id]));
+	out->field = unpack_field_fast(bytes, &b->unpack[id],		\
+				       b->format.bits_per_field[id],	\
+				       le64_to_cpu(b->format.field_offset[id]));
 	bkey_fields()
 #undef x
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 	{
-		struct bkey check = __bch2_bkey_unpack_key(&b->format, in);
-		EBUG_ON(memcmp(&out, &check, sizeof(out)));
+		struct bkey check;
+
+		__bch2_bkey_unpack_key(&b->format, &check, in);
+		EBUG_ON(memcmp(out, &check, sizeof(*out)));
 	}
 #endif
-
-	return out;
 }
 #else
-struct bkey __bch2_bkey_unpack_key_b(const struct btree *b,
-				     const struct bkey_packed *in)
+void __bch2_bkey_unpack_key_b(const struct btree *b,
+			      struct bkey *out,
+			      const struct bkey_packed *in)
 {
-	return __bch2_bkey_unpack_key(&b->format, in);
+	__bch2_bkey_unpack_key(&b->format, out, in);
 }
 #endif
 

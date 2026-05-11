@@ -463,7 +463,7 @@ void __bch2_bkey_compat(const struct bch_fs *c,
 				if (!write)
 					swap(in, out);
 
-				uk = __bch2_bkey_unpack_key(in, k);
+				__bch2_bkey_unpack_key(in, &uk, k);
 				swap(uk.p.inode, uk.p.offset);
 				BUG_ON(!bch2_bkey_pack_key(k, &uk, out));
 			}
@@ -482,7 +482,7 @@ void __bch2_bkey_compat(const struct bch_fs *c,
 				u64 max_packed = min_packed +
 					~(~0ULL << f->bits_per_field[BKEY_FIELD_SNAPSHOT]);
 
-				uk = __bch2_bkey_unpack_key(f, k);
+				__bch2_bkey_unpack_key(f, &uk, k);
 				uk.p.snapshot = write
 					? min_packed : min_t(u64, U32_MAX, max_packed);
 
@@ -497,7 +497,7 @@ void __bch2_bkey_compat(const struct bch_fs *c,
 		if (!bkey_packed(k)) {
 			u = bkey_i_to_s(packed_to_bkey(k));
 		} else {
-			uk = __bch2_bkey_unpack_key(f, k);
+			__bch2_bkey_unpack_key(f, &uk, k);
 			u.k = &uk;
 			u.v = bkeyp_val(f, k);
 		}
