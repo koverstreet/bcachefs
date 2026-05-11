@@ -1935,7 +1935,6 @@ static void bch2_evict_inode(struct inode *vinode)
 void bch2_evict_subvolume_inodes(struct bch_fs *c, snapshot_id_list *s)
 {
 	struct bch_inode_info *inode;
-	DARRAY(struct bch_inode_info *) grabbed;
 	bool clean_pass = false, this_pass_clean;
 
 	/*
@@ -1943,11 +1942,12 @@ void bch2_evict_subvolume_inodes(struct bch_fs *c, snapshot_id_list *s)
 	 * be pruned with d_mark_dontcache().
 	 *
 	 * Once we've had a clean pass where we didn't find any inodes without
-	 * I_DONTCACHE, we wait for them to be freed:
+	 * I_DONTCACHE, we wait for them to be freed.
+	 *
+	 * fast_list_iter tracks position by integer index, so we can drop rcu
+	 * around the dcache work (held safe by our igrab ref) and resume from
+	 * the same slot on the next iteration.
 	 */
-
-	darray_init(&grabbed);
-	darray_make_room(&grabbed, 1024);
 again:
 	cond_resched();
 	this_pass_clean = true;
@@ -1961,11 +1961,13 @@ again:
 		if (!(inode_state_read_once(&inode->v) & (I_DONTCACHE|I_FREEING)) &&
 		    igrab(&inode->v)) {
 			this_pass_clean = false;
+			rcu_read_unlock();
 
-			if (darray_push_gfp(&grabbed, inode, GFP_ATOMIC|__GFP_NOWARN)) {
-				iput(&inode->v);
-				break;
-			}
+			d_mark_dontcache(&inode->v);
+			d_prune_aliases(&inode->v);
+			iput(&inode->v);
+
+			rcu_read_lock();
 		} else if (clean_pass && this_pass_clean) {
 			struct wait_bit_queue_entry wqe;
 			struct wait_queue_head *wq_head;
@@ -1982,20 +1984,10 @@ again:
 	}
 	rcu_read_unlock();
 
-	darray_for_each(grabbed, i) {
-		inode = *i;
-		d_mark_dontcache(&inode->v);
-		d_prune_aliases(&inode->v);
-		iput(&inode->v);
-	}
-	grabbed.nr = 0;
-
 	if (!clean_pass || !this_pass_clean) {
 		clean_pass = this_pass_clean;
 		goto again;
 	}
-
-	darray_exit(&grabbed);
 }
 
 static int bch2_statfs(struct dentry *dentry, struct kstatfs *buf)
