@@ -50,7 +50,7 @@ struct open_bucket {
 	 * the block in the stripe this open_bucket corresponds to:
 	 */
 	u8			ec_idx;
-	enum bch_data_type	data_type:6;
+	enum bch_data_type	data_type:5;
 	bool			valid:1;
 	bool			on_partial_list:1;
 	bool			do_discards_fast:1;

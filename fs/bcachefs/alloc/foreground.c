@@ -1657,8 +1657,12 @@ void bch2_fs_open_buckets_to_text(struct printbuf *out, struct bch_fs *c)
 	for (struct open_bucket *ob = a->open_buckets;
 	     ob < a->open_buckets + ARRAY_SIZE(a->open_buckets);
 	     ob++)
-		if (atomic_read(&ob->pin))
-			nr[ob->data_type]++;
+		if (atomic_read(&ob->pin)) {
+			unsigned t = ob->data_type;
+			barrier(); /* can't READ_ONCE() a bitfield */
+			if (t < BCH_DATA_NR)
+				nr[t]++;
+		}
 
 	prt_printf(out, "open buckets allocated\t%i\n",		OPEN_BUCKETS_COUNT - a->open_buckets_nr_free);
 	prt_printf(out, "open buckets total\t%u\n",		OPEN_BUCKETS_COUNT);
@@ -1701,8 +1705,12 @@ void bch2_dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 
 	memset(nr, 0, sizeof(nr));
 
-	for (unsigned i = 0; i < ARRAY_SIZE(a->open_buckets); i++)
-		nr[a->open_buckets[i].data_type]++;
+	for (unsigned i = 0; i < ARRAY_SIZE(a->open_buckets); i++) {
+		unsigned t = a->open_buckets[i].data_type;
+		barrier(); /* can't READ_ONCE() a bitfield */
+		if (t < BCH_DATA_NR)
+			nr[t]++;
+	}
 
 	bch2_dev_usage_to_text(out, ca, &stats);
 
