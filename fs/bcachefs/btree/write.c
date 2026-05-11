@@ -233,13 +233,13 @@ static void btree_node_write_endio(struct bio *bio)
 static int validate_bset_for_write(struct bch_fs *c, struct btree *b,
 				   struct bset *i)
 {
-	int ret = bch2_bkey_validate(c, bkey_i_to_s_c(&b->key),
-				     (struct bkey_validate_context) {
-					.from	= BKEY_VALIDATE_btree_node,
-					.level	= b->c.level + 1,
-					.btree	= b->c.btree_id,
-					.flags	= BCH_VALIDATE_write,
-				     });
+	struct bkey_validate_context from = {
+		.from	= BKEY_VALIDATE_btree_node,
+		.level	= b->c.level + 1,
+		.btree	= b->c.btree_id,
+		.flags	= BCH_VALIDATE_write,
+	};
+	int ret = bch2_bkey_validate(c, bkey_i_to_s_c(&b->key), &from);
 	if (ret) {
 		bch2_fs_inconsistent(c, "invalid btree node key before write");
 		return ret;

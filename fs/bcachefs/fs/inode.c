@@ -474,7 +474,7 @@ struct bkey_i *bch2_inode_to_v3(struct btree_trans *trans, struct bkey_i *k)
 }
 
 static int __bch2_inode_validate(struct bch_fs *c, struct bkey_s_c k,
-				 struct bkey_validate_context from)
+				 const struct bkey_validate_context *from)
 {
 	struct bch_inode_unpacked unpacked;
 	int ret = 0;
@@ -514,7 +514,7 @@ fsck_err:
 }
 
 int bch2_inode_validate(struct bch_fs *c, struct bkey_s_c k,
-			struct bkey_validate_context from)
+			const struct bkey_validate_context *from)
 {
 	struct bkey_s_c_inode inode = bkey_s_c_to_inode(k);
 	int ret = 0;
@@ -530,7 +530,7 @@ fsck_err:
 }
 
 int bch2_inode_v2_validate(struct bch_fs *c, struct bkey_s_c k,
-			   struct bkey_validate_context from)
+			   const struct bkey_validate_context *from)
 {
 	struct bkey_s_c_inode_v2 inode = bkey_s_c_to_inode_v2(k);
 	int ret = 0;
@@ -546,7 +546,7 @@ fsck_err:
 }
 
 int bch2_inode_v3_validate(struct bch_fs *c, struct bkey_s_c k,
-			   struct bkey_validate_context from)
+			   const struct bkey_validate_context *from)
 {
 	struct bkey_s_c_inode_v3 inode = bkey_s_c_to_inode_v3(k);
 	int ret = 0;
@@ -793,7 +793,7 @@ int bch2_trigger_inode(struct btree_trans *trans, struct btree_trigger_op op)
 }
 
 int bch2_inode_generation_validate(struct bch_fs *c, struct bkey_s_c k,
-				   struct bkey_validate_context from)
+				   const struct bkey_validate_context *from)
 {
 	int ret = 0;
 
@@ -813,7 +813,7 @@ void bch2_inode_generation_to_text(struct printbuf *out, struct bch_fs *c,
 }
 
 int bch2_inode_alloc_cursor_validate(struct bch_fs *c, struct bkey_s_c k,
-				   struct bkey_validate_context from)
+				   const struct bkey_validate_context *from)
 {
 	int ret = 0;
 

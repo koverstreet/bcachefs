@@ -312,7 +312,7 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 /* KEY_TYPE_btree_ptr: */
 
 int bch2_btree_ptr_validate(struct bch_fs *c, struct bkey_s_c k,
-			    struct bkey_validate_context from)
+			    const struct bkey_validate_context *from)
 {
 	int ret = 0;
 
@@ -332,7 +332,7 @@ void bch2_btree_ptr_to_text(struct printbuf *out, struct bch_fs *c,
 }
 
 int bch2_btree_ptr_v2_validate(struct bch_fs *c, struct bkey_s_c k,
-			       struct bkey_validate_context from)
+			       const struct bkey_validate_context *from)
 {
 	struct bkey_s_c_btree_ptr_v2 bp = bkey_s_c_to_btree_ptr_v2(k);
 	int ret = 0;
@@ -346,7 +346,7 @@ int bch2_btree_ptr_v2_validate(struct bch_fs *c, struct bkey_s_c k,
 			 c, btree_ptr_v2_min_key_bad,
 			 "min_key > key");
 
-	if ((from.flags & BCH_VALIDATE_write) &&
+	if ((from->flags & BCH_VALIDATE_write) &&
 	    c->sb.version_min >= bcachefs_metadata_version_btree_ptr_sectors_written)
 		bkey_fsck_err_on(!bp.v->sectors_written,
 				 c, btree_ptr_v2_written_0,
@@ -539,7 +539,7 @@ bool bch2_extent_merge(struct bch_fs *c, struct bkey_s l, struct bkey_s_c r)
 /* KEY_TYPE_reservation: */
 
 int bch2_reservation_validate(struct bch_fs *c, struct bkey_s_c k,
-			      struct bkey_validate_context from)
+			      const struct bkey_validate_context *from)
 {
 	struct bkey_s_c_reservation r = bkey_s_c_to_reservation(k);
 	int ret = 0;
@@ -1702,7 +1702,7 @@ void bch2_bkey_ptrs_to_text(struct printbuf *out, struct bch_fs *c,
 
 static int extent_ptr_validate(struct bch_fs *c,
 			       struct bkey_s_c k,
-			       struct bkey_validate_context from,
+			       const struct bkey_validate_context *from,
 			       const struct bch_extent_ptr *ptr,
 			       unsigned size_ondisk,
 			       bool metadata)
@@ -1759,7 +1759,7 @@ static inline bool btree_ptr_entry_type_allowed(enum bch_extent_entry_type type)
 }
 
 int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
-			    struct bkey_validate_context from)
+			    const struct bkey_validate_context *from)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
@@ -1831,7 +1831,7 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 					 "checksum offset + key size > uncompressed size");
 			bkey_fsck_err_on(crc_is_encoded(crc) &&
 					 (crc.uncompressed_size > c->opts.encoded_extent_max >> 9) &&
-					 (from.flags & (BCH_VALIDATE_write|BCH_VALIDATE_commit)),
+					 (from->flags & (BCH_VALIDATE_write|BCH_VALIDATE_commit)),
 					 c, ptr_crc_uncompressed_size_too_big,
 					 "too large encoded extent");
 			bkey_fsck_err_on(!crc_is_compressed(crc) &&
@@ -1901,7 +1901,7 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 				 c, extent_ptrs_all_invalid,
 				 "extent without valid pointers");
 
-		bkey_fsck_err_on(from.from == BKEY_VALIDATE_commit &&
+		bkey_fsck_err_on(from->from == BKEY_VALIDATE_commit &&
 				 !have_non_inval_dev_ptrs_dirty,
 				 c, extent_ptrs_all_invalid,
 				 "extent without valid dirty pointers");

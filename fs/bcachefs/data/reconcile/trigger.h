@@ -5,7 +5,7 @@
 #include "data/extents.h"
 
 int bch2_extent_reconcile_validate(struct bch_fs *, struct bkey_s_c,
-				   struct bkey_validate_context,
+				   const struct bkey_validate_context *,
 				   const struct bch_extent_reconcile *);
 
 static inline struct bpos data_to_rb_work_pos(enum btree_id btree, struct bpos pos)

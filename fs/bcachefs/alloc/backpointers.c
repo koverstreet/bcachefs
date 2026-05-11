@@ -33,7 +33,7 @@ static inline struct bbpos bp_to_bbpos(struct bch_backpointer bp)
 }
 
 int bch2_backpointer_validate(struct bch_fs *c, struct bkey_s_c k,
-			      struct bkey_validate_context from)
+			      const struct bkey_validate_context *from)
 {
 	struct bkey_s_c_backpointer bp = bkey_s_c_to_backpointer(k);
 	int ret = 0;

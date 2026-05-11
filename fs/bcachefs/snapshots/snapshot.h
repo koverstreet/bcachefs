@@ -4,7 +4,7 @@
 
 void bch2_snapshot_tree_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 int bch2_snapshot_tree_validate(struct bch_fs *, struct bkey_s_c,
-				struct bkey_validate_context);
+				const struct bkey_validate_context *);
 
 #define bch2_bkey_ops_snapshot_tree ((struct bkey_ops) {	\
 	.key_validate	= bch2_snapshot_tree_validate,		\
@@ -19,7 +19,7 @@ int bch2_snapshot_tree_lookup(struct btree_trans *, u32, struct bch_snapshot_tre
 void bch2_snapshot_to_text(struct printbuf *, const struct bch_snapshot *);
 void bch2_snapshot_key_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 int bch2_snapshot_validate(struct bch_fs *, struct bkey_s_c,
-			   struct bkey_validate_context);
+			   const struct bkey_validate_context *);
 int bch2_mark_snapshot(struct btree_trans *, struct btree_trigger_op);
 
 int bch2_snapshot_tree_keys_to_text(struct printbuf *, struct btree_trans *, u32);

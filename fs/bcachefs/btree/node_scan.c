@@ -566,12 +566,12 @@ int bch2_get_scanned_nodes(struct bch_fs *c, enum btree_id btree,
 
 		found_btree_node_to_key(&tmp.k, &n);
 
-		BUG_ON(bch2_bkey_validate(c, bkey_i_to_s_c(&tmp.k),
-					  (struct bkey_validate_context) {
-						.from	= BKEY_VALIDATE_btree_node,
-						.level	= level + 1,
-						.btree	= btree,
-					  }));
+		struct bkey_validate_context from = {
+			.from	= BKEY_VALIDATE_btree_node,
+			.level	= level + 1,
+			.btree	= btree,
+		};
+		BUG_ON(bch2_bkey_validate(c, bkey_i_to_s_c(&tmp.k), &from));
 
 		if (!*nodes_found) {
 			prt_printf(out, "recovering from btree node scan at ");

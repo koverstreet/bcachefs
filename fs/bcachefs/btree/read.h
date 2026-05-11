@@ -21,7 +21,7 @@ static inline unsigned btree_ptr_sectors_written(struct bkey_s_c k)
 
 static inline int bch2_bkey_in_btree_node(struct bch_fs *c, struct btree *b,
 					  struct bkey_s_c k,
-					  struct bkey_validate_context from)
+					  const struct bkey_validate_context *from)
 {
 	int ret = 0;
 

@@ -182,7 +182,7 @@ static inline bool is_zero(char *start, char *end)
 #define field_end(p, member)	(((void *) (&p.member)) + sizeof(p.member))
 
 int bch2_accounting_validate(struct bch_fs *c, struct bkey_s_c k,
-			     struct bkey_validate_context from)
+			     const struct bkey_validate_context *from)
 {
 	struct disk_accounting_pos acc_k;
 	bpos_to_disk_accounting_pos(&acc_k, k.k->p);
@@ -192,7 +192,7 @@ int bch2_accounting_validate(struct bch_fs *c, struct bkey_s_c k,
 	if (acc_k.type >= BCH_DISK_ACCOUNTING_TYPE_NR)
 		return 0;
 
-	bkey_fsck_err_on((from.flags & BCH_VALIDATE_commit) &&
+	bkey_fsck_err_on((from->flags & BCH_VALIDATE_commit) &&
 			 bversion_zero(k.k->bversion),
 			 c, accounting_key_version_0,
 			 "accounting key with version=0");

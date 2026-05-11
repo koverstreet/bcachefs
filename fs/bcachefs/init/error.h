@@ -189,7 +189,7 @@ enum bch_validate_flags;
 __printf(5, 6)
 int __bch2_bkey_fsck_err(struct bch_fs *,
 			 struct bkey_s_c,
-			 struct bkey_validate_context from,
+			 const struct bkey_validate_context *from,
 			 enum bch_sb_error_id,
 			 const char *, ...);
 

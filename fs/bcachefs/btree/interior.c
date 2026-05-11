@@ -1619,8 +1619,8 @@ static void bch2_insert_fixup_btree_ptr(struct btree_update *as,
 		.btree	= b->c.btree_id,
 		.flags	= BCH_VALIDATE_commit,
 	};
-	if (bch2_bkey_validate(c, bkey_i_to_s_c(insert), from) ?:
-	    bch2_bkey_in_btree_node(c, b, bkey_i_to_s_c(insert), from)) {
+	if (bch2_bkey_validate(c, bkey_i_to_s_c(insert), &from) ?:
+	    bch2_bkey_in_btree_node(c, b, bkey_i_to_s_c(insert), &from)) {
 		bch2_fs_inconsistent(c, "%s: inserting invalid bkey", __func__);
 		dump_stack();
 	}

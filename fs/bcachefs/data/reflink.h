@@ -3,7 +3,7 @@
 #define _BCACHEFS_REFLINK_H
 
 int bch2_reflink_p_validate(struct bch_fs *, struct bkey_s_c,
-			    struct bkey_validate_context);
+			    const struct bkey_validate_context *);
 void bch2_reflink_p_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 bool bch2_reflink_p_merge(struct bch_fs *, struct bkey_s, struct bkey_s_c);
 int bch2_trigger_reflink_p(struct btree_trans *, struct btree_trigger_op);
@@ -17,7 +17,7 @@ int bch2_trigger_reflink_p(struct btree_trans *, struct btree_trigger_op);
 })
 
 int bch2_reflink_v_validate(struct bch_fs *, struct bkey_s_c,
-			    struct bkey_validate_context);
+			    const struct bkey_validate_context *);
 void bch2_reflink_v_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 int bch2_trigger_reflink_v(struct btree_trans *, struct btree_trigger_op);
 
@@ -30,7 +30,7 @@ int bch2_trigger_reflink_v(struct btree_trans *, struct btree_trigger_op);
 })
 
 int bch2_indirect_inline_data_validate(struct bch_fs *, struct bkey_s_c,
-				       struct bkey_validate_context);
+				       const struct bkey_validate_context *);
 void bch2_indirect_inline_data_to_text(struct printbuf *,
 				struct bch_fs *, struct bkey_s_c);
 int bch2_trigger_indirect_inline_data(struct btree_trans *, struct btree_trigger_op);

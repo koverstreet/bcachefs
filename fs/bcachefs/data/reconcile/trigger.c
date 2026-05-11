@@ -21,7 +21,7 @@
 
 int bch2_extent_reconcile_validate(struct bch_fs *c,
 				   struct bkey_s_c k,
-				   struct bkey_validate_context from,
+				   const struct bkey_validate_context *from,
 				   const struct bch_extent_reconcile *r)
 {
 	int ret = 0;

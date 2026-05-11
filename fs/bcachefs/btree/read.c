@@ -383,22 +383,23 @@ static int btree_node_bkey_val_validate(struct bch_fs *c, struct btree *b,
 					struct bkey_s_c k,
 					enum bch_validate_flags flags)
 {
-	return bch2_bkey_val_validate(c, k, (struct bkey_validate_context) {
+	struct bkey_validate_context from = {
 		.from	= BKEY_VALIDATE_btree_node,
 		.level	= b->c.level,
 		.btree	= b->c.btree_id,
-		.flags	= flags
-	});
+		.flags	= flags,
+	};
+	return bch2_bkey_val_validate(c, k, &from);
 }
 
 static int bset_key_validate(struct bch_fs *c, struct btree *b,
 			     struct bkey_s_c k,
 			     bool updated_range,
-			     struct bkey_validate_context from)
+			     const struct bkey_validate_context *from)
 {
 	return __bch2_bkey_validate(c, k, from) ?:
 		(!updated_range ? bch2_bkey_in_btree_node(c, b, k, from) : 0) ?:
-		(from.flags & BCH_VALIDATE_write ? btree_node_bkey_val_validate(c, b, k, from.flags) : 0);
+		(from->flags & BCH_VALIDATE_write ? btree_node_bkey_val_validate(c, b, k, from->flags) : 0);
 }
 
 static bool bkey_packed_valid(struct bch_fs *c, struct btree *b,
@@ -415,13 +416,13 @@ static bool bkey_packed_valid(struct bch_fs *c, struct btree *b,
 
 	struct bkey tmp;
 	struct bkey_s u = __bkey_disassemble(b, k, &tmp);
-	return !__bch2_bkey_validate(c, u.s_c,
-				     (struct bkey_validate_context) {
-					.from	= BKEY_VALIDATE_btree_node,
-					.level	= b->c.level,
-					.btree	= b->c.btree_id,
-					.flags	= BCH_VALIDATE_silent
-				     });
+	struct bkey_validate_context from = {
+		.from	= BKEY_VALIDATE_btree_node,
+		.level	= b->c.level,
+		.btree	= b->c.btree_id,
+		.flags	= BCH_VALIDATE_silent,
+	};
+	return !__bch2_bkey_validate(c, u.s_c, &from);
 }
 
 static inline int btree_node_read_bkey_cmp(const struct btree *b,
@@ -490,7 +491,7 @@ int bch2_validate_bset_keys(struct bch_fs *c,
 
 		u = __bkey_disassemble(b, k, &tmp);
 
-		ret = bset_key_validate(c, b, u.s_c, updated_range, from);
+		ret = bset_key_validate(c, b, u.s_c, updated_range, &from);
 		if (unlikely(ret == -BCH_ERR_fsck_delete_bkey))
 			goto drop_this_key;
 		if (unlikely(ret))
