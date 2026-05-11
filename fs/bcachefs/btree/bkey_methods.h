@@ -130,7 +130,7 @@ static inline void bch2_bkey_compat(const struct bch_fs *c, unsigned level, enum
 			       struct bkey_format *f,
 			       struct bkey_packed *k)
 {
-	if (version < bcachefs_metadata_version_current ||
+	if (unlikely(version < bcachefs_metadata_version_current) ||
 	    big_endian != CPU_BIG_ENDIAN ||
 	    IS_ENABLED(CONFIG_BCACHEFS_DEBUG))
 		__bch2_bkey_compat(c, level, btree_id, version,
