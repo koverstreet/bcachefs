@@ -174,7 +174,7 @@ static void __bch2_btree_calc_format(struct bkey_format_state *s, struct btree *
 	for_each_bset(b, t)
 		bset_tree_for_each_key(b, t, k)
 			if (!bkey_deleted(k)) {
-				uk = bkey_unpack_key(b, k);
+				__bkey_unpack_key(b, &uk, k);
 				bch2_bkey_format_add_key(s, &uk);
 			}
 }
@@ -1790,7 +1790,8 @@ static void btree_pack_into_dsts(struct btree_update *as,
 			if (bkey_deleted(k))
 				continue;
 
-			struct bkey uk = bkey_unpack_key(src_b, k);
+			struct bkey uk;
+			__bkey_unpack_key(src_b, &uk, k);
 			unsigned i = bpos_le(uk.p, pivot) ? 0 : 1;
 
 			struct btree *n = dsts->data[i].b;
@@ -2589,7 +2590,8 @@ static void predict_split(struct btree_trans *trans,
 			if (bkey_deleted(k))
 				continue;
 
-			struct bkey uk = bkey_unpack_key(src_b, k);
+			struct bkey uk;
+			__bkey_unpack_key(src_b, &uk, k);
 			unsigned i;
 
 			if (n1_target_u64s) {
@@ -2682,7 +2684,8 @@ static bool find_balanced_split(struct btree_trans *trans,
 					continue;
 				curr += k->u64s;
 				if (curr >= target) {
-					struct bkey uk = bkey_unpack_key(s->b, k);
+					struct bkey uk;
+					__bkey_unpack_key(s->b, &uk, k);
 					candidates[nr_candidates++] = uk.p;
 					found = true;
 					break;
