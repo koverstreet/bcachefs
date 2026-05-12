@@ -335,6 +335,7 @@ static inline struct alloc_request *alloc_request_get(struct btree_trans *trans,
 	req->ca				= NULL;
 	req->cl				= cl;
 	req->nr_replicas		= nr_replicas;
+	req->nr_effective		= 0;
 	req->ec_replicas		= ec_replicas;
 	req->ec				= erasure_code;
 	req->target			= target;
@@ -347,6 +348,10 @@ static inline struct alloc_request *alloc_request_get(struct btree_trans *trans,
 	req->will_retry_set_devices	= false;
 	req->copygc_can_make_progress	= false;
 	req->trace_alloc_failed		= false;
+	req->devs_sorted.nr		= 0;
+	/* bch2_alloc_sectors_req() overwrites this; bch2_bucket_alloc_trans()
+	 * callers (e.g. journal resize) don't, so zero it here for them: */
+	memset(&req->devs_may_alloc, 0, sizeof(req->devs_may_alloc));
 	darray_init(&req->trace);
 	return req;
 }
