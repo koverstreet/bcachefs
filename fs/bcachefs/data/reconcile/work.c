@@ -242,41 +242,51 @@ static void reconcile_scan_in_flight_put(struct bch_fs *c, u64 cookie)
 	}
 }
 
+static void opt_change_scope_push(struct opt_change_scope *scope, u64 cookie)
+{
+	BUG_ON(scope->nr >= ARRAY_SIZE(scope->cookies));
+	scope->cookies[scope->nr++] = cookie;
+}
+
+void bch2_opt_change_scope_exit(struct opt_change_scope *scope)
+{
+	while (scope->nr)
+		reconcile_scan_in_flight_put(scope->c, scope->cookies[--scope->nr]);
+}
+
 /*
- * An opt change is about to start: register the cookie so the reconcile thread
- * won't complete a pass against the intermediate state, then bump the cookie so
- * writers' extent triggers re-derive against the new option as it lands. Must
- * be paired with bch2_set_reconcile_needs_scan_post().
+ * An opt change is about to start: register the cookie (recording it in the
+ * caller's opt_change_scope, whose destructor unregisters it) so the reconcile
+ * thread won't complete a pass against the intermediate state, then bump the
+ * cookie so writers' extent triggers re-derive against the new option as it
+ * lands. Should be paired with bch2_set_reconcile_needs_scan_post() once the
+ * change has settled - but the registration is dropped by the scope destructor
+ * regardless, so an erroring-out change doesn't strand it.
  */
-int bch2_set_reconcile_needs_scan_pre(struct bch_fs *c, struct reconcile_scan s)
+int bch2_set_reconcile_needs_scan_pre(struct bch_fs *c, struct reconcile_scan s,
+				      struct opt_change_scope *scope)
 {
 	u64 cookie = reconcile_scan_encode(s);
 
 	try(reconcile_scan_in_flight_get(c, cookie));
+	opt_change_scope_push(scope, cookie);
 
 	CLASS(btree_trans, trans)(c);
-	int ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			    bch2_set_reconcile_needs_scan_trans(trans, s));
-	if (ret)
-		reconcile_scan_in_flight_put(c, cookie);
-	return ret;
+	return commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+			 bch2_set_reconcile_needs_scan_trans(trans, s));
 }
 
 /*
- * The opt change is done (or failed): bump the cookie to reflect the settled
- * option, unregister, and kick the reconcile thread. The unregister and the
- * wakeup happen even if the cookie bump failed - the pre-set bump still stands,
- * so a later pass will scan against whatever the option settled to.
+ * The opt change has settled: bump the cookie again so it reflects the new
+ * option, and kick the reconcile thread. (The in-flight registration is
+ * released by the caller's opt_change_scope destructor, not here.)
  */
 int bch2_set_reconcile_needs_scan_post(struct bch_fs *c, struct reconcile_scan s)
 {
-	u64 cookie = reconcile_scan_encode(s);
-
 	CLASS(btree_trans, trans)(c);
 	int ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 			    bch2_set_reconcile_needs_scan_trans(trans, s));
 
-	reconcile_scan_in_flight_put(c, cookie);
 	bch2_reconcile_wakeup(c);
 	return ret;
 }
