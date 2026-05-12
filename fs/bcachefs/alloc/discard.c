@@ -16,13 +16,6 @@
 
 #include "journal/journal.h"
 
-static bool discard_opt_enabled_idx(struct bch_fs *c, unsigned dev)
-{
-	guard(rcu)();
-	struct bch_dev *ca = bch2_dev_rcu_noerror(c, dev);
-	return ca && bch2_discard_opt_enabled(c, ca);
-}
-
 static u32 dev_bucket_size(struct bch_fs *c, unsigned dev)
 {
 	guard(rcu)();
@@ -341,23 +334,24 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 		return 0;
 	}
 
-	if (discard_opt_enabled_idx(c, bucket.inode) && !c->opts.nochanges) {
-		struct bch_dev *ca = bch2_dev_get_ioref(trans->c, bucket.inode, WRITE,
-							BCH_DEV_WRITE_REF_discard_bucket);
-		if (!ca) {
-			s->not_rw += bucket_size;
-			return 0;
-		}
+	struct bch_dev *ca = bch2_dev_get_ioref(trans->c, bucket.inode, WRITE,
+						BCH_DEV_WRITE_REF_discard_bucket);
+	if (!ca) {
+		s->not_rw += bucket_size;
+		return 0;
+	}
 
+	if (bch2_discard_opt_enabled(c, ca) &&
+	    bdev_max_discard_sectors(ca->disk_sb.bdev) &&
+	    !c->opts.nochanges) {
 		ret = discard_in_flight_add(c, ca, bucket, fastpath, false);
 		if (!ret) {
 			bch2_trans_unlock(trans);
+			/* consumes ioref */
 			discard_submit(ca, bucket, fastpath);
 			s->discarded += bucket_size;
 			return 0;
 		}
-
-		enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_discard_bucket);
 
 		if (ret == -EEXIST) {
 			s->eexist += bucket_size;
@@ -365,10 +359,13 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 		} else {
 			s->eagain += bucket_size;
 		}
-		return ret;
 	} else {
-		return __discard_mark_free(trans, s, fastpath, &iter, a);
+		ret = __discard_mark_free(trans, s, fastpath, &iter, a);
 	}
+
+	enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_discard_bucket);
+
+	return ret;
 }
 
 static void calculate_discard_sectors_to_release(struct btree_trans *trans)
@@ -445,6 +442,7 @@ static void calculate_discard_sectors_to_release(struct btree_trans *trans)
 
 static void bch2_do_discards(struct bch_fs *c)
 {
+	struct bch_fs_discards *d = &c->discards;
 	int ret = 0;
 	bool again;
 	unsigned flushed_wb = 0;
@@ -478,9 +476,29 @@ static void bch2_do_discards(struct bch_fs *c)
 			int ret2 = bch2_discard_one_bucket(trans,
 						bucket, bucket_size,
 						s, false);
-			if (ret2 == -BCH_ERR_max_discards_in_flight)
+			/*
+			 * Reap completed discards as we go: in_flight entries
+			 * are only freed in bch2_discards_complete(), so if we
+			 * never reach DEV_IN_FLIGHT_MAX - the device completes
+			 * discards inline, or doesn't support REQ_OP_DISCARD -
+			 * the in_flight darray would otherwise grow without
+			 * bound and turn the linear scans in
+			 * discard_in_flight_add()/discard_endio() into O(n^2).
+			 * in_flight.nr > ref means there are completed entries
+			 * waiting to be reaped.
+			 *
+			 * On success the bucket's been handled, so advance the
+			 * iterator before the nested restart so we don't
+			 * reprocess it; on -max_discards_in_flight leave it put
+			 * so we retry the bucket after draining.
+			 */
+			if (ret2 == -BCH_ERR_max_discards_in_flight ||
+			    (!ret2 && READ_ONCE(d->in_flight.nr) > READ_ONCE(d->ref))) {
+				if (!ret2)
+					bch2_btree_iter_advance(&iter);
 				ret2 = bch2_discards_complete(trans, s, false, false) ?:
 				btree_trans_restart(trans, BCH_ERR_transaction_restart_nested);
+			}
 			ret2;
 		}));
 
