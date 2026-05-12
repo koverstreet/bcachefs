@@ -76,6 +76,20 @@ void bch2_discards_to_text(struct printbuf *out, struct bch_fs *c, struct discar
 	prt_printf(out, "journal seq:\t%llu\n",			journal_cur_seq(j));
 	prt_printf(out, "journal flushed seq:\t%llu -> %llu\n",	j->flushing_seq, j->flushed_seq_ondisk);
 	prt_printf(out, "journal rewind seq:\t%llu -> %llu\n",	j->rewind_seq, j->rewind_seq_ondisk);
+
+	prt_printf(out, "In flight:\n");
+	struct bch_fs_discards *d = &c->discards;
+	guard(printbuf_indent)(out);
+	guard(printbuf_atomic)(out);
+	guard(spinlock_irq)(&d->lock);
+	darray_for_each(d->in_flight, i) {
+		prt_printf(out, "%s:%llu", i->ca->name, u64_to_bucket(i->dev_bucket).offset);
+		if (i->complete)
+			prt_str(out, " complete");
+		if (i->marking_free)
+			prt_str(out, " marking_free");
+		prt_newline(out);
+	}
 }
 
 struct discard_bio {
