@@ -159,6 +159,128 @@ int bch2_set_reconcile_needs_scan(struct bch_fs *c, struct reconcile_scan s, boo
 	return 0;
 }
 
+/*
+ * In-flight opt changes:
+ *
+ * An opt change is a multi-step operation - it brackets the actual change with
+ * scan-cookie bumps (see opts.c) so writers' extent triggers re-derive against
+ * the new option as it lands. But the reconcile thread mustn't *complete*
+ * (delete) a scan cookie for a pass that overlapped a half-applied opt change:
+ * such a pass scanned against the intermediate option value, and on the
+ * ERO/error path nothing bumps the cookie afterwards to force another pass. So
+ * an opt change registers the cookie it touches here for its duration;
+ * bch2_clear_reconcile_needs_scan() refuses to delete a registered cookie.
+ *
+ * Refcounted: more than one opt change can target the same cookie at once.
+ *
+ * Registration also lets the reconcile thread skip *starting* a scan it
+ * couldn't complete anyway - but that's just sparing wasted work; the
+ * don't-delete is what's load-bearing.
+ */
+struct reconcile_scan_in_flight {
+	struct rhash_head	hash;
+	u64			cookie;
+	unsigned		ref;	/* protected by scans_in_flight_lock */
+	struct rcu_head		rcu;
+};
+
+static const struct rhashtable_params reconcile_scan_in_flight_params = {
+	.head_offset		= offsetof(struct reconcile_scan_in_flight, hash),
+	.key_offset		= offsetof(struct reconcile_scan_in_flight, cookie),
+	.key_len		= sizeof(u64),
+	.automatic_shrinking	= true,
+};
+
+/* Lockless - called by the reconcile thread when deciding whether to clear a cookie: */
+static bool reconcile_scan_in_flight(struct bch_fs *c, u64 cookie)
+{
+	return rhashtable_lookup_fast(&c->reconcile.scans_in_flight, &cookie,
+				      reconcile_scan_in_flight_params) != NULL;
+}
+
+static int reconcile_scan_in_flight_get(struct bch_fs *c, u64 cookie)
+{
+	struct bch_fs_reconcile *r = &c->reconcile;
+
+	guard(mutex)(&r->scans_in_flight_lock);
+
+	struct reconcile_scan_in_flight *e =
+		rhashtable_lookup_fast(&r->scans_in_flight, &cookie,
+				       reconcile_scan_in_flight_params);
+	if (e) {
+		e->ref++;
+		return 0;
+	}
+
+	e = kzalloc(sizeof(*e), GFP_KERNEL);
+	if (!e)
+		return bch_err_throw(c, ENOMEM_reconcile_scan_in_flight);
+	e->cookie	= cookie;
+	e->ref		= 1;
+
+	int ret = rhashtable_insert_fast(&r->scans_in_flight, &e->hash,
+					 reconcile_scan_in_flight_params);
+	if (ret)
+		kfree(e);
+	return ret;
+}
+
+static void reconcile_scan_in_flight_put(struct bch_fs *c, u64 cookie)
+{
+	struct bch_fs_reconcile *r = &c->reconcile;
+
+	guard(mutex)(&r->scans_in_flight_lock);
+
+	struct reconcile_scan_in_flight *e =
+		rhashtable_lookup_fast(&r->scans_in_flight, &cookie,
+				       reconcile_scan_in_flight_params);
+	BUG_ON(!e);
+	if (!--e->ref) {
+		BUG_ON(rhashtable_remove_fast(&r->scans_in_flight, &e->hash,
+					      reconcile_scan_in_flight_params));
+		kfree_rcu(e, rcu);
+	}
+}
+
+/*
+ * An opt change is about to start: register the cookie so the reconcile thread
+ * won't complete a pass against the intermediate state, then bump the cookie so
+ * writers' extent triggers re-derive against the new option as it lands. Must
+ * be paired with bch2_set_reconcile_needs_scan_post().
+ */
+int bch2_set_reconcile_needs_scan_pre(struct bch_fs *c, struct reconcile_scan s)
+{
+	u64 cookie = reconcile_scan_encode(s);
+
+	try(reconcile_scan_in_flight_get(c, cookie));
+
+	CLASS(btree_trans, trans)(c);
+	int ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+			    bch2_set_reconcile_needs_scan_trans(trans, s));
+	if (ret)
+		reconcile_scan_in_flight_put(c, cookie);
+	return ret;
+}
+
+/*
+ * The opt change is done (or failed): bump the cookie to reflect the settled
+ * option, unregister, and kick the reconcile thread. The unregister and the
+ * wakeup happen even if the cookie bump failed - the pre-set bump still stands,
+ * so a later pass will scan against whatever the option settled to.
+ */
+int bch2_set_reconcile_needs_scan_post(struct bch_fs *c, struct reconcile_scan s)
+{
+	u64 cookie = reconcile_scan_encode(s);
+
+	CLASS(btree_trans, trans)(c);
+	int ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+			    bch2_set_reconcile_needs_scan_trans(trans, s));
+
+	reconcile_scan_in_flight_put(c, cookie);
+	bch2_reconcile_wakeup(c);
+	return ret;
+}
+
 int bch2_set_fs_needs_reconcile(struct bch_fs *c)
 {
 	return bch2_set_reconcile_needs_scan(c,
@@ -1094,6 +1216,16 @@ static int do_reconcile_scan(struct moving_context *ctxt,
 	struct bch_fs *c = trans->c;
 	struct bch_fs_reconcile *r = &c->reconcile;
 
+	/*
+	 * If an opt change is still mid-flight for this cookie we couldn't
+	 * complete the scan anyway - bch2_clear_reconcile_needs_scan() would
+	 * refuse to delete the cookie - so don't burn a full pass on it;
+	 * bch2_set_reconcile_needs_scan_post()'s wakeup brings us back once the
+	 * change settles.
+	 */
+	if (reconcile_scan_in_flight(c, cookie_pos.offset))
+		return 0;
+
 	bch2_move_stats_init(&r->scan_stats, "reconcile_scan");
 	ctxt->stats = &r->scan_stats;
 
@@ -1788,18 +1920,34 @@ static int bch2_reconcile_power_notifier(struct notifier_block *nb,
 }
 #endif
 
+static void reconcile_scan_in_flight_free(void *p, void *arg)
+{
+	WARN_ON_ONCE(1);
+	kfree(p);
+}
+
 void bch2_fs_reconcile_exit(struct bch_fs *c)
 {
+	struct bch_fs_reconcile *r = &c->reconcile;
+
+	if (r->scans_in_flight_init_done)
+		rhashtable_free_and_destroy(&r->scans_in_flight,
+					    reconcile_scan_in_flight_free, NULL);
+
 #ifdef CONFIG_POWER_SUPPLY
-	power_supply_unreg_notifier(&c->reconcile.power_notifier);
+	power_supply_unreg_notifier(&r->power_notifier);
 #endif
 }
 
 int bch2_fs_reconcile_init(struct bch_fs *c)
 {
-#ifdef CONFIG_POWER_SUPPLY
 	struct bch_fs_reconcile *r = &c->reconcile;
 
+	mutex_init(&r->scans_in_flight_lock);
+	try(rhashtable_init(&r->scans_in_flight, &reconcile_scan_in_flight_params));
+	r->scans_in_flight_init_done = true;
+
+#ifdef CONFIG_POWER_SUPPLY
 	r->power_notifier.notifier_call = bch2_reconcile_power_notifier;
 	try(power_supply_reg_notifier(&r->power_notifier));
 

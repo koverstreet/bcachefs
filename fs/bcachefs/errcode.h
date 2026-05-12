@@ -156,6 +156,7 @@
 	x(ENOMEM,                       ENOMEM_journal_read_bucket)             \
 	x(ENOMEM,                       ENOMEM_acl)				\
 	x(ENOMEM,                       ENOMEM_move_extent)			\
+	x(ENOMEM,			ENOMEM_reconcile_scan_in_flight)	\
 	x(ENOSPC,			ENOSPC_disk_reservation)		\
 	x(ENOSPC,			ENOSPC_bucket_alloc)			\
 	x(ENOSPC,			ENOSPC_disk_label_add)			\
