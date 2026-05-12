@@ -373,12 +373,15 @@ static int __bch2_truncate_folio(struct bch_inode_info *inode,
 	 * writeback - doing an i_size update if necessary - or whether it will
 	 * be responsible for the i_size update.
 	 *
-	 * Note that we shouldn't ever see a folio beyond EOF, but check and
-	 * warn if so. This has been observed by failure to clean up folios
-	 * after a short write and there's still a chance reclaim will fix
-	 * things up.
+	 * We can see a folio wholly above i_size here even with the inode fully
+	 * locked: marking a folio dirty doesn't go through i_rwsem (e.g.
+	 * bio_set_pages_dirty() from a DIO read whose destination buffer is an
+	 * mmap of this file, completing after the file was truncated), so "no
+	 * dirty folios above i_size" isn't an invariant we maintain.
+	 * __bch2_writepage cleans up the per-sector dirty bits when it sees
+	 * above-i_size data; here we just need to not walk off the end of the
+	 * folio when computing end_pos.
 	 */
-	WARN_ON_ONCE(folio_pos(folio) >= inode->v.i_size);
 	end_pos = folio_end_pos(folio);
 	if (inode->v.i_size > folio_pos(folio))
 		end_pos = min_t(u64, inode->v.i_size, end_pos);
