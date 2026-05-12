@@ -9,6 +9,8 @@
 #include "alloc/background.h"
 #include "alloc/disk_groups.h"
 
+#include "btree/update.h"
+
 #include "data/compress.h"
 #include "data/copygc.h"
 #include "data/reconcile/work.h"
@@ -665,6 +667,17 @@ int bch2_opts_hooks_pre_set(struct bch_fs *c)
 void bch2_opt_hook_post_set(struct bch_fs *c, struct bch_dev *ca, u64 inum,
 			    enum bch_opt_id id, u64 v)
 {
+	if (test_bit(BCH_FS_started, &c->flags)) {
+		CLASS(printbuf, buf)();
+		prt_printf(&buf, "opt change: %s=", bch2_opt_table[id].attr.name);
+		bch2_opt_to_text(&buf, c, c->disk_sb.sb, &bch2_opt_table[id], v, 0);
+		if (ca)
+			prt_printf(&buf, " dev %u", ca->dev_idx);
+		if (inum)
+			prt_printf(&buf, " inum %llu", inum);
+		bch2_fs_log_msg(c, "%s", buf.buf);
+	}
+
 	opt_hook_io(c, ca, inum, id, v, true);
 
 	switch (id) {
