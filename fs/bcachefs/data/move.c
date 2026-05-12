@@ -49,6 +49,7 @@ const char * const bch2_data_ops_strs[] = {
 struct evacuate_bucket_arg {
 	struct bpos		bucket;
 	int			gen;
+	u32			sectors;
 	struct data_update_opts	data_opts;
 };
 
@@ -811,12 +812,16 @@ static int evacuate_bucket_pred(struct btree_trans *trans, void *_arg,
 	*data_opts = arg->data_opts;
 	data_opts->read_dev = -1;
 
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
 	unsigned i = 0;
-	bkey_for_each_ptr(bch2_bkey_ptrs_c(k), ptr) {
-		if (ptr->dev == arg->bucket.inode &&
-		    (arg->gen < 0 || arg->gen == ptr->gen) &&
-		    !ptr->cached)
+	bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs_c(k), p, entry) {
+		if (p.ptr.dev == arg->bucket.inode &&
+		    (arg->gen < 0 || arg->gen == p.ptr.gen) &&
+		    !p.ptr.cached) {
 			data_opts->ptrs_kill |= BIT(i);
+			arg->sectors += p.crc.compressed_size;
+		}
 		i++;
 	}
 
@@ -829,7 +834,7 @@ int bch2_evacuate_bucket(struct moving_context *ctxt,
 			 struct data_update_opts data_opts)
 {
 	struct bch_fs *c = ctxt->trans->c;
-	struct evacuate_bucket_arg arg = { bucket, gen, data_opts, };
+	struct evacuate_bucket_arg arg = { bucket, gen, 0, data_opts, };
 
 	/* Userspace might have supplied @dev: */
 	CLASS(bch2_dev_tryget_noerror, ca)(c, bucket.inode);
@@ -850,6 +855,7 @@ int bch2_evacuate_bucket(struct moving_context *ctxt,
 		prt_printf(&buf, "bucket: ");
 		bch2_bpos_to_text(&buf, bucket);
 		prt_printf(&buf, " gen: %i ret %s\n", gen, bch2_err_str(ret));
+		prt_printf(&buf, "%u/%u sectors\n", arg.sectors, ca->mi.bucket_size);
 	}));
 
 	return ret;
