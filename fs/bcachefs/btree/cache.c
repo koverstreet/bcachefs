@@ -797,6 +797,7 @@ void bch2_btree_cache_cannibalize_unlock(struct btree_trans *trans)
 		bc->alloc_lock = NULL;
 		closure_wake_up(&bc->alloc_wait);
 	}
+	trans->btree_cache_cannibalize_locked = false;
 }
 
 static int __btree_cache_cannibalize_lock(struct bch_fs *c, struct closure *cl)
@@ -828,10 +829,12 @@ int bch2_btree_cache_cannibalize_lock(struct btree_trans *trans, struct closure 
 {
 	struct bch_fs *c = trans->c;
 	int ret = __btree_cache_cannibalize_lock(c, cl);
-	if (!ret)
+	if (!ret) {
+		trans->btree_cache_cannibalize_locked = true;
 		event_inc_trace(c, btree_cache_cannibalize_lock, buf, prt_str(&buf, trans->fn));
-	else
+	} else {
 		event_inc_trace(c, btree_cache_cannibalize_lock_fail, buf, prt_str(&buf, trans->fn));
+	}
 	return ret;
 }
 

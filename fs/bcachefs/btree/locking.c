@@ -1030,6 +1030,18 @@ void bch2_trans_unlock(struct btree_trans *trans)
 	trans_set_unlocked(trans);
 
 	__bch2_trans_unlock(trans);
+
+	/*
+	 * Drop the btree cache cannibalize lock too. Holding it across a
+	 * trans_unlock - i.e. across a sleep - is the recipe for a resource
+	 * deadlock: cannibalize-holder sleeps waiting on the allocator,
+	 * allocator needs to grow the btree cache, growing the cache needs
+	 * cannibalize, but we're holding it. Releasing on trans_unlock means
+	 * cannibalize is only held over non-sleeping critical sections;
+	 * callers that need it after a wake re-acquire normally.
+	 */
+	if (unlikely(trans->btree_cache_cannibalize_locked))
+		bch2_btree_cache_cannibalize_unlock(trans);
 }
 
 void bch2_trans_unlock_long(struct btree_trans *trans)

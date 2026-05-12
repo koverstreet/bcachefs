@@ -650,6 +650,7 @@ struct btree_trans {
 	bool			locked:1;
 	bool			write_locked:1;
 	bool			srcu_held:1;
+	bool			btree_cache_cannibalize_locked:1;
 	bool			pf_memalloc_nofs:1;
 	bool			used_mempool:1;
 	bool			in_traverse_all:1;
