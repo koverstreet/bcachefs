@@ -1141,10 +1141,24 @@ int bch2_setattr_nonsize(struct mnt_idmap *idmap,
 		qid.q[QTYP_GRP] = from_kgid(i_user_ns(&inode->v), kgid);
 	}
 
+	struct bch_qid old_qid = inode->ei_qid;
+
 	try(bch2_fs_quota_transfer(c, inode, qid, ~0, KEY_TYPE_QUOTA_PREALLOC));
 
 	CLASS(btree_trans, trans)(c);
-	return lockrestart_do(trans, bch2_setattr_nonsize_trans(trans, idmap, inode, attr));
+	int ret = lockrestart_do(trans, bch2_setattr_nonsize_trans(trans, idmap, inode, attr));
+	if (unlikely(ret))
+		/*
+		 * Roll back the in-memory quota transfer: the btree commit
+		 * failed, so the inode on disk still has the old qid. Without
+		 * this rollback, in-memory quota counts diverge from what an
+		 * inode scan would compute - generic/270 catches it.
+		 *
+		 * NOCHECK because we're returning to a qid we just came from;
+		 * it had room.
+		 */
+		bch2_fs_quota_transfer(c, inode, old_qid, ~0, KEY_TYPE_QUOTA_NOCHECK);
+	return ret;
 }
 
 static int bch2_getattr(struct mnt_idmap *idmap,
