@@ -470,6 +470,19 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	if (orig->k.type == KEY_TYPE_inline_data)
 		bch2_check_set_feature(c, BCH_FEATURE_reflink_inline_data);
 
+	/*
+	 * A non-degraded extent carries no bch_extent_reconcile entry - for a
+	 * data extent that's fine, reconcile re-derives the io options from the
+	 * inode each pass. But once it's indirect there's no inode to derive
+	 * from, so snapshot the inode's options onto the reflink_v now;
+	 * otherwise reconcile would reconcile it against the filesystem
+	 * defaults instead. (If the source extent already carries the entry,
+	 * or the inode's options match the defaults, this is a no-op.) The
+	 * kmalloc below reserves room for the entry + invalid-device padding.
+	 */
+	struct bch_inode_opts opts;
+	try(bch2_bkey_get_io_opts(trans, NULL, bkey_i_to_s_c(orig), &opts));
+
 	CLASS(btree_iter, reflink_iter)(trans, BTREE_ID_reflink, POS_MAX,
 					BTREE_ITER_intent);
 	bkey_try(bch2_btree_iter_peek_prev(&reflink_iter));
@@ -482,7 +495,8 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	if (bkey_ge(reflink_iter.pos, POS(0, REFLINK_P_IDX_MAX - orig->k.size)))
 		return -ENOSPC;
 
-	struct bkey_i *r_v = errptr_try(bch2_trans_kmalloc(trans, sizeof(__le64) + bkey_bytes(&orig->k)));
+	unsigned r_v_buf_u64s = orig->k.u64s + 2 + BCH_REPLICAS_MAX;
+	struct bkey_i *r_v = errptr_try(bch2_trans_kmalloc(trans, r_v_buf_u64s * sizeof(u64)));
 
 	bkey_init(&r_v->k);
 	r_v->k.type	= bkey_type_to_indirect(&orig->k);
@@ -495,6 +509,9 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	__le64 *refcount = bkey_refcount(bkey_i_to_s(r_v));
 	*refcount	= 0;
 	memcpy(refcount + 1, &orig->v, bkey_val_bytes(&orig->k));
+
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(r_v),
+					  r_v_buf_u64s, SET_NEEDS_RECONCILE_other, 0));
 
 	try(bch2_trans_update(trans, &reflink_iter, r_v, 0));
 
