@@ -801,10 +801,11 @@ static ssize_t sysfs_opt_store(struct bch_fs *c,
 
 	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(opt_change_lock)(c);
+	CLASS(opt_change_scope, opt_scope)(c);
 
 	u64 v;
 	ret =   bch2_opt_parse(c, opt, strim(tmp), &v, NULL) ?:
-		bch2_opt_hook_pre_set(c, ca, 0, id, v, true);
+		bch2_opt_hook_pre_set(c, ca, 0, id, v, true, &opt_scope);
 
 	if (!ret) {
 		bool is_sb = opt->get_sb || opt->get_member || opt->get_ext;
