@@ -423,10 +423,20 @@ void bch2_promote_op_to_text(struct printbuf *out,
 			     struct bch_fs *c,
 			     struct promote_op *op)
 {
+	if (!op->write.op.c || !op->write.k.k) {
+		prt_printf(out, "(uninitialized data update)\n");
+		return;
+	}
+
 	if (!op->write.read_done) {
 		prt_printf(out, "parent read: %px\n", op->write.rbio.parent);
-		guard(printbuf_indent)(out);
-		bch2_read_bio_to_text(out, c, op->write.rbio.parent);
+		if (op->write.rbio.parent) {
+			guard(printbuf_indent)(out);
+			bch2_read_bio_to_text(out, c, op->write.rbio.parent);
+		} else {
+			guard(printbuf_indent)(out);
+			prt_printf(out, "(uninitialized)\n");
+		}
 	}
 
 	bch2_data_update_to_text(out, &op->write);

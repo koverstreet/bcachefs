@@ -918,11 +918,19 @@ void bch2_data_update_opts_to_text(struct printbuf *out, struct bch_fs *c,
 
 void bch2_data_update_to_text(struct printbuf *out, struct data_update *m)
 {
+	if (!m->op.c) {
+		prt_printf(out, "(uninitialized data update)\n");
+		return;
+	}
+
 	bch2_data_update_opts_to_text(out, m->op.c, &m->op.opts, &m->opts);
 	prt_newline(out);
 
 	prt_str(out, "old key:\t");
-	bch2_bkey_val_to_text(out, m->op.c, bkey_i_to_s_c(m->k.k));
+	if (m->k.k)
+		bch2_bkey_val_to_text(out, m->op.c, bkey_i_to_s_c(m->k.k));
+	else
+		prt_str(out, "(uninitialized)");
 	prt_newline(out);
 
 	prt_printf(out, "write: ");
@@ -931,7 +939,15 @@ void bch2_data_update_to_text(struct printbuf *out, struct data_update *m)
 
 void bch2_data_update_inflight_to_text(struct printbuf *out, struct data_update *m)
 {
-	bch2_bkey_val_to_text(out, m->op.c, bkey_i_to_s_c(m->k.k));
+	if (!m->op.c) {
+		prt_printf(out, "(uninitialized data update)\n");
+		return;
+	}
+
+	if (m->k.k)
+		bch2_bkey_val_to_text(out, m->op.c, bkey_i_to_s_c(m->k.k));
+	else
+		prt_str(out, "(uninitialized)");
 	prt_newline(out);
 	guard(printbuf_indent)(out);
 	bch2_data_update_opts_to_text(out, m->op.c, &m->op.opts, &m->opts);
