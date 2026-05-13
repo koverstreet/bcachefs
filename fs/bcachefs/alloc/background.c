@@ -1712,7 +1712,7 @@ void bch2_fs_capacity_exit(struct bch_fs *c)
 
 int bch2_fs_capacity_init(struct bch_fs *c)
 {
-	mutex_init(&c->capacity.sectors_available_lock);
+	spin_lock_init(&c->capacity.sectors_available_lock);
 	seqcount_init(&c->capacity.usage_lock);
 
 	try(percpu_init_rwsem(&c->capacity.mark_lock));
