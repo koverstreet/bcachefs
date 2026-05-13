@@ -304,6 +304,21 @@ static inline bool bch2_bucket_set_discard_fast(struct bch_fs *c, unsigned dev, 
 	return false;
 }
 
+static inline bool bch2_bucket_clear_discard_fast(struct bch_fs *c, unsigned int dev, u64 bucket)
+{
+	struct open_bucket *ob = bch2_bucket_is_open(c, dev, bucket);
+
+	if (ob) {
+		guard(spinlock)(&ob->lock);
+		if (ob->dev == dev && ob->bucket == bucket) {
+			ob->do_discards_fast = false;
+			return true;
+		}
+	}
+
+	return false;
+}
+
 enum bch_write_flags;
 int bch2_bucket_alloc_set_trans(struct btree_trans *, struct alloc_request *,
 				struct dev_stripe_state *);

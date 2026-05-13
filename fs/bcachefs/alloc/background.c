@@ -1425,6 +1425,11 @@ int bch2_trigger_alloc(struct btree_trans *trans, struct btree_trigger_op op)
 				new_a->journal_seq_nonempty = transaction_seq;
 		}
 
+		if (statechange_from(a->data_type == BCH_DATA_need_discard) &&
+		    !data_type_is_empty(new_a->data_type))
+			bch2_bucket_clear_discard_fast(c, op.new.k->p.inode,
+						       op.new.k->p.offset);
+
 		if (statechange_to(a->data_type == BCH_DATA_need_discard)) {
 			/*
 			 * Bucket becomes empty: mark it as waiting for a
