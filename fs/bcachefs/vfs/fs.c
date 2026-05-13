@@ -1178,6 +1178,8 @@ static int bch2_getattr(struct mnt_idmap *idmap,
 	stat->gid	= vfsgid_into_kgid(vfsgid);
 	stat->rdev	= inode->v.i_rdev;
 	stat->size	= i_size_read(&inode->v);
+	if (!stat->size && S_ISDIR(inode->v.i_mode))
+		stat->size = block_bytes(c);
 	stat->atime	= inode_get_atime(&inode->v);
 	stat->mtime	= inode_get_mtime(&inode->v);
 	stat->ctime	= inode_get_ctime(&inode->v);
