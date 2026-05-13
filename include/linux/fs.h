@@ -2777,6 +2777,7 @@ int thaw_super(struct super_block *super, enum freeze_holder who,
 extern __printf(2, 3)
 int super_setup_bdi_name(struct super_block *sb, char *fmt, ...);
 extern int super_setup_bdi(struct super_block *sb);
+void super_set_bdev(struct super_block *sb, struct block_device *bdev);
 
 static inline void super_set_uuid(struct super_block *sb, const u8 *uuid, unsigned len)
 {

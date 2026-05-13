@@ -879,6 +879,28 @@ int bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 
 /* Device add/removal: */
 
+static void bch2_dev_remove_update_vfs_sb(struct bch_fs *c, struct bch_dev *ca)
+{
+	struct super_block *sb = c->vfs_sb;
+	struct block_device *old_bdev = ca->disk_sb.bdev;
+
+	if (!sb || !old_bdev || sb->s_bdev != old_bdev)
+		return;
+
+	scoped_guard(rcu) {
+		for_each_online_member_rcu(c, ca2) {
+			struct block_device *bdev = ca2->disk_sb.bdev;
+
+			if (ca2 == ca || !bdev)
+				continue;
+
+			super_set_bdev(sb, bdev);
+			c->dev		= bdev->bd_dev;
+			return;
+		}
+	}
+}
+
 int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 		    struct printbuf *err)
 {
@@ -947,6 +969,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 	 * Disallow reads before we remove alloc info, otherwise we'll get
 	 * spurious stale pointer errors:
 	 */
+	bch2_dev_remove_update_vfs_sb(c, ca);
 	__bch2_dev_offline(c, ca);
 
 	ret = bch2_dev_remove_alloc(c, ca);

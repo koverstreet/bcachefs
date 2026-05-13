@@ -1651,6 +1651,15 @@ int setup_bdev_super(struct super_block *sb, int sb_flags,
 }
 EXPORT_SYMBOL_GPL(setup_bdev_super);
 
+void super_set_bdev(struct super_block *sb, struct block_device *bdev)
+{
+	spin_lock(&sb_lock);
+	sb->s_bdev = bdev;
+	sb->s_dev = bdev->bd_dev;
+	spin_unlock(&sb_lock);
+}
+EXPORT_SYMBOL_GPL(super_set_bdev);
+
 /**
  * get_tree_bdev_flags - Get a superblock based on a single block device
  * @fc: The filesystem context holding the parameters
