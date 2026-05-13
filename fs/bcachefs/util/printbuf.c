@@ -87,6 +87,8 @@ static void printbuf_advance_pos(struct printbuf *out, unsigned len)
 
 static void printbuf_insert_spaces(struct printbuf *out, unsigned pos, unsigned nr)
 {
+	pos = min(pos, out->pos);
+
 	unsigned move = out->pos - pos;
 
 	bch2_printbuf_make_room(out, nr);
