@@ -883,10 +883,11 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 		    struct printbuf *err)
 {
 	unsigned dev_idx = ca->dev_idx, data;
+	bool was_rw = ca->mi.state == BCH_MEMBER_STATE_rw;
 	bool fast_device_removal = (c->sb.compat & BIT_ULL(BCH_COMPAT_no_stale_ptrs)) &&
 		!bch2_request_incompat_feature(c,
 					bcachefs_metadata_version_fast_device_removal);
-	int ret;
+	int ret, ret2;
 
 	guard(rwsem_write)(&c->state_lock);
 
@@ -1016,6 +1017,16 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 
 	return 0;
 err:
+	if (test_bit(BCH_FS_rw, &c->flags) &&
+	    was_rw &&
+	    ca->mi.state == BCH_MEMBER_STATE_evacuating &&
+	    !enumerated_ref_is_zero(&ca->io_ref[READ])) {
+		prt_str(err, "Remove failed, restoring device state to rw\n");
+		ret2 = __bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_rw, flags, err);
+		if (ret2)
+			prt_printf(err, "Error restoring device state: %s\n", bch2_err_str(ret2));
+	}
+
 	if (test_bit(BCH_FS_rw, &c->flags) &&
 	    ca->mi.state == BCH_MEMBER_STATE_rw &&
 	    !enumerated_ref_is_zero(&ca->io_ref[READ]))
