@@ -154,7 +154,7 @@ struct bch_fs_capacity {
 	unsigned		bucket_size_max;
 
 	atomic64_t		sectors_available;
-	struct mutex		sectors_available_lock;
+	spinlock_t		sectors_available_lock;
 
 	struct bch_fs_capacity_pcpu __percpu	*pcpu;
 

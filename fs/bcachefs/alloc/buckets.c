@@ -1174,7 +1174,7 @@ static int disk_reservation_recalc_sectors_available(struct bch_fs *c,
 			struct disk_reservation *res,
 			u64 sectors, enum bch_reservation_flags flags)
 {
-	guard(mutex)(&c->capacity.sectors_available_lock);
+	guard(spinlock)(&c->capacity.sectors_available_lock);
 
 	percpu_u64_set(&c->capacity.pcpu->sectors_available, 0);
 	u64 sectors_available = avail_factor(__bch2_fs_usage_read_short(c).free);
@@ -1198,23 +1198,18 @@ static int disk_reservation_recalc_sectors_available(struct bch_fs *c,
 int __bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
 				u64 sectors, enum bch_reservation_flags flags)
 {
-	struct bch_fs_capacity_pcpu *pcpu;
-	u64 old, get;
-
-	guard(percpu_read)(&c->capacity.mark_lock);
-	preempt_disable();
-	pcpu = this_cpu_ptr(c->capacity.pcpu);
+	guard(preempt)();
+	struct bch_fs_capacity_pcpu *pcpu = this_cpu_ptr(c->capacity.pcpu);
 
 	if (unlikely(sectors > pcpu->sectors_available)) {
-		old = atomic64_read(&c->capacity.sectors_available);
+		u64 get, old = atomic64_read(&c->capacity.sectors_available);
+
 		do {
 			get = min((u64) sectors + SECTORS_CACHE, old);
 
-			if (unlikely(get < sectors)) {
-				preempt_enable();
+			if (unlikely(get < sectors))
 				return disk_reservation_recalc_sectors_available(c,
 								res, sectors, flags);
-			}
 		} while (!atomic64_try_cmpxchg(&c->capacity.sectors_available,
 					       &old, old - get));
 
@@ -1224,7 +1219,6 @@ int __bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
 	pcpu->sectors_available		-= sectors;
 	pcpu->online_reserved		+= sectors;
 	res->sectors			+= sectors;
-	preempt_enable();
 	return 0;
 }
 
