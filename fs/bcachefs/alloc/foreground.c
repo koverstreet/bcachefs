@@ -287,10 +287,12 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c,
 		if (req->cl) {
 			closure_wait(&c->allocator.open_buckets_wait, req->cl);
 			return ERR_PTR(alloc_trace_add(req, U8_MAX,
-					bch_err_throw(c, open_bucket_alloc_blocked), 0));
+					bch_err_throw(c, open_bucket_alloc_blocked),
+					0, 0, false));
 		} else {
 			return ERR_PTR(alloc_trace_add(req, U8_MAX,
-					bch_err_throw(c, open_buckets_empty), 0));
+					bch_err_throw(c, open_buckets_empty),
+					0, 0, false));
 		}
 	}
 
@@ -620,6 +622,7 @@ struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
 	struct open_bucket *ob = NULL;
 	bool freespace = READ_ONCE(ca->mi.freespace_initialized);
 	bool waiting = false;
+	bool copygc_can_make_progress = false;
 
 	req->btree_bitmap = req->data_type == BCH_DATA_btree;
 	memset(&req->counters, 0, sizeof(req->counters));
@@ -644,6 +647,7 @@ again:
 			goto alloc;
 
 		if (bch2_copygc_can_make_progress(ca)) {
+			copygc_can_make_progress = true;
 			req->copygc_can_make_progress = true;
 			bch2_copygc_wakeup(c);
 		}
@@ -709,7 +713,8 @@ err:
 		event_inc_trace(c, bucket_alloc_fail, buf,
 			bucket_alloc_to_text(&buf, c, req, ob));
 
-	alloc_trace_add(req, ca->dev_idx, ret, wake_counter_snapshot);
+	alloc_trace_add(req, ca->dev_idx, ret, wake_counter_snapshot,
+			avail, copygc_can_make_progress);
 
 	return ob;
 }
@@ -901,7 +906,7 @@ int bch2_bucket_alloc_set_trans(struct btree_trans *trans,
 	}
 
 	return ret ?: alloc_trace_add(req, BCH_SB_MEMBER_INVALID,
-			bch_err_throw(c, insufficient_devices), 0);
+			bch_err_throw(c, insufficient_devices), 0, 0, false);
 }
 
 /* Allocate from stripes: */
@@ -1765,7 +1770,7 @@ static inline bool dev_may_alloc(struct bch_fs *c, struct bch_dev *ca, struct al
 }
 
 static void alloc_trace_to_text(struct printbuf *out, struct bch_fs *c,
-			        struct alloc_request *req)
+				struct alloc_request *req)
 {
 	if (!req->trace.nr)
 		return;
@@ -1787,6 +1792,9 @@ static void alloc_trace_to_text(struct printbuf *out, struct bch_fs *c,
 				prt_str(out, " retry_set");
 			if (e->have_cl)
 				prt_str(out, " cl");
+			prt_printf(out, " free %llu copygc_progress %u",
+				   e->free_buckets,
+				   e->copygc_can_make_progress);
 			prt_printf(out, " -> %s\n",
 				   e->err ? bch2_err_str(e->err) : "ok");
 		}

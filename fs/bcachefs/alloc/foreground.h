@@ -32,9 +32,11 @@ typedef struct {
 	bool	will_retry_all_devices:1;
 	bool	will_retry_target_devices:1;
 	bool	will_retry_set_devices:1;
+	bool	copygc_can_make_progress:1;
 	bool	have_cl:1;
 	s16	err;
 	u32	wake_counter_snapshot;
+	u64	free_buckets;
 } alloc_trace_entry;
 
 struct alloc_request {
@@ -105,7 +107,9 @@ struct alloc_request {
  */
 static inline int alloc_trace_add(struct alloc_request *req,
 				  u8 dev, int err,
-				  u32 wake_counter_snapshot)
+				  u32 wake_counter_snapshot,
+				  u64 free_buckets,
+				  bool copygc_can_make_progress)
 {
 	if (darray_push(&req->trace, ((alloc_trace_entry) {
 		.dev				= dev,
@@ -113,9 +117,11 @@ static inline int alloc_trace_add(struct alloc_request *req,
 		.will_retry_all_devices		= req->will_retry_all_devices,
 		.will_retry_target_devices	= req->will_retry_target_devices,
 		.will_retry_set_devices		= req->will_retry_set_devices,
+		.copygc_can_make_progress	= copygc_can_make_progress,
 		.have_cl			= req->cl != NULL,
 		.err				= err,
 		.wake_counter_snapshot		= wake_counter_snapshot,
+		.free_buckets			= free_buckets,
 	    })))
 		req->trace_alloc_failed = true;
 
