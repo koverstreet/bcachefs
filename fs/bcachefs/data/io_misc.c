@@ -39,8 +39,7 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 	CLASS(disk_reservation, res)(c);
 	struct open_buckets open_buckets = { 0 };
 	unsigned sectors_allocated = 0, new_replicas;
-	bool unwritten = opts.nocow &&
-	    c->sb.version >= bcachefs_metadata_version_unwritten_extents;
+	bool unwritten = false;
 	int ret;
 
 	struct bkey_buf old __cleanup(bch2_bkey_buf_exit);

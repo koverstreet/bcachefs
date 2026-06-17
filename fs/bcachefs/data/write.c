@@ -1925,7 +1925,7 @@ static bool bch2_extent_is_writeable(struct bch_write_op *op,
 
 	guard(rcu)();
 	extent_for_each_ptr_decode(e, p, entry) {
-		if (crc_is_encoded(p.crc) || p.has_ec)
+		if (crc_is_encoded(p.crc) || p.has_ec || p.ptr.unwritten)
 			return false;
 
 		replicas += !p.ptr.cached
