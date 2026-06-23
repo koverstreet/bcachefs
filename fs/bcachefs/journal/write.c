@@ -19,6 +19,7 @@
 #include "journal/read.h"
 #include "journal/reclaim.h"
 #include "journal/write.h"
+#include "journal/validate.h"
 
 #include "sb/clean.h"
 #include "sb/counters.h"
@@ -93,6 +94,10 @@ static void __journal_write_alloc(struct journal *j,
 					ja->sectors_free,
 				  .dev = ca->dev_idx,
 		});
+
+		/* Stash ca alongside the just-appended ptr; submit + no_io
+		 * walk @key.k.u64s ptrs in order, so the index lines up. */
+		w->cas[bkey_val_u64s(&w->key.k) - 1] = ca;
 
 		ja->sectors_free -= sectors;
 		ja->bucket_seq[ja->cur_idx] = le64_to_cpu(w->data->seq);
@@ -460,15 +465,19 @@ static CLOSURE_CALLBACK(journal_write_submit)
 	unsigned sectors = vstruct_sectors(w->data, c->block_bits);
 
 	event_inc_trace(c, journal_write, buf, ({
-		prt_printf(&buf, "seq %llu\n", le64_to_cpu(w->data->seq));
+		prt_printf(&buf, "seq %llu flush %u sectors %u\n",
+			   le64_to_cpu(w->data->seq),
+			   !JSET_NO_FLUSH(w->data),
+			   sectors);
 		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&w->key));
 	}));
 
 	struct blk_plug plug;
 	blk_start_plug(&plug);
 
+	unsigned ptr_idx = 0;
 	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
-		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
+		struct bch_dev *ca = w->cas[ptr_idx++];
 
 		this_cpu_add(ca->io_done->sectors[WRITE][BCH_DATA_journal],
 			     sectors);
@@ -582,6 +591,18 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 
 	bool empty = jset->seq == jset->last_seq;
 
+	if (w->need_flush_to_write_buffer) {
+		bch2_journal_keys_to_write_buffer_start(c, &wb, seq);
+
+		/*
+		 * need_flush_to_write_buffer must be cleared under the write buffer's
+		 * locks, dropped by bch2_journal_keys_to_write_buffer_end(), to avoid
+		 * racing with write buffer flushing
+		 */
+		scoped_guard(spinlock, &c->journal.lock)
+			w->need_flush_to_write_buffer = false;
+	}
+
 	/*
 	 * Simple compaction, dropping empty jset_entries (from journal
 	 * reservations that weren't fully used) and merging jset_entries that
@@ -616,11 +637,6 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 			__set_bit(i->btree_id, &btree_roots_have);
 			break;
 		case BCH_JSET_ENTRY_write_buffer_keys:
-			EBUG_ON(!w->need_flush_to_write_buffer);
-
-			if (!wb.seq)
-				bch2_journal_keys_to_write_buffer_start(c, &wb, seq);
-
 			jset_entry_for_each_key(i, k) {
 				ret = bch2_journal_key_to_wb(c, &wb, i->btree_id, k);
 				if (ret) {
@@ -644,9 +660,9 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 		}
 	}
 
-	scoped_guard(spinlock, &c->journal.lock) {
-		w->need_flush_to_write_buffer = false;
-		w->empty = empty;
+	if (empty) {
+		scoped_guard(spinlock, &c->journal.lock)
+			w->empty = true;
 	}
 
 	start = end = vstruct_last(jset);
@@ -893,9 +909,12 @@ err:
 		bch2_fs_emergency_read_only(c, &msg.m);
 	}
 no_io:
-	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
-		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
-		enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_journal_write);
+	{
+		unsigned ptr_idx = 0;
+		extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
+			struct bch_dev *ca = w->cas[ptr_idx++];
+			enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_journal_write);
+		}
 	}
 
 	continue_at(cl, journal_write_done, j->wq);

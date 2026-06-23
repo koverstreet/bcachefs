@@ -23,6 +23,8 @@
 #include <linux/string.h>
 #include <linux/types.h>
 #include <linux/sched/clock.h>
+#include <linux/sched/debug.h>
+#include <linux/sched/signal.h>
 
 #include "eytzinger.h"
 #include "mean_and_variance.h"
@@ -684,6 +686,18 @@ struct bio *bch2_bio_map_and_chain(struct block_device *bdev,
 	return tail;
 }
 
+int bch2_bio_submit_buf_wait(struct block_device *bdev,
+			     void *buf, size_t count,
+			     sector_t offset,
+			     blk_opf_t opf)
+{
+	struct bio *bio = bch2_bio_map_and_chain(bdev, buf, count, offset, opf,
+						 GFP_KERNEL, &fs_bio_set);
+	int ret = submit_bio_wait(bio);
+	bio_put(bio);
+	return ret;
+}
+
 int bch2_bio_alloc_pages(struct bio *bio, unsigned bs, size_t size, gfp_t gfp_mask)
 {
 	BUG_ON(!is_power_of_2(bs));
@@ -1208,3 +1222,16 @@ void mempool_kvfree(void *element, void *pool_data)
 	kvfree(element);
 }
 #endif
+
+__sched int bch2_bit_wait_io_timeout(struct wait_bit_key *word, int mode)
+{
+	unsigned long now = jiffies;
+
+	if (time_after_eq(now, word->timeout))
+		return -EAGAIN;
+	io_schedule_timeout(word->timeout - now);
+	if (signal_pending_state(mode, current))
+		return -EINTR;
+
+	return 0;
+}

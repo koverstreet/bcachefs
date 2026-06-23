@@ -49,6 +49,7 @@
 #include <linux/math64.h>
 #include <linux/rculist.h>
 #include <linux/rcupdate.h>
+#include <linux/sched/signal.h>
 
 static void bch2_trans_mutex_lock_norelock(struct btree_trans *trans,
 					   struct mutex *lock)
@@ -538,6 +539,72 @@ static noinline void bucket_alloc_to_text(struct printbuf *out,
 		prt_printf(out, "err\t%s\n", bch2_err_str(PTR_ERR(ob)));
 }
 
+/*
+ * Replicas can only fit across a device set when no single device exceeds
+ * 1/N of the total capacity: a block on the largest device needs N-1 copies
+ * elsewhere, and those copies must fit in (total - max). So
+ * (N-1)*max <= total - max, i.e. N*max <= total.
+ *
+ * When this is violated for the rw device set the request is allowed to
+ * write to (after data_type filtering), no amount of waiting or copygc
+ * fixes it; the request must degrade to fewer replicas or fail.
+ */
+static bool req_dev_sizes_mismatched(struct bch_fs *c, struct alloc_request *req)
+{
+	if (req->nr_replicas <= 1)
+		return false;
+
+	u64 total = 0, max = 0;
+
+	guard(rcu)();
+	for_each_rw_member_rcu(c, ca) {
+		if (!(ca->mi.data_allowed & BIT(req->data_type)))
+			continue;
+		total += ca->mi.nbuckets;
+		max = max(max, ca->mi.nbuckets);
+	}
+
+	return max > (total - max);
+}
+
+/*
+ * Decide whether an alloc that came up empty-handed on the current candidate
+ * device should bail (committing the request with whatever replicas it
+ * already has) instead of waiting on freelist_wait. Bails iff the request
+ * has at least one replica's worth to commit AND any of:
+ *
+ *  - copygc_can_make_progress is false: the per-device check (set above by
+ *    the caller from bch2_copygc_can_make_progress(ca)) says copygc can't
+ *    free buckets here. No reason to wait — copygc isn't going to help.
+ *
+ *  - watermark == copygc and data_type != btree: the request itself is
+ *    issued at copygc watermark, i.e. it IS the thing trying to free
+ *    buckets. Blocking it on freelist_wait would deadlock the freer against
+ *    its own progress signal. Btree node writes are excluded from this
+ *    carve-out: they may inherit copygc watermark for priority, but they
+ *    must not commit under-replicated (a single-ptr btree node on a failing
+ *    device → btree_node_write_all_failed → emergency_ro).
+ *
+ *  - req_dev_sizes_mismatched: the rw device topology can't satisfy
+ *    nr_replicas regardless of how much waiting or copygc happens (e.g.
+ *    after a device remove leaves max(devs) > sum(rest)). See helper above.
+ *
+ * If none of these fire and we have a closure to wait on, we register on
+ * freelist_wait and retry once the wake counter advances.
+ */
+static bool req_alloc_should_bail(struct bch_fs *c, struct alloc_request *req)
+{
+	bool have_replicas = req->nr_effective ||
+		(req->devs_have && req->devs_have->nr);
+	if (!have_replicas)
+		return false;
+
+	return !req->copygc_can_make_progress ||
+	       (req->watermark == BCH_WATERMARK_copygc &&
+		req->data_type != BCH_DATA_btree) ||
+	       req_dev_sizes_mismatched(c, req);
+}
+
 /**
  * bch2_bucket_alloc_trans - allocate a single bucket from a specific device
  * @trans:	transaction object
@@ -545,8 +612,8 @@ static noinline void bucket_alloc_to_text(struct printbuf *out,
  *
  * Returns:	an open_bucket on success, or an ERR_PTR() on failure.
  */
-static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
-						   struct alloc_request *req)
+struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
+					    struct alloc_request *req)
 {
 	struct bch_fs *c = trans->c;
 	struct bch_dev *ca = req->ca;
@@ -588,9 +655,7 @@ again:
 		    !req->will_retry_target_devices &&
 		    !req->will_retry_all_devices &&
 		    !req->will_retry_set_devices) {
-			if ((!req->copygc_can_make_progress ||
-			     req->watermark == BCH_WATERMARK_copygc) &&
-			    (req->nr_effective || (req->devs_have && req->devs_have->nr))) {
+			if (req_alloc_should_bail(c, req)) {
 				ob = ERR_PTR(bch_err_throw(c, bucket_alloc_no_progress));
 			} else if (!waiting) {
 				closure_wait(&c->allocator.freelist_wait, req->cl);
@@ -649,26 +714,6 @@ err:
 	return ob;
 }
 
-struct open_bucket *bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
-				      enum bch_watermark watermark,
-				      enum bch_data_type data_type,
-				      struct closure *cl)
-{
-	struct open_bucket *ob;
-	struct alloc_request req = {
-		.cl		= cl,
-		.watermark	= watermark,
-		.data_type	= data_type,
-		.ca		= ca,
-	};
-	darray_init(&req.trace);
-
-	CLASS(btree_trans, trans)(c);
-	lockrestart_do(trans, PTR_ERR_OR_ZERO(ob = bch2_bucket_alloc_trans(trans, &req)));
-	darray_exit(&req.trace);
-	return ob;
-}
-
 static int __dev_stripe_cmp(struct dev_stripe_state *stripe,
 			    unsigned l, unsigned r)
 {
@@ -677,11 +722,42 @@ static int __dev_stripe_cmp(struct dev_stripe_state *stripe,
 
 #define dev_stripe_cmp(l, r) __dev_stripe_cmp(stripe, l, r)
 
+/*
+ * Newly-included devs (not in cached_devs) join at min(next_alloc[i] of devs
+ * already in scope) rather than at 0, so they don't win every comparison
+ * until catching up. See struct dev_stripe_state.
+ */
+static void dev_stripe_state_sync(struct dev_stripe_state *stripe,
+				  struct bch_devs_mask *devs)
+{
+	if (likely(bitmap_equal(stripe->cached_devs.d, devs->d, BCH_SB_MEMBERS_MAX)))
+		return;
+
+	struct bch_devs_mask added;
+	bitmap_andnot(added.d, devs->d, stripe->cached_devs.d, BCH_SB_MEMBERS_MAX);
+
+	if (!bitmap_empty(added.d, BCH_SB_MEMBERS_MAX)) {
+		u64 min_va = U64_MAX;
+		unsigned i;
+		for_each_set_bit(i, devs->d, BCH_SB_MEMBERS_MAX)
+			if (!test_bit(i, added.d))
+				min_va = min(min_va, stripe->next_alloc[i]);
+
+		if (min_va != U64_MAX)
+			for_each_set_bit(i, added.d, BCH_SB_MEMBERS_MAX)
+				stripe->next_alloc[i] = min_va;
+	}
+
+	stripe->cached_devs = *devs;
+}
+
 void bch2_dev_alloc_list(struct bch_fs *c,
 			 struct dev_stripe_state *stripe,
 			 struct bch_devs_mask *devs,
 			 struct dev_alloc_list *ret)
 {
+	dev_stripe_state_sync(stripe, devs);
+
 	ret->nr = 0;
 
 	unsigned i;
@@ -788,10 +864,10 @@ int bch2_bucket_alloc_set_trans(struct btree_trans *trans,
 
 	BUG_ON(req->nr_effective >= req->nr_replicas);
 
+	bch2_dev_alloc_list(c, stripe, &req->devs_may_alloc, &req->devs_sorted);
+
 	if (req->devs_sorted.nr <= 1)
 		req->will_retry_target_devices = false;
-
-	bch2_dev_alloc_list(c, stripe, &req->devs_may_alloc, &req->devs_sorted);
 
 	darray_for_each(req->devs_sorted, i) {
 		req->ca = bch2_dev_tryget_noerror(c, *i);
@@ -849,7 +925,7 @@ static int bucket_alloc_from_stripe(struct btree_trans *trans,
 	bch2_dev_alloc_list(c, &req->wp->stripe, &req->devs_may_alloc, &req->devs_sorted);
 
 	darray_for_each(req->devs_sorted, i)
-		for (unsigned ec_idx = 0; ec_idx < h->s->nr_data; ec_idx++) {
+		for (unsigned ec_idx = 0; ec_idx < ec_stripe_new_nr_data(h->s); ec_idx++) {
 			if (!h->s->blocks[ec_idx])
 				continue;
 
@@ -1582,8 +1658,12 @@ void bch2_fs_open_buckets_to_text(struct printbuf *out, struct bch_fs *c)
 	for (struct open_bucket *ob = a->open_buckets;
 	     ob < a->open_buckets + ARRAY_SIZE(a->open_buckets);
 	     ob++)
-		if (atomic_read(&ob->pin))
-			nr[ob->data_type]++;
+		if (atomic_read(&ob->pin)) {
+			unsigned t = ob->data_type;
+			barrier(); /* can't READ_ONCE() a bitfield */
+			if (t < BCH_DATA_NR)
+				nr[t]++;
+		}
 
 	prt_printf(out, "open buckets allocated\t%i\n",		OPEN_BUCKETS_COUNT - a->open_buckets_nr_free);
 	prt_printf(out, "open buckets total\t%u\n",		OPEN_BUCKETS_COUNT);
@@ -1626,8 +1706,12 @@ void bch2_dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 
 	memset(nr, 0, sizeof(nr));
 
-	for (unsigned i = 0; i < ARRAY_SIZE(a->open_buckets); i++)
-		nr[a->open_buckets[i].data_type]++;
+	for (unsigned i = 0; i < ARRAY_SIZE(a->open_buckets); i++) {
+		unsigned t = a->open_buckets[i].data_type;
+		barrier(); /* can't READ_ONCE() a bitfield */
+		if (t < BCH_DATA_NR)
+			nr[t]++;
+	}
 
 	bch2_dev_usage_to_text(out, ca, &stats);
 
@@ -1708,6 +1792,52 @@ static void alloc_trace_to_text(struct printbuf *out, struct bch_fs *c,
 		}
 }
 
+void bch2_alloc_request_to_text(struct printbuf *out, struct bch_fs *c,
+				struct alloc_request *req)
+{
+	prt_printf(out, "nr_replicas:\t%u\n", req->nr_replicas);
+	prt_str(out, "target:\t");
+	bch2_target_to_text(out, c, req->target);
+	prt_newline(out);
+
+	prt_printf(out, "watermark:\t%s\n", bch2_watermarks[req->watermark]);
+	prt_printf(out, "data_type:\t%s\n", bch2_data_type_str(req->data_type));
+
+	prt_str(out, "flags:\t");
+	prt_bitflags(out, bch2_write_flags, req->flags);
+	prt_newline(out);
+
+	prt_printf(out, "ec:\t%u\n", req->ec);
+	prt_printf(out, "will_retry_all_devices:\t%u\n", req->will_retry_all_devices);
+	prt_printf(out, "will_retry_target_devices:\t%u\n", req->will_retry_target_devices);
+	prt_printf(out, "will_retry_set_devices:\t%u\n", req->will_retry_set_devices);
+	prt_printf(out, "copygc_can_make_progress:\t%u\n", req->copygc_can_make_progress);
+	prt_printf(out, "have_cl:\t%u\n", req->cl != NULL);
+
+	if (req->devs_have && req->devs_have->nr) {
+		prt_printf(out, "devs_have:\t");
+		bch2_devs_list_to_text(out, c, req->devs_have);
+		prt_newline(out);
+	}
+
+	prt_printf(out, "devs_may_alloc:\t");
+	{
+		unsigned i;
+		for_each_set_bit(i, req->devs_may_alloc.d, BCH_SB_MEMBERS_MAX)
+			prt_printf(out, "%u ", i);
+	}
+	prt_newline(out);
+
+	prt_printf(out, "devs_sorted:\t");
+	darray_for_each(req->devs_sorted, i)
+		prt_printf(out, "%u ", *i);
+	prt_newline(out);
+
+	prt_printf(out, "allocated:\t%u\n", req->nr_effective);
+
+	alloc_trace_to_text(out, c, req);
+}
+
 static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_request *req, int err)
 {
 	CLASS(printbuf, buf)();
@@ -1720,47 +1850,7 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_r
 		printbuf_tabstop_push(&buf, 28);
 		prt_str(&buf, "Allocation:\n");
 		guard(printbuf_indent)(&buf);
-		prt_printf(&buf, "nr_replicas:\t%u\n", req->nr_replicas);
-		prt_str(&buf, "target:\t");
-		bch2_target_to_text(&buf, c, req->target);
-		prt_newline(&buf);
-
-		prt_printf(&buf, "watermark:\t%s\n", bch2_watermarks[req->watermark]);
-		prt_printf(&buf, "data_type:\t%s\n", bch2_data_type_str(req->data_type));
-
-		prt_str(&buf, "flags:\t");
-		prt_bitflags(&buf, bch2_write_flags, req->flags);
-		prt_newline(&buf);
-
-		prt_printf(&buf, "ec:\t%u\n", req->ec);
-		prt_printf(&buf, "will_retry_all_devices:\t%u\n", req->will_retry_all_devices);
-		prt_printf(&buf, "will_retry_target_devices:\t%u\n", req->will_retry_target_devices);
-		prt_printf(&buf, "will_retry_set_devices:\t%u\n", req->will_retry_set_devices);
-		prt_printf(&buf, "copygc_can_make_progress :\t%u\n", req->copygc_can_make_progress);
-		prt_printf(&buf, "have_cl:\t%u\n", req->cl != NULL);
-
-		if (req->devs_have && req->devs_have->nr) {
-			prt_printf(&buf, "devs_have:\t");
-			bch2_devs_list_to_text(&buf, c, req->devs_have);
-			prt_newline(&buf);
-		}
-
-		prt_printf(&buf, "devs_may_alloc:\t");
-		{
-			unsigned i;
-			for_each_set_bit(i, req->devs_may_alloc.d, BCH_SB_MEMBERS_MAX)
-				prt_printf(&buf, "%u ", i);
-		}
-		prt_newline(&buf);
-
-		prt_printf(&buf, "devs_sorted:\t");
-		darray_for_each(req->devs_sorted, i)
-			prt_printf(&buf, "%u ", *i);
-		prt_newline(&buf);
-
-		prt_printf(&buf, "allocated:\t%u\n", req->nr_effective);
-
-		alloc_trace_to_text(&buf, c, req);
+		bch2_alloc_request_to_text(&buf, c, req);
 		prt_newline(&buf);
 	}
 
@@ -1820,15 +1910,6 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c, struct alloc_r
 	bch2_print_str(c, KERN_ERR, buf.buf);
 }
 
-static inline unsigned allocator_wait_timeout(struct bch_fs *c)
-{
-	if (c->allocator.last_stuck &&
-	    time_after(c->allocator.last_stuck + HZ * 60 * 2, jiffies))
-		return 0;
-
-	return c->opts.allocator_stuck_timeout * HZ;
-}
-
 /*
  * Returns true if any device we tried to allocate from and failed has had
  * its alloc_wake_counter advance since we recorded the snapshot — i.e. the
@@ -1851,33 +1932,60 @@ static bool alloc_wait_advanced(struct bch_fs *c, struct alloc_request *req)
 		/* If a device has been removed, retry the allocation now */
 
 		struct bch_dev *ca = bch2_dev_rcu_noerror(c, e->dev);
-		if (!ca ||
-		    (atomic_read(&ca->alloc_wake_counter) !=
-		     e->wake_counter_snapshot)) {
+		if (!ca)
+			return true;
+		if (atomic_read(&ca->alloc_wake_counter) !=
+		    e->wake_counter_snapshot) {
 			bch2_dev_usage_read_fast(ca, &req->usage);
-			if (__dev_buckets_free(ca, req->usage, req->watermark) > 1)
+			if (__dev_buckets_free(ca, req->usage, req->watermark) > 1 ||
+			    !bch2_copygc_can_make_progress(ca))
 				return true;
+
+			bch2_copygc_wakeup(c);
 		}
 	}
 	BUG_ON(!found);
 	return false;
 }
 
-void __bch2_wait_on_allocator(struct bch_fs *c, struct alloc_request *req,
+void __bch2_wait_on_allocator(struct btree_trans *trans,
+			      struct alloc_request *req,
 			      int err, struct closure *cl)
 {
-	unsigned long until = jiffies + allocator_wait_timeout(c);
+	struct bch_fs *c = trans->c;
+	unsigned long until = jiffies + c->opts.allocator_stuck_timeout * HZ;
+
+	bch2_trans_unlock(trans);
 
 	while (1) {
-		unsigned long t = until - jiffies;
+		long t = until - jiffies;
 
-		if (t && closure_sync_timeout(cl, t)) {
-			/* Timed out — cl is still on freelist_wait. */
-			c->allocator.last_stuck = jiffies;
-			bch2_print_allocator_stuck(c, req, err);
+		if (t > 0 && trans_closure_sync_timeout(trans, cl, t)) {
+			/*
+			 * Timed out — cl is still on freelist_wait.
+			 *
+			 * Multiple threads can be waiting on the allocator
+			 * concurrently; without this CAS gate they would all
+			 * race past the timeout and dump fs state at once,
+			 * interleaving N copies of the same output.
+			 */
+			unsigned long old = READ_ONCE(c->allocator.last_stuck);
+
+			if ((!old || time_after(jiffies, old + HZ * 60 * 2)) &&
+			    try_cmpxchg(&c->allocator.last_stuck, &old, jiffies))
+				bch2_print_allocator_stuck(c, req, err);
 		}
 
-		closure_sync(cl);
+		trans_closure_sync(trans, cl);
+
+		/*
+		 * If we're going emergency-RO, bail out: alloc_wait_advanced
+		 * gates on __dev_buckets_free > 1, which won't be true if
+		 * we're shutting down with a draining device — we'd re-park
+		 * and block read_only_work indefinitely.
+		 */
+		if (test_bit(BCH_FS_emergency_ro, &c->flags))
+			return;
 
 		if (!bch2_err_matches(err, BCH_ERR_bucket_alloc_blocked))
 			return;

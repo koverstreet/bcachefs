@@ -7,7 +7,7 @@
 extern const struct bch_hash_desc bch2_dirent_hash_desc;
 
 int bch2_dirent_validate(struct bch_fs *, struct bkey_s_c,
-			 struct bkey_validate_context);
+			 const struct bkey_validate_context *);
 void bch2_dirent_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 
 #define bch2_bkey_ops_dirent ((struct bkey_ops) {	\

@@ -38,11 +38,60 @@
  * be recorded. The layout structure has its own magic number so that it can be
  * found independently.
  *
+ * Only the primary superblock and the layout structure are at fixed,
+ * known-without-context offsets. Backup superblock locations are recorded only
+ * inside the layout (and inside each superblock's own embedded layout copy);
+ * recovery from a lost layout therefore requires either falling back to a
+ * second known offset, or scanning the device. The end-of-device backup is at
+ * an offset computable from the device size, which gives a second escape valve
+ * when sector 7 itself is unreadable.
+ *
+ * The layout structure is intentionally minimal---a magic number, a small
+ * offset table, no checksum---and lives in its own 512-byte sector so that it
+ * shares a physical block with as little else as possible. All checksumming
+ * and validation logic lives in the superblock itself. The embedded
+ * \texttt{bch\_sb\_layout} inside each superblock is what's used in the
+ * common case (the standalone copy at sector 7 is consulted only when the
+ * primary superblock cannot be read).
+ *
  * The superblock is written with a monotonically increasing sequence number
  * (\texttt{seq}); on read, the copy with the highest valid sequence number is
  * authoritative. The \texttt{bcachefs recover-super} command can reconstruct a
  * device's superblock from backup copies or from another device in the same
  * filesystem.
+ *
+ * \subsubsection{Threat model}
+ *
+ * Redundancy exists to survive several distinct failure modes, in roughly
+ * descending order of how often they're observed in practice:
+ *
+ * \begin{itemize}
+ * \item \textbf{Torn writes during power loss}. The actual superblock size
+ *   varies---a few kilobytes on a single-device laptop filesystem, larger on
+ *   big multi-device filesystems---but is generally well beyond a single
+ *   sector or physical block, and the on-disk reservation can grow to 32\,MB.
+ *   That's beyond any device's atomic write granularity, so power loss
+ *   mid-write can leave a torn superblock; the checksum catches it and a
+ *   backup is consulted. This was the original driver for redundant
+ *   superblocks.
+ * \item \textbf{Media errors and bit rot}. Bad sectors, single-sector unrecoverable
+ *   reads, slow long-term decay on backup copies that are written infrequently.
+ *   Front-of-device and end-of-device backups are physically separated on
+ *   rotating media, providing some independence.
+ * \item \textbf{Legacy bootloader coexistence and large physical block sizes}.
+ *   Sector 7 is adjacent to sector 0 (where ancient-style bootloaders live)
+ *   and the start of the primary superblock (sector 8). On disks with logical
+ *   sector size 512 and physical block size $\geq$\,4\,KB---increasingly
+ *   common, especially on SSDs reporting 8\,KB or 16\,KB physical blocks---a
+ *   sub-physical-block write triggers a read-modify-write of the whole
+ *   physical block. A torn RMW on physical block 0 can take out the boot
+ *   sector, the layout, and the start of the primary superblock together.
+ *   The end-of-device backup superblock is the escape valve here, since it
+ *   lives in its own physical block far away.
+ * \item \textbf{Whole-device failure}. A single device dropping out: covered
+ *   trivially by replication of the filesystem-wide state across all member
+ *   devices' superblocks.
+ * \end{itemize}
  *
  * \subsubsection{Fixed fields}
  *
@@ -808,41 +857,94 @@ static int read_one_super(struct bch_sb_handle *sb, u64 offset, struct printbuf 
 	}
 }
 
-static int read_backup_supers(struct bch_sb_handle *sb,
-			      struct bch_opts *opts,
+static int read_layout_sector(struct bch_sb_handle *sb,
+			      struct bch_sb_layout *layout,
 			      struct printbuf *err)
 {
-	/*
-	 * Error reading primary superblock - read location of backup
-	 * superblocks:
-	 */
 	bio_reset(sb->bio, sb->bdev, REQ_OP_READ|REQ_SYNC|REQ_META);
 	sb->bio->bi_iter.bi_sector = BCH_SB_LAYOUT_SECTOR;
 	/*
 	 * use sb buffer to read layout, since sb buffer is page aligned but
 	 * layout won't be:
 	 */
-	bch2_bio_map(sb->bio, sb->sb, sizeof(struct bch_sb_layout));
+	bch2_bio_map(sb->bio, sb->sb, sizeof(*layout));
 
 	try(submit_bio_wait(sb->bio));
 
-	struct bch_sb_layout layout;
-	memcpy(&layout, sb->sb, sizeof(layout));
+	memcpy(layout, sb->sb, sizeof(*layout));
+	return validate_sb_layout(layout, err);
+}
 
-	try(validate_sb_layout(&layout, err));
+/*
+ * Scan the backup superblock copies in @layout (the primary is already
+ * attempted by the caller) and return the offset of the highest-seq valid
+ * copy across primary + backups. On exit sb->sb holds the authoritative copy
+ * at *best_offset.
+ *
+ * The caller passes primary_seq = 0 if the primary read failed; nonzero
+ * otherwise (in which case sb->sb holds the primary's content on entry and is
+ * a candidate for best).
+ *
+ * Reading every copy defends against several failure modes:
+ *   - torn write to the primary (csum fails; pick a backup at the same seq)
+ *   - stale primary from a write that succeeded against slot 1+ but not the
+ *     primary (older seq on slot 0; pick the higher-seq backup)
+ *   - bit rot on a backup we didn't visit since last write (gets noticed when
+ *     the primary is also down)
+ *
+ * The "highest seq, last-scanned wins on a tie" rule keeps the common case
+ * (all slots at the same seq) free of re-reads.
+ */
+static int read_backup_supers(struct bch_sb_handle *sb,
+			      struct bch_sb_layout *layout,
+			      bool primary_valid,
+			      u64 *best_offset,
+			      struct printbuf *err)
+{
+	u64 primary_offset = le64_to_cpu(layout->sb_offset[0]);
+	u64 best_seq	= primary_valid ? le64_to_cpu(sb->sb->seq) : 0;
+	u64 last_read	= primary_valid ? primary_offset : 0;
+	bool any_valid	= primary_valid;
 
-	int ret = -BCH_ERR_invalid;
-	for (__le64 *i = layout.sb_offset; i < layout.sb_offset + layout.nr_superblocks; i++) {
-		u64 offset = le64_to_cpu(*i);
-		if (offset == opt_get(*opts, sb))
+	*best_offset	= primary_offset;
+
+	for (unsigned i = 1; i < layout->nr_superblocks; i++) {
+		u64 offset = le64_to_cpu(layout->sb_offset[i]);
+
+		struct printbuf slot_err = PRINTBUF;
+		int ret = read_one_super(sb, offset, &slot_err);
+		/*
+		 * read_one_super reads into sb->sb before validating; on
+		 * failure the buffer holds the unvalidated data. Track
+		 * last_read regardless of success so the post-loop check
+		 * knows whether to re-read the winning slot.
+		 */
+		last_read = offset;
+		if (ret) {
+			prt_printf(err, "  sb @ %llu: %s\n", offset, slot_err.buf);
+			printbuf_exit(&slot_err);
 			continue;
+		}
+		printbuf_exit(&slot_err);
 
-		ret = read_one_super(sb, offset, err);
-		if (!ret)
-			break;
+		any_valid = true;
+		if (sb->seq >= best_seq) {
+			best_seq = sb->seq;
+			*best_offset = offset;
+		}
 	}
 
-	return ret;
+	if (!any_valid)
+		return -BCH_ERR_invalid;
+
+	/*
+	 * If the winning slot wasn't the one we read last, re-read it so
+	 * sb->sb holds the authoritative copy on return.
+	 */
+	if (last_read != *best_offset)
+		try(read_one_super(sb, *best_offset, err));
+
+	return 0;
 }
 
 static int read_super_and_backups(struct bch_sb_handle *sb,
@@ -893,14 +995,34 @@ static int read_super_and_backups(struct bch_sb_handle *sb,
 	if (bch2_fs_init_fault("read_super"))
 		return -EFAULT;
 
-	u64 offset = opt_get(*opts, sb);
-	int ret = read_one_super(sb, offset, err);
-	if (ret) {
-		if (opt_defined(*opts, sb))
-			return ret;
+	u64 sb_offset;
 
-		prt_printf(err, "attempting backup superblocks\n");
-		try(read_backup_supers(sb, opts, err));
+	/*
+	 * If the user requested a specific superblock offset (recovery /
+	 * debug), respect it: don't scan, don't fall back.
+	 */
+	if (opt_defined(*opts, sb)) {
+		sb_offset = opt_get(*opts, sb);
+		try(read_one_super(sb, sb_offset, err));
+	} else {
+		struct bch_sb_layout layout;
+
+		/*
+		 * Read the primary first so we can pick up its embedded
+		 * layout in the common case; if it fails, fall back to the
+		 * standalone layout sector.
+		 */
+		CLASS(printbuf, primary_err)();
+		int ret = read_one_super(sb, BCH_SB_SECTOR, &primary_err);
+		if (!ret) {
+			memcpy(&layout, &sb->sb->layout, sizeof(layout));
+			try(validate_sb_layout(&layout, err));
+			try(read_backup_supers(sb, &layout, true, &sb_offset, err));
+		} else {
+			prt_printf(err, "primary superblock unreadable: %s\n", primary_err.buf);
+			try(read_layout_sector(sb, &layout, err));
+			try(read_backup_supers(sb, &layout, false, &sb_offset, err));
+		}
 	}
 
 	if (le16_to_cpu(sb->sb->block_size) << 9 <
@@ -917,7 +1039,7 @@ static int read_super_and_backups(struct bch_sb_handle *sb,
 	}
 
 	sb->have_layout = true;
-	try(bch2_sb_validate(sb->sb, opts, offset, 0, err));
+	try(bch2_sb_validate(sb->sb, opts, sb_offset, 0, err));
 
 	return 0;
 }
@@ -981,17 +1103,11 @@ static void write_super_endio(struct bio *bio)
 
 	bch2_account_io_success_fail(ca, bio_data_dir(bio), !bio->bi_status);
 
-	/* XXX: return errors directly */
-
-	if (bio->bi_status) {
-		bch_err_dev_ratelimited(ca, "superblock %s error: %s",
-			       str_write_read(bio_data_dir(bio)),
-			       bch2_blk_status_to_str(bio->bi_status));
-		ca->sb_write_error = 1;
-	}
+	if (bio->bi_status)
+		ca->sb_write_error =
+			__bch2_err_throw(ca->fs, -blk_status_to_bch_err(bio->bi_status));
 
 	closure_put(&ca->fs->sb_write);
-	enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_write_super);
 }
 
 static void read_back_super(struct bch_fs *c, struct bch_dev *ca)
@@ -1009,7 +1125,6 @@ static void read_back_super(struct bch_fs *c, struct bch_dev *ca)
 
 	this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_sb], bio_sectors(bio));
 
-	enumerated_ref_get(&ca->io_ref[READ], BCH_DEV_READ_REF_write_super);
 	closure_bio_submit(bio, &c->sb_write);
 }
 
@@ -1029,7 +1144,7 @@ static void write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 	 * and REQ_IDLE set...
 	 */
 
-	bio_reset(bio, ca->disk_sb.bdev, REQ_OP_WRITE|REQ_SYNC|REQ_IDLE|REQ_META);
+	bio_reset(bio, ca->disk_sb.bdev, REQ_OP_WRITE|REQ_SYNC|REQ_IDLE|REQ_META|REQ_FUA);
 	bio->bi_iter.bi_sector	= le64_to_cpu(sb->offset);
 	bio->bi_end_io		= write_super_endio;
 	bio->bi_private		= ca;
@@ -1040,20 +1155,33 @@ static void write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 	this_cpu_add(ca->io_done->sectors[WRITE][BCH_DATA_sb],
 		     bio_sectors(bio));
 
-	enumerated_ref_get(&ca->io_ref[READ], BCH_DEV_READ_REF_write_super);
 	closure_bio_submit(bio, &c->sb_write);
 }
 
-int bch2_write_super(struct bch_fs *c)
+typedef struct {
+	int		err;
+	u64		offset;
+} sb_offset_err;
+DEFINE_DARRAY(sb_offset_err);
+
+typedef struct {
+	struct bch_dev		*ca;
+	darray_sb_offset_err	failures;
+} write_sb_dev;
+
+static void write_sb_dev_put(write_sb_dev d)
+{
+	enumerated_ref_put(&d.ca->io_ref[READ], BCH_DEV_READ_REF_write_super);
+	darray_exit(&d.failures);
+}
+
+DEFINE_DARRAY_FREE_ITEM(write_sb_dev, write_sb_dev_put);
+
+static int __bch2_write_super(struct bch_fs *c)
 {
 	struct closure *cl = &c->sb_write;
-	CLASS(printbuf, err)();
-	unsigned sb = 0;
-	struct bch_devs_mask sb_written;
-	bool wrote;
 	unsigned degraded_flags = BCH_FORCE_IF_DEGRADED;
-	DARRAY(struct bch_dev *) online_devices = {};
-	int ret = 0;
+	CLASS(darray_write_sb_dev, online_devices)();
 
 	if (!test_bit(BCH_FS_may_upgrade_downgrade, &c->flags))
 		return 0;
@@ -1066,7 +1194,6 @@ int bch2_write_super(struct bch_fs *c)
 	lockdep_assert_held(&c->sb_lock);
 
 	closure_init_stack(cl);
-	memset(&sb_written, 0, sizeof(sb_written));
 
 	if (bch2_sb_has_journal(c->disk_sb.sb))
 		bch2_fs_mark_dirty(c);
@@ -1081,11 +1208,9 @@ int bch2_write_super(struct bch_fs *c)
 	 * yet RW:
 	 */
 	for_each_online_member(c, ca, BCH_DEV_READ_REF_write_super) {
-		ret = darray_push(&online_devices, ca);
-		if (bch2_fs_fatal_err_on(ret, c, "%s: error allocating online devices", __func__)) {
-			enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_write_super);
-			goto out;
-		}
+		int ret = darray_push(&online_devices, ((write_sb_dev) { ca }));
+		if (bch2_fs_fatal_err_on(ret, c, "%s: error allocating online devices", __func__))
+			return ret;
 		enumerated_ref_get(&ca->io_ref[READ], BCH_DEV_READ_REF_write_super);
 	}
 
@@ -1096,8 +1221,8 @@ int bch2_write_super(struct bch_fs *c)
 	le64_add_cpu(&c->disk_sb.sb->seq, 1);
 
 	struct bch_sb_field_members_v2 *mi = bch2_sb_field_get(c->disk_sb.sb, members_v2);
-	darray_for_each(online_devices, ca)
-		__bch2_members_v2_get_mut(mi, (*ca)->dev_idx)->seq = c->disk_sb.sb->seq;
+	darray_for_each(online_devices, i)
+		__bch2_members_v2_get_mut(mi, i->ca->dev_idx)->seq = c->disk_sb.sb->seq;
 	c->disk_sb.sb->write_time = cpu_to_le64(ktime_get_real_seconds());
 
 	if (test_bit(BCH_FS_error, &c->flags))
@@ -1114,29 +1239,29 @@ int bch2_write_super(struct bch_fs *c)
 	bch2_sb_downgrade_update(c);
 	try(bch2_sb_extent_type_u64s_from_cpu(c));
 
-	darray_for_each(online_devices, ca)
-		bch2_sb_from_fs(c, (*ca));
+	darray_for_each(online_devices, i)
+		bch2_sb_from_fs(c, i->ca);
 
-	darray_for_each(online_devices, ca) {
+	darray_for_each(online_devices, i) {
 		struct bch_opts opts = bch2_opts_empty();
-		printbuf_reset(&err);
+		CLASS(printbuf, err)();
 
-		ret = bch2_sb_validate((*ca)->disk_sb.sb, &opts, 0, BCH_VALIDATE_write, &err);
+		int ret = bch2_sb_validate(i->ca->disk_sb.sb, &opts, 0, BCH_VALIDATE_write, &err);
 		if (ret) {
 			bch2_fs_inconsistent(c, "sb invalid before write: %s", err.buf);
-			goto out;
+			return 0;
 		}
 	}
 
 	if (c->opts.nochanges)
-		goto out;
+		return 0;
 
 	/*
 	 * Defer writing the superblock until filesystem initialization is
 	 * complete - don't write out a partly initialized superblock:
 	 */
 	if (!BCH_SB_INITIALIZED(c->disk_sb.sb))
-		goto out;
+		return 0;
 
 	if (le16_to_cpu(c->disk_sb.sb->version) > bcachefs_metadata_version_current) {
 		CLASS(printbuf, buf)();
@@ -1146,116 +1271,143 @@ int bch2_write_super(struct bch_fs *c)
 		bch2_version_to_text(&buf, bcachefs_metadata_version_current);
 		prt_str(&buf, ")");
 		bch2_fs_fatal_error(c, ": %s", buf.buf);
-		ret = bch_err_throw(c, sb_not_downgraded);
-		goto out;
+		return bch_err_throw(c, sb_not_downgraded);
 	}
 
-	darray_for_each(online_devices, ca) {
-		__set_bit((*ca)->dev_idx, sb_written.d);
-		(*ca)->sb_write_error = 0;
-	}
+	struct bch_devs_mask sb_written = {};
 
-	darray_for_each(online_devices, ca)
-		read_back_super(c, *ca);
+	darray_for_each(online_devices, i)
+		i->ca->sb_write_error = 0;
+
+	darray_for_each(online_devices, i)
+		read_back_super(c, i->ca);
 	closure_sync(cl);
 
-	darray_for_each(online_devices, cap) {
-		struct bch_dev *ca = *cap;
+	darray_for_each(online_devices, i) {
+		struct bch_dev *ca = i->ca;
 
 		if (ca->sb_write_error)
 			continue;
 
 		if (le64_to_cpu(ca->sb_read_scratch->seq) < ca->disk_sb.seq) {
-			CLASS(printbuf, buf)();
-			prt_char(&buf, ' ');
-			prt_bdevname(&buf, ca->disk_sb.bdev);
-			prt_printf(&buf,
-				": Superblock write was silently dropped! (seq %llu expected %llu)",
-				le64_to_cpu(ca->sb_read_scratch->seq),
-				ca->disk_sb.seq);
+			CLASS(bch_log_msg, msg)(c);
+			prt_bdevname(&msg.m, ca->disk_sb.bdev);
+			prt_printf(&msg.m, ": Superblock write was silently dropped! (seq %llu expected %llu)",
+				   le64_to_cpu(ca->sb_read_scratch->seq),
+				   ca->disk_sb.seq);
 
 			if (c->opts.errors != BCH_ON_ERROR_continue &&
 			    c->opts.errors != BCH_ON_ERROR_fix_safe) {
-				ret = bch_err_throw(c, erofs_sb_err);
-				bch2_fs_fatal_error(c, "%s", buf.buf);
-			} else {
-				bch_err(c, "%s", buf.buf);
+				bch2_fs_emergency_read_only(c, &msg.m);
+				return bch_err_throw(c, erofs_sb_err);
 			}
 		}
 
 		if (le64_to_cpu(ca->sb_read_scratch->seq) > ca->disk_sb.seq) {
-			CLASS(printbuf, buf)();
-			prt_char(&buf, ' ');
-			prt_bdevname(&buf, ca->disk_sb.bdev);
-			prt_printf(&buf,
-				": Superblock modified by another process (seq %llu expected %llu)",
-				le64_to_cpu(ca->sb_read_scratch->seq),
-				ca->disk_sb.seq);
-			bch2_fs_fatal_error(c, "%s", buf.buf);
-			ret = bch_err_throw(c, erofs_sb_err);
+			CLASS(bch_log_msg, msg)(c);
+			prt_bdevname(&msg.m, ca->disk_sb.bdev);
+			prt_printf(&msg.m, ": Superblock modified by another process (seq %llu expected %llu)",
+				   le64_to_cpu(ca->sb_read_scratch->seq),
+				   ca->disk_sb.seq);
+			bch2_fs_emergency_read_only(c, &msg.m);
+			return bch_err_throw(c, erofs_sb_err);
 		}
 	}
 
-	if (ret)
-		goto out;
-
+	unsigned sb = 0;
+	bool have_errors = false, wrote;
 	do {
+		darray_for_each(online_devices, i)
+			i->ca->sb_write_error = 0;
+
 		wrote = false;
-		darray_for_each(online_devices, cap) {
-			struct bch_dev *ca = *cap;
-			if (!ca->sb_write_error &&
-			    sb < ca->disk_sb.sb->layout.nr_superblocks) {
-				write_one_super(c, ca, sb);
-				wrote = true;
+		darray_for_each(online_devices, i) {
+			struct bch_sb_layout *l = &i->ca->disk_sb.sb->layout;
+			if (sb >= l->nr_superblocks)
+				continue;
+
+			write_one_super(c, i->ca, sb);
+			wrote = true;
+		}
+
+		closure_sync(cl);
+
+		darray_for_each(online_devices, i) {
+			struct bch_sb_layout *l = &i->ca->disk_sb.sb->layout;
+			if (sb >= l->nr_superblocks)
+				continue;
+
+			if (i->ca->sb_write_error) {
+				darray_push(&i->failures, ((sb_offset_err) {
+							   i->ca->sb_write_error,
+							   le64_to_cpu(l->sb_offset[sb])
+				}));
+				have_errors = true;
+			} else {
+				__set_bit(i->ca->dev_idx, sb_written.d);
 			}
 		}
-		closure_sync(cl);
 		sb++;
 	} while (wrote);
 
-	darray_for_each(online_devices, cap) {
-		struct bch_dev *ca = *cap;
-		if (ca->sb_write_error)
-			__clear_bit(ca->dev_idx, sb_written.d);
-		else
-			ca->disk_sb.seq = le64_to_cpu(ca->disk_sb.sb->seq);
-	}
-
-	struct bch_devs_mask sb_unwritten;
-	for (unsigned i = 0; i < ARRAY_SIZE(sb_written.d); i++)
-		sb_unwritten.d[i] = ~sb_written.d[i];
-
-	printbuf_reset(&err);
-	bch2_log_msg_start(c, &err);
+	darray_for_each(online_devices, i)
+		if (test_bit(i->ca->dev_idx, sb_written.d))
+			i->ca->disk_sb.seq = le64_to_cpu(i->ca->disk_sb.sb->seq);
 
 	unsigned nr_wrote =	dev_mask_nr(&sb_written);
 	unsigned nr_members =	bch2_sb_nr_devices(c->disk_sb.sb);
+	bool fatal = !nr_wrote ||
+		!bch2_can_read_fs_with_devs(c, &sb_written, degraded_flags, NULL);
 
-	if (!nr_wrote ||
-	    !bch2_can_read_fs_with_devs(c, &sb_written, degraded_flags, NULL)) {
-		prt_printf(&err, "Unable to write superblock to sufficient devices (from %ps)\n",
-			   (void *) _RET_IP_);
-		prt_printf(&err, "Would not be able to mount with written devices\n");
+	if (!have_errors && !fatal)
+		return 0;
 
-		bch2_can_read_fs_with_devs(c, &sb_written, degraded_flags, &err);
+	CLASS(bch_log_msg, msg)(c);
 
-		prt_printf(&err, "Wrote to %u/%u devices:\n", nr_wrote, nr_members);
-		scoped_guard(printbuf_indent, &err)
-			bch2_devs_mask_to_text_locked(&err, c, &sb_written);
+	prt_printf(&msg.m, "Error writing superblock, wrote to %u/%u devices:\n",
+		   nr_wrote, nr_members);
 
-		prt_printf(&err, "Failed to write to devices:\n");
-		scoped_guard(printbuf_indent, &err)
-			bch2_devs_mask_to_text_locked(&err, c, &sb_unwritten);
+	struct bch_devs_mask sb_unwritten;
+	memset(sb_unwritten.d, 0xFF, sizeof(sb_unwritten));
 
-		if (bch2_fs_emergency_read_only(c, &err))
-			bch2_print_str(c, KERN_ERR, err.buf);
+	darray_for_each(online_devices, i) {
+		__clear_bit(i->ca->dev_idx, sb_unwritten.d);
+		bch2_member_to_text_short_locked(&msg.m, c, i->ca);
+
+		if (i->failures.nr) {
+			darray_for_each(i->failures, j)
+				prt_printf(&msg.m, " %llu=%s", j->offset, bch2_err_str(j->err));
+
+			if (!test_bit(i->ca->dev_idx, sb_written.d))
+				prt_str(&msg.m, " (all failed)");
+			else
+				prt_str(&msg.m, " (partial success)");
+		} else {
+			prt_str(&msg.m, " (success)");
+		}
+		prt_newline(&msg.m);
 	}
-out:
+
+	prt_printf(&msg.m, "Offline devices:\n");
+	scoped_guard(printbuf_indent, &msg.m)
+		bch2_devs_mask_to_text_locked(&msg.m, c, &sb_unwritten);
+
+	if (fatal) {
+		prt_printf(&msg.m, "Unable to write superblock to sufficient devices (from %ps)\n",
+			   (void *) _RET_IP_);
+		prt_printf(&msg.m, "Would not be able to mount with written devices\n");
+		bch2_can_read_fs_with_devs(c, &sb_written, degraded_flags, &msg.m);
+		bch2_fs_emergency_read_only(c, &msg.m);
+	}
+
+	return 0;
+}
+
+int bch2_write_super(struct bch_fs *c)
+{
+	int ret = __bch2_write_super(c);
 	/* Make new options visible after they're persistent: */
 	bch2_sb_update(c);
-	darray_for_each(online_devices, ca)
-		enumerated_ref_put(&(*ca)->io_ref[READ], BCH_DEV_READ_REF_write_super);
-	darray_exit(&online_devices);
 	return ret;
 }
 

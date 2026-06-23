@@ -22,14 +22,12 @@ extern const struct bkey_ops bch2_bkey_null_ops;
  */
 struct bkey_ops {
 	int		(*key_validate)(struct bch_fs *c, struct bkey_s_c k,
-					struct bkey_validate_context from);
+					const struct bkey_validate_context *from);
 	void		(*val_to_text)(struct printbuf *, struct bch_fs *,
 				       struct bkey_s_c);
 	void		(*swab)(const struct bch_fs *, struct bkey_s);
 	bool		(*key_merge)(struct bch_fs *, struct bkey_s, struct bkey_s_c);
-	int		(*trigger)(struct btree_trans *, enum btree_id, unsigned,
-				   struct bkey_s_c, struct bkey_s,
-				   enum btree_iter_update_trigger_flags);
+	int		(*trigger)(struct btree_trans *, struct btree_trigger_op);
 	void		(*compat)(enum btree_id id, unsigned version,
 				  unsigned big_endian, int write,
 				  struct bkey_s);
@@ -48,14 +46,11 @@ static inline const struct bkey_ops *bch2_bkey_type_ops(enum bch_bkey_type type)
 }
 
 int bch2_bkey_val_validate(struct bch_fs *, struct bkey_s_c,
-			   struct bkey_validate_context);
+			   const struct bkey_validate_context *);
 int __bch2_bkey_validate(struct bch_fs *, struct bkey_s_c,
-			 struct bkey_validate_context);
+			 const struct bkey_validate_context *);
 int bch2_bkey_validate(struct bch_fs *, struct bkey_s_c,
-		       struct bkey_validate_context);
-int bch2_bkey_in_btree_node(struct bch_fs *, struct btree *, struct bkey_s_c,
-			    struct bkey_validate_context from);
-
+		       const struct bkey_validate_context *);
 void bch2_bpos_to_text(struct printbuf *, struct bpos);
 void bch2_bkey_to_text(struct printbuf *, const struct bkey *);
 void bch2_val_to_text(struct printbuf *, struct bch_fs *,
@@ -75,14 +70,12 @@ static inline bool bch2_bkey_maybe_mergable(const struct bkey *l, const struct b
 bool bch2_bkey_merge(struct bch_fs *, struct bkey_s, struct bkey_s_c);
 
 static inline int bch2_key_trigger(struct btree_trans *trans,
-		enum btree_id btree, unsigned level,
-		struct bkey_s_c old, struct bkey_s new,
-		enum btree_iter_update_trigger_flags flags)
+				   struct btree_trigger_op op)
 {
-	const struct bkey_ops *ops = bch2_bkey_type_ops(old.k->type ?: new.k->type);
+	const struct bkey_ops *ops = bch2_bkey_type_ops(op.old.k->type ?: op.new.k->type);
 
 	return ops->trigger
-		? ops->trigger(trans, btree, level, old, new, flags)
+		? ops->trigger(trans, op)
 		: 0;
 }
 
@@ -96,13 +89,19 @@ static inline int bch2_key_trigger_old(struct btree_trans *trans,
 	bkey_init(&deleted.k);
 	deleted.k.p = old.k->p;
 
-	return bch2_key_trigger(trans, btree_id, level, old, bkey_i_to_s(&deleted),
-				BTREE_TRIGGER_overwrite|flags);
+	return bch2_key_trigger(trans, (struct btree_trigger_op) {
+		.btree		= btree_id,
+		.level		= level,
+		.old		= old,
+		.new		= bkey_i_to_s(&deleted),
+		.new_buf_u64s	= deleted.k.u64s,
+		.flags		= BTREE_TRIGGER_overwrite|flags,
+	});
 }
 
 static inline int bch2_key_trigger_new(struct btree_trans *trans,
 			enum btree_id btree_id, unsigned level,
-			struct bkey_s new,
+			struct bkey_s new, unsigned new_buf_u64s,
 			enum btree_iter_update_trigger_flags flags)
 {
 	struct bkey_i deleted;
@@ -110,8 +109,14 @@ static inline int bch2_key_trigger_new(struct btree_trans *trans,
 	bkey_init(&deleted.k);
 	deleted.k.p = new.k->p;
 
-	return bch2_key_trigger(trans, btree_id, level, bkey_i_to_s_c(&deleted), new,
-				BTREE_TRIGGER_insert|flags);
+	return bch2_key_trigger(trans, (struct btree_trigger_op) {
+		.btree		= btree_id,
+		.level		= level,
+		.old		= bkey_i_to_s_c(&deleted),
+		.new		= new,
+		.new_buf_u64s	= new_buf_u64s,
+		.flags		= BTREE_TRIGGER_insert|flags,
+	});
 }
 
 void bch2_bkey_renumber(enum btree_node_type, struct bkey_packed *, int);
@@ -125,7 +130,7 @@ static inline void bch2_bkey_compat(const struct bch_fs *c, unsigned level, enum
 			       struct bkey_format *f,
 			       struct bkey_packed *k)
 {
-	if (version < bcachefs_metadata_version_current ||
+	if (unlikely(version < bcachefs_metadata_version_current) ||
 	    big_endian != CPU_BIG_ENDIAN ||
 	    IS_ENABLED(CONFIG_BCACHEFS_DEBUG))
 		__bch2_bkey_compat(c, level, btree_id, version,

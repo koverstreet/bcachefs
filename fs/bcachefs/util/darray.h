@@ -80,6 +80,9 @@ DEFINE_DARRAY_CLASS(darray_##_type)
 typedef DARRAY(_type)	_name;						\
 DEFINE_DARRAY_CLASS_FREE_ITEM(_name, _free)
 
+#define DEFINE_DARRAY_FREE_ITEM(_type, _free)				\
+DEFINE_DARRAY_NAMED_FREE_ITEM(darray_##_type, _type, _free)
+
 DEFINE_DARRAY(char);
 DEFINE_DARRAY(u8)
 DEFINE_DARRAY(u16)
@@ -94,17 +97,20 @@ DEFINE_DARRAY(s64)
 DEFINE_DARRAY_NAMED_FREE_ITEM(darray_str, char *, kfree);
 DEFINE_DARRAY_NAMED_FREE_ITEM(darray_const_str, const char *, kfree);
 
-int __bch2_darray_resize_noprof(darray_char *, size_t, size_t, gfp_t, bool);
+int __bch2_darray_resize_noprof(darray_char *, size_t, size_t, gfp_t, bool, bool);
 
 #define __bch2_darray_resize(...)	alloc_hooks(__bch2_darray_resize_noprof(__VA_ARGS__))
 
-#define __darray_resize(_d, _element_size, _new_size, _gfp, _rcu)	\
+#define __darray_resize(_d, _new_size, _gfp, _rcu)			\
 	(unlikely((_new_size) > (_d)->size)				\
-	 ? __bch2_darray_resize((_d), (_element_size), (_new_size), (_gfp), _rcu)\
+	 ? __bch2_darray_resize((darray_char *) (_d),			\
+				sizeof((_d)->data[0]),			\
+				(_new_size), (_gfp), _rcu,		\
+				!!ARRAY_SIZE((_d)->preallocated))	\
 	 : 0)
 
 #define darray_resize_gfp(_d, _new_size, _gfp)				\
-	__darray_resize((darray_char *) (_d), sizeof((_d)->data[0]), (_new_size), _gfp, false)
+	__darray_resize((_d), (_new_size), _gfp, false)
 
 #define darray_resize(_d, _new_size)					\
 	darray_resize_gfp(_d, _new_size, GFP_KERNEL)
@@ -116,7 +122,7 @@ int __bch2_darray_resize_noprof(darray_char *, size_t, size_t, gfp_t, bool);
 	darray_make_room_gfp(_d, _more, GFP_KERNEL)
 
 #define darray_resize_rcu(_d, _new_size)				\
-	__darray_resize((darray_char *) (_d), sizeof((_d)->data[0]), (_new_size), GFP_KERNEL, true)
+	__darray_resize((_d), (_new_size), GFP_KERNEL, true)
 
 #define darray_make_room_rcu(_d, _more)				\
 	darray_resize_rcu((_d), (_d)->nr + (_more))

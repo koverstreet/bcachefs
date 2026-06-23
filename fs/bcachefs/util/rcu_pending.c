@@ -706,6 +706,17 @@ void rcu_pending_exit(struct rcu_pending *pending)
  * @process:	Callback function invoked on objects once their RCU barriers
  *		have completed; if NULL, kvfree() is used.
  */
+static void rcu_pending_init_pcpu(void *_p, void *_pending, unsigned cpu)
+{
+	struct rcu_pending_pcpu *p = _p;
+
+	p->parent	= _pending;
+	p->cpu		= cpu;
+	spin_lock_init(&p->lock);
+	darray_init(&p->objs);
+	INIT_WORK(&p->work, rcu_pending_work);
+}
+
 int rcu_pending_init(struct rcu_pending *pending,
 		     struct srcu_struct *srcu,
 		     rcu_pending_process_fn process)
@@ -714,15 +725,7 @@ int rcu_pending_init(struct rcu_pending *pending,
 	if (!pending->p)
 		return -ENOMEM;
 
-	int cpu;
-	for_each_possible_cpu(cpu) {
-		struct rcu_pending_pcpu *p = per_cpu_ptr(pending->p, cpu);
-		p->parent	= pending;
-		p->cpu		= cpu;
-		spin_lock_init(&p->lock);
-		darray_init(&p->objs);
-		INIT_WORK(&p->work, rcu_pending_work);
-	}
+	bch2_alloc_percpu_init(pending->p, rcu_pending_init_pcpu, pending);
 
 	pending->srcu = srcu;
 	pending->process = process;

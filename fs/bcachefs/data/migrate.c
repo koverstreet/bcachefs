@@ -40,9 +40,10 @@ static struct bkey_i *drop_dev_ptrs(struct btree_trans *trans, struct bkey_s_c k
 	if (!bch2_bkey_has_device_c(c, k, dev_idx))
 		return NULL;
 
-	struct bkey_i *n = bch2_trans_kmalloc(trans, bkey_bytes(k.k) +
-					      sizeof(struct bch_extent_reconcile) +
-					      sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX);
+	unsigned n_buf_u64s = metadata
+		? BKEY_BTREE_PTR_U64s_MAX
+		: BKEY_EXTENT_U64s_MAX;
+	struct bkey_i *n = bch2_trans_kmalloc(trans, n_buf_u64s * sizeof(u64));
 	if (IS_ERR(n))
 		return n;
 	bkey_reassemble(n, k);
@@ -65,7 +66,8 @@ static struct bkey_i *drop_dev_ptrs(struct btree_trans *trans, struct bkey_s_c k
 	if (bch2_bkey_can_read(c, bkey_i_to_s_c(n))) {
 		struct bch_inode_opts opts;
 		int ret = bch2_bkey_get_io_opts(trans, NULL, k, &opts) ?:
-			  bch2_bkey_set_needs_reconcile(trans, NULL, &opts, n,
+			  bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(n),
+							n_buf_u64s,
 							SET_NEEDS_RECONCILE_opt_change, 0);
 		if (ret)
 			return ERR_PTR(ret);
@@ -249,16 +251,18 @@ int bch2_dev_data_drop_by_backpointers(struct bch_fs *c, struct bch_dev *ca,
 	bch2_progress_init(&progress, "dropping device data", c,
 			   BIT(BTREE_ID_backpointers), 0);
 
-	for (unsigned i = 0; i < 3; i++) {
+	/*
+	 * Backpointers on RO devices may be updated (primarily via reconcile),
+	 * even when we're not updating the data on those devices (e.g.
+	 * propagating pending/hipri bits); stripe reshape — which deletes the
+	 * old stripe and writes a new one at a different stripe index — can
+	 * also drop a backpointer for an extant ptr-to-dev and re-add it
+	 * outside the scan's already-walked range. Both create races with the
+	 * scan that can only be handled by retrying.
+	 */
+	unsigned max_iter = 10, i;
+	for (i = 0; i < max_iter; i++) {
 		try(bch2_btree_write_buffer_flush_sync(trans));
-
-		/*
-		 * Backpointers on RO devices may be updated (primarily via
-		 * reconcile), even when we're not updating the data on those
-		 * devices (e.g. propagating pending/hipri bits); this creates a
-		 * race with device removal that's difficult to deal with except
-		 * by retrying:
-		 */
 
 		try(backpointer_scan_for_each(trans, iter, BTREE_ID_backpointers,
 					      POS(dev_idx, 0), POS(dev_idx, U64_MAX),
@@ -270,10 +274,12 @@ int bch2_dev_data_drop_by_backpointers(struct bch_fs *c, struct bch_dev *ca,
 		})));
 
 		if (!dev_has_data(c, ca))
-			break;
+			return 0;
 	}
 
-	return 0;
+	prt_printf(err, "%s(): did not terminate after %u iterations\n",
+		   __func__, i);
+	return bch_err_throw(c, remove_by_backpointer_did_not_terminate);
 }
 
 int bch2_dev_data_drop(struct bch_fs *c, unsigned dev_idx,

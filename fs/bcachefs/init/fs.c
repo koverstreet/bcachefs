@@ -20,6 +20,7 @@
 #include "btree/init.h"
 #include "btree/interior.h"
 #include "btree/key_cache.h"
+#include "btree/locking.h"
 #include "btree/read.h"
 #include "btree/write.h"
 #include "btree/write_buffer.h"
@@ -403,6 +404,14 @@ void bch2_fs_read_only(struct bch_fs *c)
 	bch_verbose(c, "going read-only");
 
 	/*
+	 * Block new foreground-end write operations from starting - any new
+	 * writes will return -EROFS. Set before stopping reconcile so the
+	 * reconcile kthread's child workers (which check this flag to break
+	 * out) see it while bch2_reconcile_stop() is blocked waiting on them.
+	 */
+	set_bit(BCH_FS_going_ro, &c->flags);
+
+	/*
 	 * Stop background kthreads that issue writes (reconcile, etc.)
 	 * before disabling c->writes; otherwise they can dispatch
 	 * data_update operations that fail with erofs_no_writes once
@@ -410,11 +419,6 @@ void bch2_fs_read_only(struct bch_fs *c)
 	 */
 	bch2_reconcile_stop(c);
 
-	/*
-	 * Block new foreground-end write operations from starting - any new
-	 * writes will return -EROFS:
-	 */
-	set_bit(BCH_FS_going_ro, &c->flags);
 	enumerated_ref_stop_async(&c->writes);
 
 	/*
@@ -498,6 +502,13 @@ static bool __bch2_fs_emergency_read_only(struct bch_fs *c, struct printbuf *out
 		bch2_journal_halt_locked(&c->journal);
 	bch2_fs_read_only_async(c);
 	wake_up(&bch2_read_only_wait);
+
+	/*
+	 * Wake threads parked in __bch2_wait_on_allocator: going-RO won't
+	 * complete while they hold open closures on freelist_wait, and they
+	 * won't otherwise notice the fs is shutting down.
+	 */
+	bch2_alloc_wake_all(c);
 
 	if (ret) {
 		prt_printf(out, "emergency read only at seq %llu\n",
@@ -1435,6 +1446,18 @@ static int __bch2_fs_start(struct bch_fs *c, struct printbuf *err)
 	try(bch2_fs_counters_init_late(c));
 
 	/*
+	 * Request no_sb_user_data_replicas eagerly at startup so it gets
+	 * persisted before any user-data accounting fires. Otherwise the
+	 * bump only happens lazily inside __bch2_accounting_maybe_kill (when
+	 * a user-data accounting entry zeroes), and a fresh fs that gets
+	 * forcibly shut down before that ever fires never persists the
+	 * version_incompat bump - on next mount, bch2_replicas_marked_locked
+	 * doesn't short-circuit for user data and accounting_read fsck_err's
+	 * for replicas not in the (no-longer-storing-them) sb.
+	 */
+	bch2_request_incompat_feature(c, bcachefs_metadata_version_no_sb_user_data_replicas);
+
+	/*
 	 * just make sure this is always allocated if we might need it - mount
 	 * failing due to kthread_create() failing is _very_ annoying
 	 */
@@ -1666,6 +1689,7 @@ static void bcachefs_exit(void)
 	bch2_vfs_exit();
 	bch2_chardev_exit();
 	bch2_btree_key_cache_exit();
+	bch2_lock_graph_exit();
 	kobject_put(&bcachefs_kobj);
 }
 
@@ -1676,6 +1700,7 @@ static int __init bcachefs_init(void)
 	kobject_init(&bcachefs_kobj, &bcachefs_ktype);
 
 	if (kobject_add(&bcachefs_kobj, fs_kobj, "bcachefs") ||
+	    bch2_lock_graph_init() ||
 	    bch2_btree_key_cache_init() ||
 	    bch2_chardev_init() ||
 	    bch2_vfs_init() ||

@@ -108,6 +108,37 @@
 
 static struct lock_class_key bch2_btree_node_lock_key;
 
+DEFINE_PER_CPU(struct lock_graph, bch2_lock_graph);
+
+void bch2_lock_graph_init_one(struct lock_graph *g)
+{
+	for (unsigned i = 0; i < ARRAY_SIZE(g->g); i++)
+		darray_init(&g->g[i].waitlist);
+}
+
+void bch2_lock_graph_exit_one(struct lock_graph *g)
+{
+	for (unsigned i = 0; i < ARRAY_SIZE(g->g); i++)
+		darray_exit(&g->g[i].waitlist);
+}
+
+int bch2_lock_graph_init(void)
+{
+	int cpu;
+
+	for_each_possible_cpu(cpu)
+		bch2_lock_graph_init_one(per_cpu_ptr(&bch2_lock_graph, cpu));
+	return 0;
+}
+
+void bch2_lock_graph_exit(void)
+{
+	int cpu;
+
+	for_each_possible_cpu(cpu)
+		bch2_lock_graph_exit_one(per_cpu_ptr(&bch2_lock_graph, cpu));
+}
+
 void bch2_btree_lock_init(struct btree_bkey_cached_common *b,
 			  enum six_lock_init_flags flags,
 			  gfp_t gfp)
@@ -400,7 +431,7 @@ int bch2_check_for_deadlock(struct btree_trans *trans, struct printbuf *cycle)
 	guard(rcu)();
 	guard(preempt)();
 
-	struct lock_graph *g = this_cpu_ptr(c->btree.trans.lock_graph);
+	struct lock_graph *g = this_cpu_ptr(&bch2_lock_graph);
 	g->nr = 0;
 
 	if (trans->lock_must_abort && !trans->lock_may_not_fail) {
@@ -999,6 +1030,18 @@ void bch2_trans_unlock(struct btree_trans *trans)
 	trans_set_unlocked(trans);
 
 	__bch2_trans_unlock(trans);
+
+	/*
+	 * Drop the btree cache cannibalize lock too. Holding it across a
+	 * trans_unlock - i.e. across a sleep - is the recipe for a resource
+	 * deadlock: cannibalize-holder sleeps waiting on the allocator,
+	 * allocator needs to grow the btree cache, growing the cache needs
+	 * cannibalize, but we're holding it. Releasing on trans_unlock means
+	 * cannibalize is only held over non-sleeping critical sections;
+	 * callers that need it after a wake re-acquire normally.
+	 */
+	if (unlikely(trans->btree_cache_cannibalize_locked))
+		bch2_btree_cache_cannibalize_unlock(trans);
 }
 
 void bch2_trans_unlock_long(struct btree_trans *trans)

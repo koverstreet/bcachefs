@@ -59,14 +59,18 @@ LE32_BITMASK(BCH_ALLOC_V3_NEED_INC_GEN,struct bch_alloc_v3, flags,  1,  2)
 /*
  * Per-bucket allocation state, stored in the alloc btree (cached).
  *
- * data_type is computed by alloc_data_type() from sector counts, flags,
- * and stripe_refcount:
+ * data_type is the bucket's state. For non-empty buckets, alloc_data_type()
+ * derives it from sector counts and stripe_refcount. The empty-state
+ * transitions are decided explicitly:
  *   stripe_refcount > 0	→ BCH_DATA_stripe/parity
  *   dirty_sectors > 0		→ data type from bucket contents
  *   cached_sectors > 0		→ BCH_DATA_cached
- *   NEED_DISCARD flag		→ BCH_DATA_need_discard
- *   gc_gen >= BUCKET_GC_GEN_MAX → BCH_DATA_need_gc_gens
- *   otherwise			→ BCH_DATA_free
+ *   nonempty → empty		→ BCH_DATA_need_discard (set in bch2_trigger_alloc)
+ *   need_discard → empty	→ BCH_DATA_free (set in bch2_discard_one_bucket)
+ *   gc_gen >= MAX, free	→ BCH_DATA_need_gc_gens (in alloc_data_type)
+ *
+ * NEED_DISCARD flag is no longer read by alloc_data_type(); it's still
+ * written for forward/back compatibility with kernels that do read it.
  *
  * journal_seq_nonempty/journal_seq_empty track bucket state transitions for
  * the noflush optimization and discard path:

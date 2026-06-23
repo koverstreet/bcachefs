@@ -348,19 +348,14 @@ static void __journal_entry_close(struct journal *j, unsigned closed_val, bool t
 	sectors = vstruct_blocks_plus(buf->data, c->block_bits,
 				      buf->u64s_reserved) << c->block_bits;
 	if (unlikely(sectors > buf->sectors)) {
-		CLASS(printbuf, err)();
-		guard(printbuf_atomic)(&err);
-
-		prt_printf(&err, "journal entry overran reserved space: %u > %u\n",
+		CLASS(bch_log_msg_atomic, msg)(c);
+		prt_printf(&msg.m, "journal entry overran reserved space: %u > %u\n",
 			   sectors, buf->sectors);
-		prt_printf(&err, "buf u64s %u u64s reserved %u cur_entry_u64s %u block_bits %u\n",
+		prt_printf(&msg.m, "buf u64s %u u64s reserved %u cur_entry_u64s %u block_bits %u\n",
 			   le32_to_cpu(buf->data->u64s), buf->u64s_reserved,
 			   j->cur_entry_u64s,
 			   c->block_bits);
-		prt_printf(&err, "fatal error - emergency read only");
-		bch2_journal_halt_locked(j);
-
-		bch_err(c, "%s", err.buf);
+		bch2_fs_emergency_read_only_locked(c, &msg.m);
 		return;
 	}
 
@@ -473,16 +468,14 @@ static int journal_entry_open(struct journal *j)
 		return bch_err_throw(c, journal_max_open);
 
 	if (unlikely(journal_cur_seq(j) >= JOURNAL_SEQ_MAX)) {
-		CLASS(bch_log_msg, msg)(c);
-		msg.m.suppress = true;
+		CLASS(bch_log_msg_atomic, msg)(c);
 		prt_printf(&msg.m, "cannot start: journal seq overflow");
 		bch2_fs_emergency_read_only_locked(c, &msg.m);
 		return bch_err_throw(c, journal_shutdown);
 	}
 
 	if (unlikely(bch2_journal_seq_is_blacklisted(c, journal_cur_seq(j) + 1, false))) {
-		CLASS(bch_log_msg, msg)(c);
-		msg.m.suppress = true;
+		CLASS(bch_log_msg_atomic, msg)(c);
 		prt_printf(&msg.m, "attempting to open blacklisted journal seq %llu",
 			   journal_cur_seq(j));
 		bch2_fs_emergency_read_only_locked(c, &msg.m);
@@ -807,26 +800,17 @@ int bch2_journal_res_get_slowpath(struct journal *j, struct journal_res *res,
 				  unsigned flags,
 				  struct btree_trans *trans)
 {
-	int ret;
-
-	if (closure_wait_event_timeout(&j->async_wait,
-		   !bch2_err_matches(ret = __journal_res_get(j, res, flags), BCH_ERR_operation_blocked) ||
-		   (flags & JOURNAL_RES_GET_NONBLOCK),
-		   HZ))
-		return ret;
-
-	if (trans)
-		bch2_trans_unlock_long(trans);
+	if (flags & JOURNAL_RES_GET_NONBLOCK)
+		return __journal_res_get(j, res, flags);
 
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
-	int remaining_wait = max(max_dev_latency(c) * 2, HZ * 10);
+	long total_wait = max(max_dev_latency(c) * 2, HZ * 10);
+	int ret;
 
-	remaining_wait = max(0, remaining_wait - HZ);
-
-	if (closure_wait_event_timeout(&j->async_wait,
+	if (trans_wait_event_timeout(trans, &j->async_wait,
 		   !bch2_err_matches(ret = __journal_res_get(j, res, flags), BCH_ERR_operation_blocked) ||
 		   (flags & JOURNAL_RES_GET_NONBLOCK),
-		   remaining_wait))
+		   total_wait))
 		return ret;
 
 	CLASS(printbuf, buf)();
@@ -836,7 +820,7 @@ int bch2_journal_res_get_slowpath(struct journal *j, struct journal_res *res,
 		bch2_btree_write_buffer_to_text(&buf, c);
 	bch2_print_str(c, KERN_ERR, buf.buf);
 
-	closure_wait_event(&j->async_wait,
+	trans_wait_event(trans, &j->async_wait,
 		   !bch2_err_matches(ret = __journal_res_get(j, res, flags), BCH_ERR_operation_blocked) ||
 		   (flags & JOURNAL_RES_GET_NONBLOCK));
 	return ret;

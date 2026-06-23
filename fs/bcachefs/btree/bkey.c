@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
+#include <linux/unaligned.h>
+
 #include "bcachefs.h"
 
 #include "btree/bkey.h"
@@ -60,7 +62,7 @@ static void __bch2_bkey_pack_verify(const struct bkey_packed *packed,
 
 	BUG_ON(packed->u64s < bkeyp_key_u64s(format, packed));
 
-	tmp = __bch2_bkey_unpack_key(format, packed);
+	__bch2_bkey_unpack_key(format, &tmp, packed);
 
 	if (memcmp(&tmp, unpacked, sizeof(struct bkey))) {
 		struct printbuf buf = PRINTBUF;
@@ -265,29 +267,165 @@ bool bch2_bkey_transform(const struct bkey_format *out_f,
 	return true;
 }
 
-struct bkey __bch2_bkey_unpack_key(const struct bkey_format *format,
-			      const struct bkey_packed *in)
+void __bch2_bkey_unpack_key(const struct bkey_format *format,
+			    struct bkey *out,
+			    const struct bkey_packed *in)
 {
 	struct unpack_state state = unpack_state_init(format, in);
-	struct bkey out;
 
 	EBUG_ON(format->nr_fields != BKEY_NR_FIELDS);
 	EBUG_ON(in->u64s < format->key_u64s);
 	EBUG_ON(in->format != KEY_FORMAT_LOCAL_BTREE);
 	EBUG_ON(in->u64s - format->key_u64s + BKEY_U64s > U8_MAX);
 
-	out.u64s	= BKEY_U64s + in->u64s - format->key_u64s;
-	out.format	= KEY_FORMAT_CURRENT;
-	out.needs_whiteout = in->needs_whiteout;
-	out.type	= in->type;
-	out.pad[0]	= 0;
+	out->u64s	= BKEY_U64s + in->u64s - format->key_u64s;
+	out->format	= KEY_FORMAT_CURRENT;
+	out->needs_whiteout = in->needs_whiteout;
+	out->type	= in->type;
+	out->pad[0]	= 0;
 
-#define x(id, field)	out.field = get_inc_field(&state, id);
+#define x(id, field)	out->field = get_inc_field(&state, id);
+	bkey_fields()
+#undef x
+}
+
+/*
+ * Precompute per-field unpack constants from b->format, stored in struct btree.
+ *
+ * For each field, picks byte_offset such that an 8-byte unaligned load ends
+ * exactly at the byte after the field's MSB byte. The field lands in the
+ * top of the loaded value, junk from earlier-in-memory fields lands in the
+ * low bits. A single >> (64 - bits) then extracts the field cleanly.
+ *
+ * Only works when each field's MSB is at a byte boundary
+ * (field_msb_bit % 8 == 7). bch2_bkey_format_done() rounds fields up to
+ * byte width when there are spare bits, so this is the common case.
+ * Formats too tight to byte-align fall back via byte_aligned_fields = false.
+ */
+void bch2_compute_bkey_unpack_consts(struct btree *b)
+{
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+	const struct bkey_format *format = &b->format;
+	unsigned bit_offset = format->key_u64s * 64;
+	unsigned i;
+
+	b->byte_aligned_fields = true;
+
+	for (i = 0; i < BKEY_NR_FIELDS; i++) {
+		struct bkey_unpack_field *uf = &b->unpack[i];
+		unsigned bits = format->bits_per_field[i];
+
+		uf->byte_offset = 0;
+		uf->shift_right = 64;	/* sentinel: skip load, return offset */
+
+		if (!bits)
+			continue;
+
+		if (bits > 64) {
+			b->byte_aligned_fields = false;
+			return;
+		}
+
+		bit_offset -= bits;
+		unsigned field_msb_bit = bit_offset + bits - 1;
+
+		/* Need MSB at a byte boundary for single-shift extraction */
+		if (field_msb_bit % 8 != 7) {
+			b->byte_aligned_fields = false;
+			return;
+		}
+
+		/* Load 8 bytes ending at field's MSB byte + 1 */
+		uf->byte_offset = (s8)((field_msb_bit + 1) / 8 - 8);
+		uf->shift_right = 64 - bits;
+	}
+#else
+	/* big-endian: not implemented yet, force fallback */
+	b->byte_aligned_fields = false;
+#endif
+}
+
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+__always_inline
+static u64 unpack_field_fast(const u8 *bytes,
+			     const struct bkey_unpack_field *uf,
+			     u64 offset)
+{
+	if (uf->shift_right == 64)
+		return offset;
+
+	u64 raw = get_unaligned_le64(bytes + uf->byte_offset);
+
+	/* Field ends at top of register; shr brings it to bit 0 cleanly */
+	return (raw >> uf->shift_right) + offset;
+}
+
+void __bch2_bkey_unpack_key_b(const struct btree *b,
+			      struct bkey *out,
+			      const struct bkey_packed *in)
+{
+	const u8 *bytes = (const u8 *) in;
+
+	/*
+	 * Header trick below relies on the packed key's format byte being
+	 * KEY_FORMAT_LOCAL_BTREE (0): the immediate add bumps it to
+	 * KEY_FORMAT_CURRENT (1). Also assert that the u64s addition can't
+	 * overflow byte 0 and corrupt the format byte (carry from u64s into
+	 * format would silently break things).
+	 */
+	EBUG_ON(in->format != KEY_FORMAT_LOCAL_BTREE);
+	EBUG_ON(in->u64s - b->format.key_u64s + BKEY_U64s > U8_MAX);
+
+	/* fall back to slow path if format has fields that don't fit a single load */
+	if (unlikely(!b->byte_aligned_fields)) {
+		__bch2_bkey_unpack_key(&b->format, out, in);
+		return;
+	}
+
+	/*
+	 * Header trick: the first 4 bytes of struct bkey are
+	 * { u64s, format/needs_whiteout, type, pad }. Load 4 bytes
+	 * starting one byte BEFORE @in — so the loaded bytes are
+	 * [junk, u64s, format, type]. A single >> 8 drops the junk,
+	 * positions u64s/format/type at bytes 0/1/2, and zero-fills
+	 * byte 3 (the pad). Then add an immediate to bump u64s by
+	 * (BKEY_U64s - key_u64s) and change format from LOCAL_BTREE
+	 * (0) to CURRENT (1).
+	 *
+	 * The carry from u64s into the next byte can't fire: BKEY_U64s
+	 * is small (<= 16) and key_u64s <= BKEY_U64s, so the addition
+	 * to byte 0 stays within byte 0.
+	 */
+	{
+		u32 hdr = get_unaligned((const u32 *)(bytes - 1)) >> 8;
+		hdr += (u32)(BKEY_U64s - b->format.key_u64s) |
+		       ((u32)(KEY_FORMAT_CURRENT - KEY_FORMAT_LOCAL_BTREE) << 8);
+		put_unaligned(hdr, (u32 *) out);
+	}
+
+#define x(id, field)							\
+	out->field = unpack_field_fast(bytes, &b->unpack[id],		\
+				       le64_to_cpu(b->format.field_offset[id]));
 	bkey_fields()
 #undef x
 
-	return out;
+#ifdef CONFIG_BCACHEFS_DEBUG
+	{
+		struct bkey check;
+
+		__bch2_bkey_unpack_key(&b->format, &check, in);
+		EBUG_ON(memcmp(out, &check, sizeof(*out)));
+	}
+#endif
 }
+#else
+void __bch2_bkey_unpack_key_b(const struct btree *b,
+			      struct bkey *out,
+			      const struct bkey_packed *in)
+{
+	__bch2_bkey_unpack_key(&b->format, out, in);
+}
+#endif
 
 #ifndef HAVE_BCACHEFS_COMPILED_UNPACK
 struct bpos __bkey_unpack_pos(const struct bkey_format *format,
@@ -585,12 +723,12 @@ static void set_format_field(struct bkey_format *f, enum bch_bkey_fields i,
 
 struct bkey_format bch2_bkey_format_done(struct bkey_format_state *s)
 {
-	unsigned i, bits = KEY_PACKED_BITS_START;
+	unsigned bits = KEY_PACKED_BITS_START;
 	struct bkey_format ret = {
 		.nr_fields = BKEY_NR_FIELDS,
 	};
 
-	for (i = 0; i < ARRAY_SIZE(s->field_min); i++) {
+	for (unsigned i = 0; i < ARRAY_SIZE(s->field_min); i++) {
 		s->field_min[i] = min(s->field_min[i], s->field_max[i]);
 
 		set_format_field(&ret, i,
@@ -600,20 +738,12 @@ struct bkey_format bch2_bkey_format_done(struct bkey_format_state *s)
 		bits += ret.bits_per_field[i];
 	}
 
-	/* allow for extent merging: */
-	if (ret.bits_per_field[BKEY_FIELD_SIZE]) {
-		unsigned b = min(4U, 32U - ret.bits_per_field[BKEY_FIELD_SIZE]);
-
-		ret.bits_per_field[BKEY_FIELD_SIZE] += b;
-		bits += b;
-	}
-
 	ret.key_u64s = DIV_ROUND_UP(bits, 64);
 
 	/* if we have enough spare bits, round fields up to nearest byte */
 	bits = ret.key_u64s * 64 - bits;
 
-	for (i = 0; i < ARRAY_SIZE(ret.bits_per_field); i++) {
+	for (unsigned i = 0; i < ARRAY_SIZE(ret.bits_per_field); i++) {
 		unsigned r = round_up(ret.bits_per_field[i], 8) -
 			ret.bits_per_field[i];
 

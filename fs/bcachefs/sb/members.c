@@ -331,9 +331,7 @@ static void bch2_member_to_text_short_sb(struct printbuf *out,
 	prt_newline(out);
 }
 
-static void bch2_member_to_text_short_locked(struct printbuf *out,
-			       struct bch_fs *c,
-			       struct bch_dev *ca)
+void bch2_member_to_text_short_locked(struct printbuf *out, struct bch_fs *c, struct bch_dev *ca)
 {
 	struct bch_member m = bch2_sb_member_get(c->disk_sb.sb, ca->dev_idx);
 	bch2_member_to_text_short_sb(out, &m,

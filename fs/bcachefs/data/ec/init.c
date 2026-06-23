@@ -34,7 +34,8 @@ int bch2_invalidate_stripe_to_dev(struct btree_trans *trans,
 
 	struct bch_inode_opts opts;
 	bch2_inode_opts_get(c, &opts, false);
-	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, &s->k_i,
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(&s->k_i),
+					  s->k.u64s,
 					  SET_NEEDS_RECONCILE_opt_change, 0));
 
 	s64 sectors = 0;

@@ -9,6 +9,7 @@
 #include "alloc/replicas_types.h"
 
 #include "btree/bbpos_types.h"
+#include "btree/bkey_types.h"
 #include "btree/interior_types.h"
 #include "btree/key_cache_types.h"
 #include "btree/node_scan_types.h"
@@ -100,6 +101,34 @@ struct btree {
 	u16			version_ondisk;
 
 	struct bkey_format	format;
+
+	/*
+	 * Per-field unpack constants, derived from @format at node init.
+	 * Extract each field with:
+	 *
+	 *   field = (load_8_unaligned(bytes + byte_offset) >> (64 - bits))
+	 *           + field_offset
+	 *
+	 * Load position chosen so the field ends at the top of the loaded
+	 * value (load_offset + 8 == byte after field's MSB byte); junk from
+	 * earlier-in-memory fields lands in the low bits and shifts off.
+	 *
+	 * byte_offset is signed: for a field near the start of @in, the
+	 * load can need to start before @in. The byte(s) before @in are
+	 * always valid memory in the callers we care about (bset payload
+	 * after the bset header, or other bkeys in the same bset).
+	 *
+	 * Only handles formats where every field's MSB sits at a byte
+	 * boundary (field_msb_bit % 8 == 7). bch2_bkey_format_done()
+	 * rounds fields up to byte width when there are spare bits, so
+	 * this is the common case. Formats too tight to byte-align take
+	 * the slow path via byte_aligned_fields = false.
+	 */
+	bool				byte_aligned_fields;
+	struct bkey_unpack_field {
+		s8	byte_offset;
+		u8	shift_right;	/* 64 - bits, or 64 if field has no bits in packed */
+	} unpack[BKEY_NR_FIELDS];
 
 	struct btree_node	*data;
 	void			*aux_data;
@@ -242,6 +271,8 @@ struct bch_fs_btree_cache {
 
 	/* Number of nodes with BTREE_NODE_write_in_flight set. */
 	atomic_long_t		nr_in_flight;
+	atomic_long_t		nr_in_flight_inner;
+	struct closure_waitlist	nr_in_flight_wait;
 
 	/* shrinker stats */
 	size_t			nr_freed;
@@ -262,6 +293,17 @@ struct bch_fs_btree_cache {
 	/* btree id mask: 0 for leaves, 1 for interior */
 	u64			pinned_nodes_mask[2];
 };
+
+static inline size_t btree_cache_nr_live(const struct bch_fs_btree_cache *bc)
+{
+	return btree_cache_list_nr(&bc->live[0]) +
+		btree_cache_list_nr(&bc->live[1]);
+}
+
+static inline size_t btree_cache_nr_dirty(const struct bch_fs_btree_cache *bc)
+{
+	return bc->live[0].nr_dirty + bc->live[1].nr_dirty;
+}
 
 /* Iterator, update, and trigger flags: */
 
@@ -324,7 +366,8 @@ struct btree_node_iter {
 	x(insert)				\
 	x(overwrite)				\
 	x(is_root)				\
-	x(is_discard)
+	x(is_discard)				\
+	x(set_needs_reconcile_done)
 
 enum {
 #define x(n) BTREE_ITER_FLAG_BIT_##n,
@@ -351,6 +394,15 @@ enum btree_iter_update_trigger_flags {
 #define x(n) BTREE_TRIGGER_##n	= 1U << BTREE_ITER_FLAG_BIT_##n,
 	BTREE_TRIGGER_FLAGS()
 #undef x
+};
+
+struct btree_trigger_op {
+	enum btree_id				btree;
+	unsigned				level;
+	struct bkey_s_c				old;
+	struct bkey_s				new;
+	unsigned				new_buf_u64s;
+	enum btree_iter_update_trigger_flags	flags;
 };
 
 /* Btree paths and iterators: */
@@ -503,6 +555,7 @@ struct btree_insert_entry {
 	 * overwritten in the btree:
 	 */
 	u8			old_btree_u64s;
+	u8			k_buf_u64s;
 	btree_path_idx_t	path;
 	struct bkey_i		*k;
 	/* key being overwritten: */
@@ -597,6 +650,7 @@ struct btree_trans {
 	bool			locked:1;
 	bool			write_locked:1;
 	bool			srcu_held:1;
+	bool			btree_cache_cannibalize_locked:1;
 	bool			pf_memalloc_nofs:1;
 	bool			used_mempool:1;
 	bool			in_traverse_all:1;
@@ -686,7 +740,6 @@ struct bch_fs_btree_trans {
 	mempool_t			pool;
 	mempool_t			malloc_pool;
 	struct btree_trans_buf		__percpu *bufs;
-	struct lock_graph		__percpu *lock_graph;
 
 	struct srcu_struct		barrier;
 	bool				barrier_initialized;
@@ -835,11 +888,23 @@ struct bch_fs_btree {
 	 */
 	struct bch_fs_btree_write_buffer	write_buffer[BCH_WB_BTREE_NR];
 	/*
-	 * Shared workqueue for parallelizing the write-buffer fastpath across
-	 * CPUs once the sorted key list crosses a threshold. WQ_MEM_RECLAIM
-	 * because the WB flush sits in the journal-reclaim path.
+	 * Per-btree flush_work runs on write_buffer_wq; once the sorted key
+	 * list crosses a threshold the flush parallelizes across CPUs by
+	 * queuing sub-shards on write_buffer_shard_wq and closure_sync()ing.
+	 * The two must be separate workqueues — the outer flush worker
+	 * blocks waiting for the inner shards to complete, so they can't
+	 * share a wq. WQ_MEM_RECLAIM on both because the flush sits in the
+	 * journal-reclaim path.
 	 */
 	struct workqueue_struct			*write_buffer_wq;
+	struct workqueue_struct			*write_buffer_shard_wq;
+	/*
+	 * Sync flushers (btree_write_buffer_flush_seq) wake the per-btree
+	 * flush_works and then wait here for the worker to drain pins past
+	 * their target seq. Waked from the flush worker after drain and from
+	 * journal_keys_to_write_buffer_end after pin drops.
+	 */
+	struct closure_waitlist			write_buffer_flush_wait;
 	struct bch_fs_btree_trans		trans;
 	struct bch_fs_btree_reserve_cache	reserve_cache;
 	struct bch_fs_btree_interior_updates	interior_updates;

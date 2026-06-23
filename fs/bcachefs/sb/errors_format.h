@@ -131,6 +131,7 @@ enum bch_fsck_flags {
 	x(alloc_key_journal_seq_in_future,			298,	FSCK_AUTOFIX)	\
 	x(alloc_key_stripe_refcount_wrong,			345,	FSCK_AUTOFIX)	\
 	x(alloc_key_bucket_nonempty_to_empty_not_open,		353,	0)		\
+	x(alloc_key_data_type_free_dirty_bookkeeping,		359,	FSCK_AUTOFIX)	\
 	x(bucket_sector_count_overflow,				112,	0)		\
 	x(bucket_metadata_type_mismatch,			113,	0)		\
 	x(need_discard_key_wrong,				114,	FSCK_AUTOFIX)	\
@@ -360,6 +361,7 @@ enum bch_fsck_flags {
 	x(validate_error_in_commit,				329,	0)		\
 	x(extent_io_opts_not_set,				330,	FSCK_AUTOFIX)	\
 	x(stripe_needs_reconcile_not_set,			352,	FSCK_AUTOFIX)	\
+	x(stripe_can_widen_wrong,				361,	FSCK_AUTOFIX)	\
 	x(extent_io_opts_unneeded,				331,	FSCK_AUTOFIX)	\
 	x(reconcile_bp_to_missing_btree_ptr,			310,	FSCK_AUTOFIX)	\
 	x(reconcile_bp_to_leaf_node_key,			334,	FSCK_AUTOFIX)	\
@@ -371,7 +373,7 @@ enum bch_fsck_flags {
 	x(vfs_unlink_got_wrong_inum,				349,	0)		\
 	x(device_bad_flush,					357,	0)		\
 	x(journal_bucket_seq_not_monotonic,			358,	0)		\
-	x(MAX,							359,	0)
+	x(MAX,							362,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,

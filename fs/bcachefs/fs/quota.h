@@ -8,7 +8,7 @@
 extern const struct bch_sb_field_ops bch_sb_field_ops_quota;
 
 int bch2_quota_validate(struct bch_fs *, struct bkey_s_c,
-			struct bkey_validate_context);
+			const struct bkey_validate_context *);
 void bch2_quota_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 
 #define bch2_bkey_ops_quota ((struct bkey_ops) {	\

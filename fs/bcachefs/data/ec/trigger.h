@@ -3,12 +3,10 @@
 #define _BCACHEFS_DATA_EC_TRIGGER_H
 
 int bch2_stripe_validate(struct bch_fs *, struct bkey_s_c,
-			 struct bkey_validate_context);
+			 const struct bkey_validate_context *);
 void bch2_stripe_to_text(struct printbuf *, struct bch_fs *,
 			 struct bkey_s_c);
-int bch2_trigger_stripe(struct btree_trans *, enum btree_id, unsigned,
-			struct bkey_s_c, struct bkey_s,
-			enum btree_iter_update_trigger_flags);
+int bch2_trigger_stripe(struct btree_trans *, struct btree_trigger_op);
 
 #define bch2_bkey_ops_stripe ((struct bkey_ops) {	\
 	.key_validate	= bch2_stripe_validate,		\
@@ -88,6 +86,31 @@ static inline void stripe_csum_set(struct bch_stripe *s,
 	memcpy(stripe_csum(s, block, csum_idx), &csum, bch_crc_bytes[s->csum_type]);
 }
 
+/*
+ * Pool widening target: how many data blocks the current device pool
+ * could supply to a stripe with this much parity overhead. Capped at
+ * BCH_BKEY_PTRS_MAX, and at @max_data_blocks if nonzero (the
+ * c->opts.ec_max_data_blocks fs-level cap).
+ */
+static inline unsigned stripe_widen_target_nr_data(unsigned nr_devs,
+						   unsigned nr_redundant,
+						   unsigned max_data_blocks)
+{
+	if (nr_devs <= nr_redundant)
+		return 0;
+
+	unsigned t = min_t(unsigned, nr_devs, BCH_BKEY_PTRS_MAX) - nr_redundant;
+	if (max_data_blocks)
+		t = min(t, max_data_blocks);
+	return t;
+}
+
+/* The clamped (target - actual) delta to store in bch_stripe.can_widen. */
+static inline u8 stripe_widen_value(unsigned target_nr_data, unsigned actual_nr_data)
+{
+	return clamp_t(int, (int)target_nr_data - (int)actual_nr_data, 0, 7);
+}
+
 #define STRIPE_LRU_POS_EMPTY	1
 
 static inline u64 stripe_lru_pos(const struct bch_stripe *s)
@@ -104,11 +127,18 @@ static inline u64 stripe_lru_pos(const struct bch_stripe *s)
 	if (blocks_empty == nr_data)
 		return STRIPE_LRU_POS_EMPTY;
 
-	if (!blocks_empty)
+	/*
+	 * Score by total reusable capacity: empty data slots we can pack
+	 * fresh data into, plus can_widen blocks we can grow into when
+	 * reusing this stripe at a wider target geometry. More = picked
+	 * for reuse first.
+	 */
+	unsigned reusable = blocks_empty + s->can_widen;
+	if (!reusable)
 		return 0;
 
-	/* invert: more blocks empty = reuse first */
-	return LRU_TIME_MAX - blocks_empty;
+	/* invert: more reusable = reuse first */
+	return LRU_TIME_MAX - reusable;
 }
 
 static inline bool __bch2_ptr_matches_stripe(const struct bch_extent_ptr *stripe_ptr,

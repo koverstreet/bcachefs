@@ -542,6 +542,23 @@ struct bch_backpointer {
 	struct bpos		pos;
 } __packed __aligned(8);
 
+/*
+ * Denormalized cache of "is this bp's extent listed in reconcile_phys?":
+ *
+ * fsck needs to check that the reconcile_phys btrees agree with the extents
+ * btree, but a direct reconcile_phys <-> extents check would be expensive:
+ * for every reconcile_phys entry (keyed by bucket position), we'd have to do
+ * a random lookup against the extents btree. Instead, mirror the work_id into
+ * the backpointer so fsck can do two cheap pairwise checks:
+ *
+ *   - reconcile_phys <-> backpointers: both keyed by bucket position, indexed
+ *   - backpointers   <-> extents:	already required for backpointer fsck
+ *
+ * Invariant: when bp.flags PHYS != 0, reconcile_phys[PHYS] must have an entry
+ * at bp.k.p, and the extent must carry a bch_extent_reconcile entry whose
+ * rb_work_id_phys() equals PHYS. Every path that mutates reconcile_opts on an
+ * extent must keep the bp's PHYS flag in sync.
+ */
 BITMASK(BACKPOINTER_RECONCILE_PHYS,	struct bch_backpointer, flags, 0, 2);
 BITMASK(BACKPOINTER_ERASURE_CODED,	struct bch_backpointer, flags, 2, 3);
 BITMASK(BACKPOINTER_STRIPE_PTR,		struct bch_backpointer, flags, 3, 4);

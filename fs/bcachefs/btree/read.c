@@ -5,6 +5,7 @@
 #include "alloc/buckets.h"
 
 #include "btree/bkey_buf.h"
+#include "btree/bkey_cmp.h"
 #include "btree/bkey_methods.h"
 #include "btree/cache.h"
 #include "btree/iter.h"
@@ -71,28 +72,14 @@ void bch2_btree_node_io_lock(struct btree *b)
 			    TASK_UNINTERRUPTIBLE);
 }
 
-void __bch2_btree_node_wait_on_read(struct btree *b)
+void bch2_btree_node_wait_on_read(struct btree_trans *trans, struct btree *b)
 {
-	wait_on_bit_io(&b->flags, BTREE_NODE_read_in_flight,
-		       TASK_UNINTERRUPTIBLE);
+	trans_wait_on_bit_io(trans, &b->flags, BTREE_NODE_read_in_flight);
 }
 
-void __bch2_btree_node_wait_on_write(struct btree *b)
+void bch2_btree_node_wait_on_write(struct btree_trans *trans, struct btree *b)
 {
-	wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight,
-		       TASK_UNINTERRUPTIBLE);
-}
-
-void bch2_btree_node_wait_on_read(struct btree *b)
-{
-	wait_on_bit_io(&b->flags, BTREE_NODE_read_in_flight,
-		       TASK_UNINTERRUPTIBLE);
-}
-
-void bch2_btree_node_wait_on_write(struct btree *b)
-{
-	wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight,
-		       TASK_UNINTERRUPTIBLE);
+	trans_wait_on_bit_io(trans, &b->flags, BTREE_NODE_write_in_flight);
 }
 
 __printf(7, 0)
@@ -189,7 +176,7 @@ static int __btree_err(enum bch_fsck_flags flags,
 	true;								\
 })
 
-#define btree_err_on(cond, ...)	((cond) ? btree_err(__VA_ARGS__) : false)
+#define btree_err_on(cond, ...)	(unlikely(cond) ? btree_err(__VA_ARGS__) : false)
 
 /*
  * When btree topology repair changes the start or end of a node, that might
@@ -396,28 +383,23 @@ static int btree_node_bkey_val_validate(struct bch_fs *c, struct btree *b,
 					struct bkey_s_c k,
 					enum bch_validate_flags flags)
 {
-	return bch2_bkey_val_validate(c, k, (struct bkey_validate_context) {
-		.from	= BKEY_VALIDATE_btree_node,
-		.level	= b->c.level,
-		.btree	= b->c.btree_id,
-		.flags	= flags
-	});
-}
-
-static int bset_key_validate(struct bch_fs *c, struct btree *b,
-			     struct bkey_s_c k,
-			     bool updated_range,
-			     enum bch_validate_flags flags)
-{
-	struct bkey_validate_context from = (struct bkey_validate_context) {
+	struct bkey_validate_context from = {
 		.from	= BKEY_VALIDATE_btree_node,
 		.level	= b->c.level,
 		.btree	= b->c.btree_id,
 		.flags	= flags,
 	};
+	return bch2_bkey_val_validate(c, k, &from);
+}
+
+static int bset_key_validate(struct bch_fs *c, struct btree *b,
+			     struct bkey_s_c k,
+			     bool updated_range,
+			     const struct bkey_validate_context *from)
+{
 	return __bch2_bkey_validate(c, k, from) ?:
 		(!updated_range ? bch2_bkey_in_btree_node(c, b, k, from) : 0) ?:
-		(flags & BCH_VALIDATE_write ? btree_node_bkey_val_validate(c, b, k, flags) : 0);
+		(from->flags & BCH_VALIDATE_write ? btree_node_bkey_val_validate(c, b, k, from->flags) : 0);
 }
 
 static bool bkey_packed_valid(struct bch_fs *c, struct btree *b,
@@ -434,20 +416,20 @@ static bool bkey_packed_valid(struct bch_fs *c, struct btree *b,
 
 	struct bkey tmp;
 	struct bkey_s u = __bkey_disassemble(b, k, &tmp);
-	return !__bch2_bkey_validate(c, u.s_c,
-				     (struct bkey_validate_context) {
-					.from	= BKEY_VALIDATE_btree_node,
-					.level	= b->c.level,
-					.btree	= b->c.btree_id,
-					.flags	= BCH_VALIDATE_silent
-				     });
+	struct bkey_validate_context from = {
+		.from	= BKEY_VALIDATE_btree_node,
+		.level	= b->c.level,
+		.btree	= b->c.btree_id,
+		.flags	= BCH_VALIDATE_silent,
+	};
+	return !__bch2_bkey_validate(c, u.s_c, &from);
 }
 
 static inline int btree_node_read_bkey_cmp(const struct btree *b,
 				const struct bkey_packed *l,
 				const struct bkey_packed *r)
 {
-	return bch2_bkey_cmp_packed(b, l, r)
+	return bch2_bkey_cmp_packed_inlined(b, l, r)
 		?: (int) bkey_deleted(r) - (int) bkey_deleted(l);
 }
 
@@ -463,6 +445,12 @@ int bch2_validate_bset_keys(struct bch_fs *c,
 	CLASS(printbuf, buf)();
 	bool updated_range = b->key.k.type == KEY_TYPE_btree_ptr_v2 &&
 		BTREE_PTR_RANGE_UPDATED(&bkey_i_to_btree_ptr_v2(&b->key)->v);
+	struct bkey_validate_context from = (struct bkey_validate_context) {
+		.from	= BKEY_VALIDATE_btree_node,
+		.level	= b->c.level,
+		.btree	= b->c.btree_id,
+		.flags	= write,
+	};
 	int ret = 0;
 
 	for (k = i->start;
@@ -503,10 +491,10 @@ int bch2_validate_bset_keys(struct bch_fs *c,
 
 		u = __bkey_disassemble(b, k, &tmp);
 
-		ret = bset_key_validate(c, b, u.s_c, updated_range, write);
-		if (ret == -BCH_ERR_fsck_delete_bkey)
+		ret = bset_key_validate(c, b, u.s_c, updated_range, &from);
+		if (unlikely(ret == -BCH_ERR_fsck_delete_bkey))
 			goto drop_this_key;
-		if (ret)
+		if (unlikely(ret))
 			goto fsck_err;
 
 		if (write)
@@ -514,7 +502,8 @@ int bch2_validate_bset_keys(struct bch_fs *c,
 				    BSET_BIG_ENDIAN(i), write,
 				    &b->format, k);
 
-		if (prev && btree_node_read_bkey_cmp(b, prev, k) >= 0) {
+		if (prev &&
+		    unlikely(btree_node_read_bkey_cmp(b, prev, k) >= 0)) {
 			struct bkey up = bkey_unpack_key(b, prev);
 
 			printbuf_reset(&buf);
@@ -875,7 +864,7 @@ static void btree_node_read_work(struct work_struct *work)
 	struct btree_read_bio *rb =
 		container_of(work, struct btree_read_bio, work);
 	struct bch_fs *c	= rb->c;
-	struct bch_dev *ca	= rb->have_ioref ? bch2_dev_have_ref(c, rb->pick.ptr.dev) : NULL;
+	struct bch_dev *ca	= rb->ca;
 	struct btree *b		= rb->b;
 	struct bio *bio		= &rb->bio;
 	int ret = 0;
@@ -890,9 +879,9 @@ static void btree_node_read_work(struct work_struct *work)
 	prt_newline(&buf);
 
 	while (1) {
-		if (rb->have_ioref)
+		if (rb->ca)
 			enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_btree_node_read);
-		rb->have_ioref = false;
+		rb->ca = NULL;
 
 		if (!bio->bi_status) {
 			memset(&bio->bi_iter, 0, sizeof(bio->bi_iter));
@@ -915,13 +904,13 @@ static void btree_node_read_work(struct work_struct *work)
 			break;
 
 		ca = bch2_dev_get_ioref(c, rb->pick.ptr.dev, READ, BCH_DEV_READ_REF_btree_node_read);
-		rb->have_ioref		= ca != NULL;
+		rb->ca			= ca;
 		rb->start_time		= local_clock();
 		bio_reset(bio, NULL, REQ_OP_READ|REQ_SYNC|REQ_META);
 		bio->bi_iter.bi_sector	= rb->pick.ptr.offset;
 		bio->bi_iter.bi_size	= btree_buf_bytes(b);
 
-		if (rb->have_ioref) {
+		if (rb->ca) {
 			bio_set_dev(bio, ca->disk_sb.bdev);
 			submit_bio_wait(bio);
 		} else {
@@ -1000,8 +989,7 @@ static void btree_node_read_endio(struct bio *bio)
 	struct btree_read_bio *rb =
 		container_of(bio, struct btree_read_bio, bio);
 	struct bch_fs *c	= rb->c;
-	struct bch_dev *ca	= rb->have_ioref
-		? bch2_dev_have_ref(c, rb->pick.ptr.dev) : NULL;
+	struct bch_dev *ca	= rb->ca;
 
 	bch2_account_io_completion(ca, BCH_MEMBER_ERROR_read,
 				   rb->start_time, !bio->bi_status);
@@ -1056,9 +1044,9 @@ void bch2_btree_node_read(struct btree_trans *trans, struct btree *b,
 			       &c->btree.bio);
 	rb = container_of(bio, struct btree_read_bio, bio);
 	rb->c			= c;
+	rb->ca			= ca;
 	rb->b			= b;
 	rb->start_time		= local_clock();
-	rb->have_ioref		= ca != NULL;
 	rb->pick		= pick;
 	INIT_WORK(&rb->work, btree_node_read_work);
 	bio->bi_iter.bi_sector	= pick.ptr.offset;
@@ -1067,7 +1055,7 @@ void bch2_btree_node_read(struct btree_trans *trans, struct btree *b,
 
 	async_object_list_add(c, btree_read_bio, rb, &rb->list_idx);
 
-	if (rb->have_ioref) {
+	if (rb->ca) {
 		this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_btree],
 			     bio_sectors(bio));
 		bio_set_dev(bio, ca->disk_sb.bdev);

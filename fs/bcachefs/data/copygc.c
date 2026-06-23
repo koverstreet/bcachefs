@@ -510,6 +510,7 @@ static int bch2_copygc_thread(void *arg)
 	struct io_clock *clock = &c->io_clock[WRITE];
 	struct buckets_in_flight buckets = {};
 	u64 last, wait;
+	u32 kick = c->copygc.kick_count;
 
 	buckets.table = kzalloc(sizeof(*buckets.table), GFP_KERNEL);
 	int ret = !buckets.table
@@ -556,7 +557,8 @@ static int bch2_copygc_thread(void *arg)
 		last = atomic64_read(&clock->now);
 		wait = bch2_copygc_wait_amount(c);
 
-		if (wait > clock->max_slop) {
+		if (wait > clock->max_slop &&
+		    kick == READ_ONCE(c->copygc.kick_count)) {
 			c->copygc.wait_at = last;
 			c->copygc.wait = last + wait;
 			move_buckets_wait(&ctxt, &buckets, true);
@@ -565,6 +567,7 @@ static int bch2_copygc_thread(void *arg)
 			continue;
 		}
 
+		kick = READ_ONCE(c->copygc.kick_count);
 		c->copygc.wait = 0;
 
 		c->copygc.running = true;
