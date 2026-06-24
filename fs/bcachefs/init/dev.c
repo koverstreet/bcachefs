@@ -170,6 +170,9 @@
  * \texttt{bcachefs device resize} resizes a device to use more or less space.
  * If no size is specified, the device grows to
  * fill its underlying block device. Resize works online---no unmount required.
+ * Resize is executed by a per-device kthread, which is restarted when a
+ * newer request overwrites an in-progress resize, automatically cancelling the old resize.
+ * Resizes are persisted as \texttt{target\_nbuckets} and will be automatically resumed across restarts.
  *
  * \subsubsubsection{Growing}
  * The new size is subject to a maximum bucket count
@@ -178,21 +181,16 @@
  * account for the newly available space.
  *
  * \subsubsubsection{Shrinking}
- * Shrinking removes the tail of a device\'s bucket range, evacuates any data
- * located there, and commits the smaller \texttt{nbuckets}. The truncating
- * region is called the \emph{shrink tail}: buckets
- * \texttt{[target\_nbuckets, nbuckets)}.
+ * Shrinking removes the tail region of a device and evacuates any data
+ * located there. If this is not possible, the operation will fail with \texttt{-ENOSPC}.
  *
  * Once \texttt{target\_nbuckets < nbuckets} is persisted, the allocator
  * refuses new allocations in the tail, cached pointers past the cutoff are
  * treated as stale, and metadata allocation spills to non-shrinking devices
  * so shrink does not deadlock on its own journal or btree-rewrite needs.
- * Reconcile is then used to discover and evacuate the remaining data;
- * its backpointer scans start at the cutoff rather than bucket zero.
+ * Reconcile is then used to discover and evacuate the remaining data.
  *
- * Shrink is executed by a per-device kthread that can be restarted when a
- * newer request supersedes an in-progress pass. Before draining the tail,
- * the worker relocates any journal buckets in the truncating region explicitly
+ * Before draining the tail, the worker relocates any journal buckets in the truncating region explicitly
  * (\texttt{move\_journal\_past\_cutoff()}) so journal activity does not keep
  * reintroducing references into the region being evacuated.
  *
@@ -200,16 +198,7 @@
  * it flushes journal pins, clears \texttt{NEED\_DISCARD} bookkeeping for
  * the removed buckets, drops superblock copies and alloc metadata past the
  * cutoff, then commits \texttt{nbuckets = target\_nbuckets} to the
- * superblock. If the tail cannot be drained (e.g. insufficient space on
- * remaining devices), \texttt{target\_nbuckets} is cleared so allocations
- * are no longer blocked past the old cutoff.
- *
- * A pending shrink persisted to the superblock resumes automatically on the
- * next read-write mount without requiring userspace to reissue the ioctl.
- * Resize workers are stopped in \texttt{bch2\_fs\_read\_only()} before the
- * filesystem enters clean shutdown, so that in-flight transactional work
- * does not trip write-path assertions.
- *
+ * superblock.
  *
  * \texttt{bcachefs device resize-journal} adjusts the per-device journal size
  * independently of the data area.
