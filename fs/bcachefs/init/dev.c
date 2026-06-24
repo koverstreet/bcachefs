@@ -178,164 +178,37 @@
  * account for the newly available space.
  *
  * \subsubsubsection{Shrinking}
- * Shrinking removes the tail of the device's bucket range, evacuates any data
- * living there, and commits the smaller \texttt{nbuckets}. The truncating region is called the
- * \emph{shrink tail}: buckets \texttt{[target\_nbuckets, nbuckets)}.
+ * Shrinking removes the tail of a device\'s bucket range, evacuates any data
+ * located there, and commits the smaller \texttt{nbuckets}. The truncating
+ * region is called the \emph{shrink tail}: buckets
+ * \texttt{[target\_nbuckets, nbuckets)}.
  *
- * Once \texttt{target\_nbuckets < nbuckets} is persisted, several subsystems
- * react to the pending shrink before the worker has finished evacuation:
+ * Once \texttt{target\_nbuckets < nbuckets} is persisted, the allocator
+ * refuses new allocations in the tail, cached pointers past the cutoff are
+ * treated as stale, and metadata allocation spills to non-shrinking devices
+ * so shrink does not deadlock on its own journal or btree-rewrite needs.
+ * Reconcile is then used to discover and evacuate the remaining data;
+ * its backpointer scans start at the cutoff rather than bucket zero.
  *
- * \begin{itemize}
- * \item The \hyperref[sec:write-points]{allocator} refuses new open-bucket
- *   allocations at or beyond the cutoff.
- * \item Cached extent pointers past the cutoff are treated as stale and
- *   dropped on lookup.
- * \item Metadata allocation (journal buckets, btree node rewrites) falls back
- *   to the full filesystem when the preferred metadata target consists only of
- *   shrinking devices, avoiding a deadlock on metadata writes the shrink
- *   itself needs.
- * \item \hyperref[sec:backpointers]{Backpointer} scans for reconcile start at
- *   the cutoff instead of bucket zero, avoiding needless requeue of work on
- *   the retained region.
- * \end{itemize}
+ * Shrink is executed by a per-device kthread that can be restarted when a
+ * newer request supersedes an in-progress pass. Before draining the tail,
+ * the worker relocates any journal buckets in the truncating region explicitly
+ * (\texttt{move\_journal\_past\_cutoff()}) so journal activity does not keep
+ * reintroducing references into the region being evacuated.
  *
- * These immediate effects are what make the shrink cutoff effective as soon as
- * the target is persisted. They are driven by normalized helper checks
- * (\texttt{bch2\_dev\_is\_shrinking()}) and flip automatically when
- * userspace retargets away from shrink.
+ * Once the tail is empty, the worker finalises under \texttt{state\_lock}:
+ * it flushes journal pins, clears \texttt{NEED\_DISCARD} bookkeeping for
+ * the removed buckets, drops superblock copies and alloc metadata past the
+ * cutoff, then commits \texttt{nbuckets = target\_nbuckets} to the
+ * superblock. If the tail cannot be drained (e.g. insufficient space on
+ * remaining devices), \texttt{target\_nbuckets} is cleared so allocations
+ * are no longer blocked past the old cutoff.
  *
- * \textbf{Worker model.}
- * Each device has a dedicated kthread (\texttt{bch2\_dev\_resize\_thread()})
- * that processes resize requests. On each wakeup it snapshots the current
- * request sequence number and the normalized target, then dispatches to
- * either \texttt{__bch2\_dev\_grow()} or \texttt{__bch2\_dev\_shrink()}.
- * The thread is restartable rather than strictly cancelable---a newer
- * request increments \texttt{resize\_seq} and causes the active pass to
- * return \texttt{-EAGAIN} and restart with the latest target.
- * The common restart check is \texttt{bch2\_dev\_resize\_restart\_check()},
- * which also handles kthread shutdown via \texttt{-EINTR}.
- *
- * \textbf{Shrink algorithm.}
- * Shrink proceeds through four phases:
- *
- * \textbf{Phase 1---Enter shrink mode.}
- * The worker takes \texttt{state\_lock}, validates the target still matches
- * the live request, closes any open buckets in the truncating tail
- * (\texttt{bch2\_open\_buckets\_stop()}), and resets alloc cursors. After
- * dropping the lock, it flushes the discard workqueues so that an older
- * discard pass on the same region does not deadlock the evacuation path.
- *
- * \textbf{Phase 2---Move journal state out of the tail.}
- * \texttt{move\_journal\_past\_cutoff()} runs before the main drain loop.
- * The journal is handled explicitly because journal buckets are not something
- * shrink should wait for reconcile to discover and evacuate indirectly.
- * The function counts journal buckets in the tail, temporarily grows the
- * journal if more journal buckets are needed for relocation, forces the
- * current journal bucket to advance if it still sits in the tail, flushes
- * the journal to persist the relocation, and deletes the now-obsolete journal
- * buckets from the tail. Without this step, journal activity can keep
- * reintroducing metadata references into the very region shrink is trying to
- * empty.
- *
- * \textbf{Phase 3---Drain the tail.}
- * The core loop tracks tail liveness by scanning the backpointer btree in the
- * truncating region. The loop is built around several key helpers:
- *
- * \begin{itemize}
- * \item \texttt{tail\_head\_snapshot()} records the first tail bucket, its
- *   first backpointer, and the number of backpointers in that bucket.
- * \item \texttt{tail\_progress\_snapshot()} records the same head data plus
- *   the total backpointer count across the full tail.
- * \item \texttt{tail\_is\_empty()} performs a definitive emptiness check
- *   after flushing the btree write buffer (to expose buffered updates).
- * \end{itemize}
- *
- * On each pass the loop:
- *
- * \begin{enumerate}
- * \item Snapshots the tail head. If it looks empty, flushes the write buffer
- *   and rechecks before declaring emptiness.
- * \item Invalidates cached-only tail buckets via
- *   \texttt{bch2\_dev\_shrink\_invalidate\_tail\_cached()}. Cached copies in
- *   the tail are not durable data---they can be dropped directly rather than
- *   requiring reconcile to evacuate them.
- * \item Queues reconcile work with
- *   \texttt{bch2\_dev\_shrink\_queue\_reconcile()}: a device backpointer scan
- *   (starting at the cutoff, not bucket zero) plus a pending scan.
- * \item Waits using \texttt{bch2\_dev\_shrink\_wait\_reconcile()}, polling
- *   once per second and returning when the tail is empty, the requested
- *   reconcile kick completes, or head progress is detected. This avoids
- *   waiting for unrelated global reconcile work after the tail is already
- *   empty.
- * \end{enumerate}
- *
- * The progress heuristic tracks two things: the leading tail bucket and its
- * first backpointer, and the total tail backpointer count. A pass that makes
- * progress on either metric resets the stall counter. Passes without progress
- * are counted only after a full device rescan on a journal-quiescent state;
- * if the journal advanced during the pass, the blocker set is still changing
- * and the pass is not evidence of impossibility. After
- * \texttt{stalled\_kicks\_limit} (32) no-progress full rescans on a
- * quiescent journal, shrink declares \texttt{-ENOSPC} and clears the pending
- * target (\texttt{bch2\_dev\_shrink\_clear\_target()}) so allocations are no
- * longer blocked past the old cutoff.
- *
- * The journal-quiescence check is filesystem-global: unrelated
- * metadata-writing IO elsewhere can keep advancing the journal sequence
- * number and suppress the stall counter indefinitely. The intended follow-up
- * is a shrink-local churn signal.
- *
- * \textbf{Phase 4---Finalize the shrink.}
- * \texttt{bch2\_dev\_shrink\_finalize()} runs under \texttt{state\_lock} and
- * commits the truncation. The ordering is critical:
- *
- * \begin{enumerate}
- * \item Revalidate that the live request still matches this pass.
- * \item Flush btree interior updates.
- * \item Flush outstanding journal pins (device-specific, then a flush of
- *   \texttt{journal\_cur\_seq()}---not \texttt{bch2\_journal\_flush\_all\_pins()},
- *   which can wait behind unrelated reconcile or key-cache pins indefinitely).
- * \item Recheck tail emptiness with \texttt{tail\_is\_empty()}.
- * \item Clear \texttt{NEED\_DISCARD} entries for the truncated tail. This must
- *   scan and filter by decoded bucket position because
- *   \texttt{BTREE\_ID\_need\_discard} is keyed by journal sequence, not by
- *   \texttt{(dev, bucket)}.
- * \item Drop superblock copies whose offsets are beyond the cutoff with
- *   \texttt{drop\_sbs\_after\_cutoff()}.
- * \item Truncate accounting with \texttt{bch2\_dev\_truncate\_accounting()}.
- * \item Remove alloc metadata for the tail with
- *   \texttt{bch2\_dev\_remove\_alloc()}.
- * \item Commit \texttt{nbuckets = new\_nbuckets} in the superblock and clear
- *   \texttt{target\_nbuckets} if it still matches the committed target.
- * \item Resize in-memory bucket arrays with
- *   \texttt{bch2\_dev\_buckets\_resize()}.
- * \item Recalculate filesystem capacity.
- * \end{enumerate}
- *
- * The central invariant: shrink may only commit the smaller \texttt{nbuckets}
- * while holding \texttt{state\_lock}, after rechecking that the current
- * normalized target still equals the target used by this pass and is still a
- * shrink target. This prevents an obsolete pass from truncating the device
- * after userspace has already requested a different target or cancellation.
- * After finalization completes, \texttt{bch2\_dev\_resize\_finish()} wakes
- * waiters and restarts async discards on the device (which were deferred
- * during the shrink to avoid deadlocks with the evacuation path).
- *
- * \textbf{Recovery and remount behavior.}
- * A pending shrink that was persisted to the superblock but interrupted
- * (e.g., by a crash or unmount) resumes automatically on the next read-write
- * mount. \texttt{bch2\_fs\_resize\_on\_mount()} detects devices whose
- * normalized target still differs from \texttt{nbuckets} once the btree and
- * reconcile infrastructure is running, and calls
- * \texttt{bch2\_dev\_resize\_resume()} for each such device. No userspace
- * reissue is required.
- *
- * \textbf{Shutdown ordering.}
- * Resize workers are stopped in \texttt{bch2\_fs\_read\_only()} via
- * \texttt{bch2\_dev\_resize\_threads\_stop()}, before the filesystem enters
- * clean shutdown. This ordering matters because a persisted shrink may still
- * be performing transactional alloc/accounting work; if the filesystem starts
- * going read-only first, the worker's writes can trip write-path assertions.
+ * A pending shrink persisted to the superblock resumes automatically on the
+ * next read-write mount without requiring userspace to reissue the ioctl.
+ * Resize workers are stopped in \texttt{bch2\_fs\_read\_only()} before the
+ * filesystem enters clean shutdown, so that in-flight transactional work
+ * does not trip write-path assertions.
  *
  *
  * \texttt{bcachefs device resize-journal} adjusts the per-device journal size
