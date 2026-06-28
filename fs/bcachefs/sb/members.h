@@ -280,16 +280,22 @@ static inline bool bch2_dev_is_growing(const struct bch_dev *ca)
 	return bch2_dev_resize_target(ca) > READ_ONCE(ca->mi.nbuckets);
 }
 
-static inline bool bch2_ptr_bad_or_evacuating_rcu(struct bch_fs *c, const struct bch_extent_ptr *ptr) {
+static inline bool bch2_ptr_bad_or_evacuating_rcu(struct bch_fs *c, const struct bch_extent_ptr *ptr)
+{
 	struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
+	u64 resize_target;
 
-	return !ca ||
-		bch2_dev_bad_or_evacuating_rcu(c, ptr->dev) ||
-		(bch2_dev_is_shrinking(ca) &&
-		 bch2_dev_resize_target(ca) <= div_u64(ptr->offset, ca->mi.bucket_size));
+	if (!ca || bch2_dev_bad_or_evacuating_rcu(c, ptr->dev))
+		return true;
+
+	resize_target = bch2_dev_resize_target(ca);
+
+	return resize_target < READ_ONCE(ca->mi.nbuckets) &&
+		ptr->offset >= resize_target * ca->mi.bucket_size;
 }
 
-static inline bool bch2_ptr_bad_or_evacuating(struct bch_fs *c, const struct bch_extent_ptr *ptr) {
+static inline bool bch2_ptr_bad_or_evacuating(struct bch_fs *c, const struct bch_extent_ptr *ptr)
+{
 	guard(rcu)();
 	return bch2_ptr_bad_or_evacuating_rcu(c, ptr);
 }

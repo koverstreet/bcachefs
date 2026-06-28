@@ -1673,8 +1673,11 @@ static bool shrink_tail_progressed(const struct shrink_tail_progress *old,
 	return shrink_tail_head_progressed(&old->head, &new->head);
 }
 
-// TODO: make sure everything is caught here. Maybe look at bch2_dev_has_data for this
-// Fore example journals and superblocks might need special handling
+/*
+ * Make sure everything is caught here: this snapshots backpointer-visible tail
+ * data. Journal buckets and superblock copies in the shrink tail are handled by
+ * move_journal_past_cutoff() and drop_sbs_after_cutoff().
+ */
 static int tail_head_snapshot(struct bch_fs *c, struct bch_dev *ca,
 			      u64 new_nbuckets, struct shrink_tail_head *head)
 {
@@ -2077,15 +2080,6 @@ static int bch2_dev_shrink_finalize(struct bch_fs *c, struct bch_dev *ca,
 				   bch2_err_str(ret));
 			return ret;
 		}
-
-		// TODO: figure out what parts of this path still need doing
-		// if (ca->mi.freespace_initialized) {
-		// 	ret = __bch2_dev_resize_alloc(ca, old_nbuckets, new_nbuckets);
-		// 	if (ret) {
-		// 		prt_printf(err, "__bch2_dev_resize_alloc() error: %s\n", bch2_err_str(ret));
-		// 		return ret;
-		// 	}
-		// }
 
 		bch2_recalc_capacity(c);
 	}
