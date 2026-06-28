@@ -578,49 +578,53 @@ bool bch2_dev_btree_bitmap_marked_nogc(struct bch_fs *c, struct bkey_s_c k)
 	return __bch2_dev_btree_bitmap_marked(c, k, false);
 }
 
+static void bch2_btree_bitmap_mark_sectors(u64 *bitmap, u8 *shift,
+					   u64 start, unsigned sectors)
+{
+	u64 end = start + sectors;
+
+	int resize = ilog2(roundup_pow_of_two(end)) - (*shift + 6);
+	if (resize > 0) {
+		u64 old_bitmap = *bitmap;
+		u64 new_bitmap = 0;
+
+		for (unsigned i = 0; i < 64; i++)
+			if (old_bitmap & BIT_ULL(i))
+				new_bitmap |= BIT_ULL(i >> resize);
+
+		*bitmap = new_bitmap;
+		*shift += resize;
+	}
+
+	BUG_ON(*shift >= BCH_MI_BTREE_BITMAP_SHIFT_MAX);
+	BUG_ON(end > 64ULL << *shift);
+
+	for (unsigned bit = start >> *shift;
+	     (u64) bit << *shift < end;
+	     bit++)
+		*bitmap |= BIT_ULL(bit);
+}
+
 static void __bch2_dev_btree_bitmap_mark(struct bch_dev *ca,
 					 struct bch_sb_field_members_v2 *mi,
 					 u64 start, unsigned sectors, bool *write_sb)
 {
 	struct bch_member *m = __bch2_members_v2_get_mut(mi, ca->dev_idx);
+	u64 old_bitmap = le64_to_cpu(m->btree_allocated_bitmap);
+	u8 old_shift = m->btree_bitmap_shift;
+	u64 new_bitmap = old_bitmap;
+	u8 new_shift = old_shift;
 
-	u64 end = start + sectors;
-
-	int resize = ilog2(roundup_pow_of_two(end)) - (m->btree_bitmap_shift + 6);
-	if (resize > 0) {
-		u64 old_bitmap = le64_to_cpu(m->btree_allocated_bitmap);
-		u64 new_bitmap = 0;
-		u64 new_gc_bitmap = 0;
-
-		for (unsigned i = 0; i < 64; i++) {
-			if (old_bitmap & BIT_ULL(i))
-				new_bitmap |= BIT_ULL(i >> resize);
-			if (ca->btree_allocated_bitmap_gc & BIT_ULL(i))
-				new_gc_bitmap |= BIT_ULL(i >> resize);
-		}
-
+	bch2_btree_bitmap_mark_sectors(&new_bitmap, &new_shift, start, sectors);
+	if (new_bitmap != old_bitmap || new_shift != old_shift) {
 		m->btree_allocated_bitmap = cpu_to_le64(new_bitmap);
-		m->btree_bitmap_shift += resize;
+		m->btree_bitmap_shift = new_shift;
 		*write_sb = true;
-
-		ca->btree_allocated_bitmap_gc = new_gc_bitmap;
 	}
 
-	BUG_ON(m->btree_bitmap_shift >= BCH_MI_BTREE_BITMAP_SHIFT_MAX);
-	BUG_ON(end > 64ULL << m->btree_bitmap_shift);
-
-	for (unsigned bit = start >> m->btree_bitmap_shift;
-	     (u64) bit << m->btree_bitmap_shift < end;
-	     bit++) {
-		__le64 b = cpu_to_le64(BIT_ULL(bit));
-
-		if (!(m->btree_allocated_bitmap & b)) {
-			m->btree_allocated_bitmap |= b;
-			*write_sb = true;
-		}
-
-		ca->btree_allocated_bitmap_gc |= BIT_ULL(bit);
-	}
+	bch2_btree_bitmap_mark_sectors(&ca->btree_allocated_bitmap_gc,
+				       &ca->btree_allocated_bitmap_gc_shift,
+				       start, sectors);
 }
 
 void bch2_dev_btree_bitmap_mark_locked(struct bch_fs *c, struct bkey_s_c k, bool *write_sb)
@@ -649,6 +653,27 @@ void bch2_dev_btree_bitmap_mark(struct bch_fs *c, struct bkey_s_c k)
 		bch2_write_super(c);
 }
 
+static void __bch2_dev_btree_bitmap_gc_mark(struct bch_dev *ca, u64 start, unsigned sectors)
+{
+	bch2_btree_bitmap_mark_sectors(&ca->btree_allocated_bitmap_gc,
+				       &ca->btree_allocated_bitmap_gc_shift,
+				       start, sectors);
+}
+
+static void bch2_dev_btree_bitmap_gc_mark(struct bch_fs *c, struct bkey_s_c k)
+{
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+	guard(mutex)(&c->sb_lock);
+	guard(rcu)();
+	bkey_for_each_ptr(bch2_bkey_ptrs_c(k), ptr) {
+		struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
+		if (!ca)
+			continue;
+
+		__bch2_dev_btree_bitmap_gc_mark(ca, ptr->offset, btree_sectors(c));
+	}
+}
+
 static int btree_bitmap_gc_btree_level(struct btree_trans *trans,
 				       struct progress_indicator *progress,
 				       enum btree_id btree, unsigned level)
@@ -657,8 +682,7 @@ static int btree_bitmap_gc_btree_level(struct btree_trans *trans,
 	CLASS(btree_node_iter, iter)(trans, btree, POS_MIN, 0, level, BTREE_ITER_prefetch);
 
 	try(for_each_btree_key_continue(trans, iter, 0, k, ({
-		if (!bch2_dev_btree_bitmap_marked(c, k))
-			bch2_dev_btree_bitmap_mark(c, k);
+		bch2_dev_btree_bitmap_gc_mark(c, k);
 
 		bch2_progress_update_iter(trans, progress, &iter);
 	})));
@@ -674,8 +698,10 @@ int bch2_btree_bitmap_gc(struct bch_fs *c)
 	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 		guard(mutex)(&c->sb_lock);
 		guard(rcu)();
-		for_each_member_device_rcu(c, ca, NULL)
+		for_each_member_device_rcu(c, ca, NULL) {
 			ca->btree_allocated_bitmap_gc = 0;
+			ca->btree_allocated_bitmap_gc_shift = 0;
+		}
 	}
 
 	{
@@ -690,8 +716,7 @@ int bch2_btree_bitmap_gc(struct bch_fs *c)
 			struct btree *b;
 			try(lockrestart_do(trans, PTR_ERR_OR_ZERO(b = bch2_btree_iter_peek_node(&iter))));
 
-			if (!bch2_dev_btree_bitmap_marked(c, bkey_i_to_s_c(&b->key)))
-				bch2_dev_btree_bitmap_mark(c, bkey_i_to_s_c(&b->key));
+			bch2_dev_btree_bitmap_gc_mark(c, bkey_i_to_s_c(&b->key));
 		}
 	}
 
@@ -704,10 +729,13 @@ int bch2_btree_bitmap_gc(struct bch_fs *c)
 		scoped_guard(rcu)
 			for_each_member_device_rcu(c, ca, NULL) {
 				sectors_marked_old += hweight64(ca->mi.btree_allocated_bitmap) << ca->mi.btree_bitmap_shift;
-				sectors_marked_new += hweight64(ca->btree_allocated_bitmap_gc) << ca->mi.btree_bitmap_shift;
+				sectors_marked_new += hweight64(ca->btree_allocated_bitmap_gc) << ca->btree_allocated_bitmap_gc_shift;
 
 				struct bch_member *m = __bch2_members_v2_get_mut(mi, ca->dev_idx);
 				m->btree_allocated_bitmap = cpu_to_le64(ca->btree_allocated_bitmap_gc);
+				m->btree_bitmap_shift = ca->btree_allocated_bitmap_gc_shift;
+				ca->mi.btree_allocated_bitmap = ca->btree_allocated_bitmap_gc;
+				ca->mi.btree_bitmap_shift = ca->btree_allocated_bitmap_gc_shift;
 			}
 		bch2_write_super(c);
 	}

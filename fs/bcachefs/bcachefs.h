@@ -479,6 +479,7 @@ struct bch_dev {
 	 */
 	struct bch_member_cpu	mi;
 	u64			btree_allocated_bitmap_gc;
+	u8			btree_allocated_bitmap_gc_shift;
 	atomic64_t		errors[BCH_MEMBER_ERROR_NR];
 	unsigned long		write_errors_start;
 

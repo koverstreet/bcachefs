@@ -568,6 +568,7 @@ static struct bch_dev *__bch2_dev_alloc(struct bch_fs *c,
 
 	ca->mi = bch2_mi_to_cpu(member);
 	ca->btree_allocated_bitmap_gc = le64_to_cpu(member->btree_allocated_bitmap);
+	ca->btree_allocated_bitmap_gc_shift = member->btree_bitmap_shift;
 
 	for (i = 0; i < ARRAY_SIZE(member->errors); i++)
 		atomic64_set(&ca->errors[i], le64_to_cpu(member->errors[i]));

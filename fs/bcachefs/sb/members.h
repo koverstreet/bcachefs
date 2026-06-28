@@ -434,11 +434,19 @@ static inline bool __bch2_dev_btree_bitmap_marked_sectors(struct bch_dev *ca, u6
 	for (unsigned bit = start >> ca->mi.btree_bitmap_shift;
 	     (u64) bit << ca->mi.btree_bitmap_shift < end;
 	     bit++)
-		if (!(BIT_ULL(bit) &
-		      ca->mi.btree_allocated_bitmap &
-		      (with_gc
-		       ? ca->btree_allocated_bitmap_gc
-		       : ~0ULL)))
+		if (!(BIT_ULL(bit) & ca->mi.btree_allocated_bitmap))
+			return false;
+
+	if (!with_gc)
+		return true;
+
+	if (end > 64ULL << ca->btree_allocated_bitmap_gc_shift)
+		return false;
+
+	for (unsigned bit = start >> ca->btree_allocated_bitmap_gc_shift;
+	     (u64) bit << ca->btree_allocated_bitmap_gc_shift < end;
+	     bit++)
+		if (!(BIT_ULL(bit) & ca->btree_allocated_bitmap_gc))
 			return false;
 	return true;
 }
