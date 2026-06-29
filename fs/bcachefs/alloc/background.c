@@ -1093,45 +1093,37 @@ int bch2_dev_remove_bucket_gens(struct bch_fs *c, struct bch_dev *ca, u64 cutoff
 {
 	unsigned offset;
 	struct bpos pos = alloc_gens_pos(POS(ca->dev_idx, cutoff), &offset);
-	int ret;
 
+	/* cutoff on key boundary */
 	if (!offset)
 		return bch2_btree_delete_range(c, BTREE_ID_bucket_gens,
 					       pos,
 					       POS(ca->dev_idx, U64_MAX),
 					       BTREE_TRIGGER_norun);
 
-	{
-		CLASS(btree_trans, trans)(c);
-		bool need_commit = false;
+	/* Cutoff mid-key */
 
-		ret = lockrestart_do(trans, ({
-			CLASS(btree_iter, iter)(trans, BTREE_ID_bucket_gens, pos, BTREE_ITER_intent);
-			struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
+	CLASS(btree_trans, trans)(c);
 
-			try(bkey_err(k));
+	/* zero tail gens */
+	try(commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+		CLASS(btree_iter, iter)(trans, BTREE_ID_bucket_gens, pos, BTREE_ITER_intent);
+		struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
-			if (k.k->type == KEY_TYPE_bucket_gens) {
-				struct bkey_i_bucket_gens *g =
-					errptr_try(bch2_trans_kmalloc(trans, sizeof(*g)));
+		try(bkey_err(k));
 
-				bkey_reassemble(&g->k_i, k);
-				memset(&g->v.gens[offset], 0, sizeof(g->v.gens) - offset);
-				try(bch2_trans_update(trans, &iter, &g->k_i, 0));
-				need_commit = true;
-			}
-			0;
-		}));
-		if (ret)
-			return ret;
+		if (k.k->type == KEY_TYPE_bucket_gens) {
+			struct bkey_i_bucket_gens *g =
+				errptr_try(bch2_trans_kmalloc(trans, sizeof(*g)));
 
-		if (need_commit) {
-			ret = bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
-			if (ret)
-				return ret;
+			bkey_reassemble(&g->k_i, k);
+			memset(&g->v.gens[offset], 0, sizeof(g->v.gens) - offset);
+			try(bch2_trans_update(trans, &iter, &g->k_i, 0));
 		}
-	}
+		0;
+	})));
 
+	/* delete remaining keys */
 	return bch2_btree_delete_range(c, BTREE_ID_bucket_gens,
 				       bpos_nosnap_successor(pos),
 				       POS(ca->dev_idx, U64_MAX),
