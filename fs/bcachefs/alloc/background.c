@@ -1499,12 +1499,6 @@ int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca, u64 cutoff)
 		bch2_dev_remove_need_discard(c, ca, cutoff) ?:
 		bch2_btree_delete_range(c, BTREE_ID_freespace, start, end,
 					BTREE_TRIGGER_norun) ?:
-		/*
-		 * Backpointer keys are indexed by device + sector, not device +
-		 * bucket.  A shrink cutoff in bucket space must be translated
-		 * before deleting the truncated tail, otherwise we wipe
-		 * backpointers that still belong to buckets below @cutoff.
-		 */
 		bch2_btree_delete_range(c, BTREE_ID_backpointers, bp_start, bp_end,
 					BTREE_TRIGGER_norun) ?:
 		bch2_dev_remove_bucket_gens(c, ca, cutoff) ?:
