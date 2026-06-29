@@ -3,6 +3,7 @@
 #define _BCACHEFS_DISK_GROUPS_H
 
 #include "disk_groups_types.h"
+#include "sb/members.h"
 
 extern const struct bch_sb_field_ops bch_sb_field_ops_disk_groups;
 
@@ -76,6 +77,22 @@ static inline bool bch2_target_accepts_data(struct bch_fs *c,
 {
 	struct bch_devs_mask rw_devs = target_rw_devs(c, data_type, target);
 	return !bitmap_empty(rw_devs.d, BCH_SB_MEMBERS_MAX);
+}
+
+static inline bool bch2_target_has_non_shrinking_dev(struct bch_fs *c,
+						     enum bch_data_type data_type,
+						     u16 target)
+{
+	struct bch_devs_mask devs = target_rw_devs(c, data_type, target);
+
+	guard(rcu)();
+	unsigned i;
+	for_each_set_bit(i, devs.d, BCH_SB_MEMBERS_MAX) {
+		struct bch_dev *ca = bch2_dev_rcu_noerror(c, i);
+		if (ca && !bch2_dev_is_shrinking(ca))
+			return true;
+	}
+	return false;
 }
 
 bool bch2_dev_in_target_rcu(struct bch_fs *, unsigned, unsigned);

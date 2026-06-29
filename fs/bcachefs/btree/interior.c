@@ -51,27 +51,9 @@ static const char * const bch2_btree_update_modes[] = {
 static unsigned btree_alloc_target(struct bch_fs *c, unsigned target)
 {
 	target = target ?: c->opts.metadata_target ?: c->opts.foreground_target;
-	if (!target)
-		return 0;
-
-	struct bch_devs_mask devs = target_rw_devs(c, BCH_DATA_btree, target);
-
-	/*
-	 * Shrink needs to keep rewriting btree nodes even when metadata is
-	 * normally pinned to the device being reduced. If every rw member of
-	 * the preferred target is currently shrinking, spill metadata anywhere
-	 * so the shrink can update its own bookkeeping.
-	 */
-	guard(rcu)();
-	unsigned i;
-	for_each_set_bit(i, devs.d, BCH_SB_MEMBERS_MAX) {
-		struct bch_dev *ca = bch2_dev_rcu_noerror(c, i);
-
-		if (ca && !bch2_dev_is_shrinking(ca))
-			return target;
-	}
-
-	return 0;
+	return target && bch2_target_has_non_shrinking_dev(c, BCH_DATA_btree, target)
+		? target
+		: 0;
 }
 
 static void bch2_btree_update_to_text(struct printbuf *, struct btree_update *);

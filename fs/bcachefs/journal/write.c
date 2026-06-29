@@ -29,27 +29,9 @@
 static unsigned journal_alloc_target(struct bch_fs *c)
 {
 	unsigned target = c->opts.metadata_target ?: c->opts.foreground_target;
-	if (!target)
-		return 0;
-
-	struct bch_devs_mask devs = target_rw_devs(c, BCH_DATA_journal, target);
-
-	/*
-	 * Shrink can temporarily make the preferred metadata target unusable
-	 * for new journal buckets. If every rw member of that target is
-	 * shrinking, allocate from the full filesystem until the shrink
-	 * finishes so journal progress doesn't deadlock on target preference.
-	 */
-	guard(rcu)();
-	unsigned i;
-	for_each_set_bit(i, devs.d, BCH_SB_MEMBERS_MAX) {
-		struct bch_dev *ca = bch2_dev_rcu_noerror(c, i);
-
-		if (ca && !bch2_dev_is_shrinking(ca))
-			return target;
-	}
-
-	return 0;
+	return target && bch2_target_has_non_shrinking_dev(c, BCH_DATA_journal, target)
+		? target
+		: 0;
 }
 
 static void journal_advance_devs_to_next_bucket(struct journal *j,
