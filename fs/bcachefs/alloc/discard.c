@@ -148,37 +148,6 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 	return ret;
 }
 
-int bch2_dev_clear_need_discard(struct bch_fs *c, struct bch_dev *ca, u64 cutoff)
-{
-	/*
-	 * Shrink is about to delete the tail's alloc keys entirely, so we only
-	 * need to remove the derived need_discard index entries. Avoid updating
-	 * alloc keys here: that would also fire freespace/reconcile triggers
-	 * while reconcile is still draining the shrinking device, which can
-	 * deadlock with btree node rewrites in the move path.
-	 *
-	 * need_discard is ordered by (journal seq, encoded bucket), not by
-	 * device bucket space, so tail truncation has to scan and filter by the
-	 * decoded bucket position.
-	 */
-	CLASS(btree_trans, trans)(c);
-	unsigned dev_idx = ca->dev_idx;
-
-	return for_each_btree_key_commit(trans, iter,
-			BTREE_ID_need_discard, POS_MIN,
-			BTREE_ITER_intent|BTREE_ITER_prefetch, k,
-			NULL, NULL,
-			BCH_WATERMARK_reclaim|
-			BCH_TRANS_COMMIT_no_check_rw|
-			BCH_TRANS_COMMIT_no_enospc, ({
-		struct bpos bucket = u64_to_bucket(k.k->p.offset);
-
-		(bucket.inode == dev_idx && bucket.offset >= cutoff)
-			? bch2_btree_delete_at(trans, &iter, BTREE_TRIGGER_norun)
-			: 0;
-	}));
-}
-
 static void calculate_discard_sectors_to_release(struct btree_trans *trans)
 {
 	struct bch_fs *c = trans->c;

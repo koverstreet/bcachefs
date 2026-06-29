@@ -1463,9 +1463,9 @@ fsck_err:
 	return ret;
 }
 
-/* device removal */
+/* device removal / shrinking */
 
-static int bch2_dev_remove_need_discard(struct bch_fs *c, struct bch_dev *ca)
+static int bch2_dev_remove_need_discard(struct bch_fs *c, struct bch_dev *ca, u64 cutoff)
 {
 	CLASS(btree_trans, trans)(c);
 	unsigned dev_idx = ca->dev_idx;
@@ -1473,9 +1473,10 @@ static int bch2_dev_remove_need_discard(struct bch_fs *c, struct bch_dev *ca)
 	return for_each_btree_key_commit(trans, iter,
 			BTREE_ID_need_discard, POS_MIN,
 			BTREE_ITER_intent|BTREE_ITER_prefetch, k,
-			NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+			NULL, NULL, BCH_WATERMARK_reclaim|
+			BCH_TRANS_COMMIT_no_enospc, ({
 		struct bpos bucket = u64_to_bucket(k.k->p.offset);
-		(bucket.inode == dev_idx)
+		(bucket.inode == dev_idx && bucket.offset >= cutoff)
 			? bch2_btree_delete_at(trans, &iter,
 					       BTREE_TRIGGER_norun)
 			: 0;
@@ -1495,9 +1496,7 @@ int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca, u64 cutoff)
 	 * with bch2_do_invalidates() and bch2_do_discards()
 	 */
 	ret =   bch2_dev_remove_lrus(c, ca, cutoff) ?:
-		(cutoff
-		 ? bch2_dev_clear_need_discard(c, ca, cutoff)
-		 : bch2_dev_remove_need_discard(c, ca)) ?:
+		bch2_dev_remove_need_discard(c, ca, cutoff) ?:
 		bch2_btree_delete_range(c, BTREE_ID_freespace, start, end,
 					BTREE_TRIGGER_norun) ?:
 		/*
