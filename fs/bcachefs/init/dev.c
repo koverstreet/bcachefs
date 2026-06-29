@@ -945,6 +945,11 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 		prt_printf(err, "bch2_dev_remove_alloc() error: %s\n", bch2_err_str(ret));
 		goto err;
 	}
+	ret = bch2_dev_usage_remove(c, ca);
+	if (ret) {
+		prt_printf(err, "bch2_dev_usage_remove() error: %s\n", bch2_err_str(ret));
+		goto err;
+	}
 
 	/*
 	 * We need to flush the entire journal to get rid of keys that reference
