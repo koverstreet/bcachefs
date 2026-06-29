@@ -1187,6 +1187,7 @@ int bch2_dev_truncate_accounting(struct bch_fs *c, struct bch_dev *ca, u64 old_n
 
 	CLASS(btree_trans, trans)(c);
 
+	/* accumulate deltas per data type, then apply them */
 	return commit_do(trans, NULL, NULL, 0, ({
 		s64 delta[BCH_DATA_NR][3] = {};
 		s64 keys = 0;
