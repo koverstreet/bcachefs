@@ -2020,18 +2020,6 @@ static int bch2_dev_shrink_finalize(struct bch_fs *c, struct bch_dev *ca,
 			return -EBUSY;
 		}
 
-		/*
-		 * Buckets in the truncated tail may still be in NEED_DISCARD
-		 * state. Clear that bookkeeping before we drop the alloc range so
-		 * accounting/fsck do not retain tail-only metadata after shrink.
-		 */
-		ret = bch2_dev_clear_need_discard(c, ca, new_nbuckets);
-		if (ret) {
-			prt_printf(err, "error clearing need_discard state: %s\n",
-				   bch2_err_str(ret));
-			return ret;
-		}
-
 		/* drop references to now-truncated superblock copies */
 		ret = drop_sbs_after_cutoff(c, ca, new_nbuckets);
 		if (ret) {
