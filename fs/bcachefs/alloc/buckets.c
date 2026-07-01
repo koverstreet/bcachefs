@@ -878,7 +878,8 @@ static int __trigger_extent(struct btree_trans *trans,
 	return 0;
 }
 
-static int bch2_trigger_extent_same_backpointers(struct btree_trans *trans,
+/* in-place update RECONCILE_PHYS if it is the only thing that changed */
+static int bch2_trigger_extent_reconcile_phys_update(struct btree_trans *trans,
 						 enum btree_id btree,
 						 unsigned level,
 						 struct bkey_s_c old,
@@ -898,13 +899,6 @@ static int bch2_trigger_extent_same_backpointers(struct btree_trans *trans,
 	if (level)
 		return 0;
 
-	/*
-	 * Reconcile-only updates do not move the extent, they only toggle the
-	 * phys-work flag that is cached in rotational-data backpointers.  Do
-	 * not delete+reinsert those backpointers through the write buffer when
-	 * the key itself is unchanged: update the existing entry in place and
-	 * adjust the reconcile_work_phys bit separately.
-	 */
 	ptrs = bch2_bkey_ptrs_c(old);
 	bkey_for_each_ptr_decode(old.k, ptrs, p, entry) {
 		BUG_ON(nr_old == ARRAY_SIZE(old_bp));
@@ -971,16 +965,11 @@ int bch2_trigger_extent(struct btree_trans *trans,
 	if (unlikely(flags & BTREE_TRIGGER_check_repair))
 		return bch2_check_fix_ptrs(trans, btree, level, new.s_c, flags);
 
-	/*
-	 * Reconcile-only updates keep the same physical pointers.  Update
-	 * their backpointer flags in place so buffered delete+insert churn
-	 * cannot drop the key, then let reconcile accounting/work tracking
-	 * see the logical-state change.
-	 */
+	/* optimization for in-place updates to reconcile_phys to avoid delete-insert churn */
 	if (level == 0) {
 		bool handled;
 
-		try(bch2_trigger_extent_same_backpointers(trans, btree, level, old, new, &handled));
+		try(bch2_trigger_extent_reconcile_phys_update(trans, btree, level, old, new, &handled));
 		if (handled)
 			return bch2_trigger_extent_reconcile(trans, btree, level, old, new, flags);
 	}
