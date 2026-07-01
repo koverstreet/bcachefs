@@ -231,36 +231,30 @@ static void bch2_do_discards(struct bch_fs *c)
 		/*
 		 * Iterate need_discard btree (sorted by journal_seq).
 		 * Stop when we hit a seq beyond rewind_seq_ondisk.
+		 *
+		 * Drop need_discard iterator before we update alloc and
+		 * commit to avoid deadlock against alloc/freespace updates
+		 * when removing the corresponding index entry
 		 */
 		while (!ret) {
-			struct bpos next = POS_MAX;
-			struct bpos bucket = POS_MAX;
-			u64 journal_seq = 0;
+			struct bpos bucket;
+			u64 journal_seq;
 			bool done = false;
 
-			/*
-			 * Drop the need_discard iterator before we update alloc and
-			 * commit: the discard path removes the corresponding index
-			 * entry, and keeping the original iterator pinned across that
-			 * commit can deadlock against the alloc/freespace updates.
-			 */
 			ret = lockrestart_do(trans, ({
-				int __ret = 0;
 				CLASS(btree_iter, iter)(trans, BTREE_ID_need_discard, pos, 0);
 				struct bkey_s_c k = bch2_btree_iter_peek(&iter);
-				int _ret = bkey_err(k);
+				int ret = bkey_err(k);
 
-				if (_ret) {
-					__ret = _ret;
-				} else if (!k.k) {
-					done = true;
-				} else {
+				if (!ret && k.k) {
 					journal_seq = k.k->p.inode;
 					bucket = u64_to_bucket(k.k->p.offset);
-					next = bpos_successor(k.k->p);
-					s->pos = next;
+					pos = bpos_successor(k.k->p);
+					s->pos = pos;
+				} else if (!ret) {
+					done = true;
 				}
-				__ret;
+				ret;
 			}));
 			if (ret || done)
 				break;
@@ -270,31 +264,20 @@ static void bch2_do_discards(struct bch_fs *c)
 				break;
 
 			/*
-			 * need_discard is only advisory trim bookkeeping. If this
-			 * bucket sits in the tail of a device that is currently
-			 * shrinking, leave the entry queued for the tail cleanup
-			 * pass: discard's alloc update can deadlock with
-			 * resize/reconcile on the region being evacuated.
-			 *
-			 * Buckets that remain below the shrink target still need
-			 * discard progress so the allocator can reuse retained
-			 * space on the shrinking device during the long-running
-			 * evacuation.
+			 * Leave buckets in the shrink tail queued, as the
+			 * alloc update can deadlock with reconcile.
 			 */
-			if (bch2_discard_blocked_by_resize(c, bucket)) {
-				pos = next;
+			if (bch2_discard_blocked_by_resize(c, bucket))
 				continue;
-			}
 
 			ret = lockrestart_do(trans, ({
-				int __ret = bch2_discard_one_bucket(trans, bucket,
-								    &discard_pos_done,
-								    s, false);
-				if (!__ret)
+				int ret = bch2_discard_one_bucket(trans, bucket,
+								  &discard_pos_done,
+								  s, false);
+				if (!ret)
 					s->seen += dev_bucket_size(c, bucket.inode);
-				__ret;
+				ret;
 			}));
-			pos = next;
 		}
 
 		/*
