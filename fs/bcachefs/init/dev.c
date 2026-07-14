@@ -1629,10 +1629,7 @@ struct shrink_tail_head {
 	unsigned	nr_backpointers;
 };
 
-struct shrink_tail_progress {
-	struct shrink_tail_head	head;
-	u64			nr_backpointers;
-};
+
 
 static inline bool shrink_tail_head_empty(const struct shrink_tail_head *head)
 {
@@ -1657,20 +1654,7 @@ static bool shrink_tail_head_progressed(const struct shrink_tail_head *old,
 	return new->nr_backpointers < old->nr_backpointers;
 }
 
-static bool shrink_tail_progressed(const struct shrink_tail_progress *old,
-				   const struct shrink_tail_progress *new)
-{
-	if (shrink_tail_head_empty(&new->head))
-		return true;
 
-	if (shrink_tail_head_empty(&old->head))
-		return false;
-
-	if (new->nr_backpointers < old->nr_backpointers)
-		return true;
-
-	return shrink_tail_head_progressed(&old->head, &new->head);
-}
 
 /*
  * Make sure everything is caught here: this snapshots backpointer-visible tail
@@ -1714,44 +1698,7 @@ static int tail_head_snapshot(struct bch_fs *c, struct bch_dev *ca,
 	return 0;
 }
 
-static int tail_progress_snapshot(struct bch_fs *c, struct bch_dev *ca,
-				  u64 new_nbuckets,
-				  struct shrink_tail_progress *progress)
-{
-	struct bpos bp_start = bucket_pos_to_bp_start(ca, POS(ca->dev_idx, new_nbuckets));
-	struct bpos bp_end = bucket_pos_to_bp_start(ca, POS(ca->dev_idx, ca->mi.nbuckets));
 
-	CLASS(btree_trans, trans)(c);
-	CLASS(backpointer_scan_iter, iter)(BTREE_ID_backpointers, bp_start, NULL);
-
-	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
-	wb_maybe_flush_init(&last_flushed);
-
-	*progress = (struct shrink_tail_progress) {
-		.head.bucket	= SPOS_MAX,
-		.head.first_bp	= SPOS_MAX,
-	};
-
-	while (true) {
-		struct bkey_s_c_backpointer bp =
-			bch2_bp_scan_iter_peek(trans, &iter, bp_end, &last_flushed);
-
-		try(bkey_err(bp));
-		if (!bp.k)
-			return 0;
-
-		if (shrink_tail_head_empty(&progress->head)) {
-			progress->head.bucket = bp_pos_to_bucket(ca, bp.k->p);
-			progress->head.first_bp = bp.k->p;
-		}
-
-		if (bpos_eq(bp_pos_to_bucket(ca, bp.k->p), progress->head.bucket))
-			progress->head.nr_backpointers++;
-
-		progress->nr_backpointers++;
-		bch2_bp_scan_iter_advance(&iter);
-	}
-}
 
 static int tail_is_empty(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets,
 			 bool *empty)
@@ -2023,19 +1970,18 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 
 	/* wait for to-be-shrunk region to be empty */
 	const unsigned stalled_kicks_limit = 32;
-	struct shrink_tail_progress best_progress = {
-		.head.bucket	= SPOS_MAX,
-		.head.first_bp	= SPOS_MAX,
+	struct shrink_tail_head best_head = {
+		.bucket		= SPOS_MAX,
+		.first_bp	= SPOS_MAX,
 	};
 	bool scan_device = true;
 	unsigned stalled_kicks = 0;
 
 	for (unsigned pass = 0; ; pass++) {
-		bool invalidated_cached = false;
 		bool kick_complete;
 		struct shrink_tail_head head;
-		struct shrink_tail_progress progress;
 		u32 kick;
+		bool did_scan = pass == 0 || scan_device;
 
 		try(bch2_dev_resize_restart_check(ca, seq));
 
@@ -2043,78 +1989,35 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 
 		/* do a definitive check */
 		if (shrink_tail_head_empty(&head)) {
-			{
-				CLASS(btree_trans, trans)(c);
-				try(bch2_btree_write_buffer_flush_sync(trans));
-			}
+			CLASS(btree_trans, trans)(c);
+			try(bch2_btree_write_buffer_flush_sync(trans));
 
 			try(tail_head_snapshot(c, ca, new_nbuckets, &head));
-			if (shrink_tail_head_empty(&head)) {
+			if (shrink_tail_head_empty(&head))
 				break;
-			}
 		}
-
-		/*
-		 * Live foreground IO can require several shrink/reconcile passes
-		 * before the leading tail bucket drains, and the head bucket can
-		 * stay put while work elsewhere in the tail is still making
-		 * space for it. Track both the leading bucket and the total tail
-		 * backpointer count, but only count no-progress passes after a
-		 * full device rescan on a journal-quiescent state; if the
-		 * journal is still moving then foreground IO or reconcile is
-		 * still mutating metadata and a no-progress pass is not evidence
-		 * that the shrink tail is impossible to evacuate.
-		 */
-		try(tail_progress_snapshot(c, ca, new_nbuckets, &progress));
-
-		if (shrink_tail_progressed(&best_progress, &progress)) {
-			best_progress = progress;
-			scan_device = false;
-			stalled_kicks = 0;
-		}
-
-		/*
-		 * A consumed scan cookie only means reconcile observed the scan
-		 * request and queued downstream work. Wait until either the
-		 * requested pass completes or the tail is already empty before we
-		 * decide whether shrink needs another evacuation pass.
-		 */
-		bool did_scan = pass == 0 || scan_device;
-		u64 journal_seq_before;
 
 		try(bch2_dev_shrink_queue_reconcile(c, ca, did_scan, &kick, err));
-		journal_seq_before = journal_cur_seq(&c->journal);
 
 		try(bch2_dev_shrink_wait_reconcile(ca, new_nbuckets, seq, kick,
 						     &head, &kick_complete, err));
 
-		try(tail_progress_snapshot(c, ca, new_nbuckets, &progress));
-
-		if (shrink_tail_head_empty(&progress.head))
+		try(tail_head_snapshot(c, ca, new_nbuckets, &head));
+		if (shrink_tail_head_empty(&head))
 			break;
 
-		if (shrink_tail_progressed(&best_progress, &progress)) {
-			best_progress = progress;
+		if (shrink_tail_head_progressed(&best_head, &head)) {
+			best_head = head;
 			scan_device = false;
 			stalled_kicks = 0;
 		} else if (kick_complete) {
 			/*
-			 * A no-progress pass only counts toward ENOSPC after a
-			 * full device rescan on a quiescent journal state. If
-			 * metadata is still being committed then the set of tail
-			 * blockers is still moving, so rescan from the current
-			 * tail instead of treating the shrink as impossible.
-			 *
-			 * This is intentionally conservative but the signal is
-			 * filesystem-global: unrelated metadata-writing IO can
-			 * advance the journal and keep the heuristic from ever
-			 * counting a stalled pass. A later cleanup should narrow
-			 * this to a shrink-local churn signal.
+			 * Reconcile drained a full pass but the head didn't
+			 * advance. If we haven't yet tried a full device rescan,
+			 * do one.  If we have and it also made no progress, this
+			 * tail is genuinely impossible to evacuate.
 			 */
-			if (journal_cur_seq(&c->journal) != journal_seq_before) {
-				scan_device = true;
-				stalled_kicks = 0;
-			} else if (!did_scan) {
+			if (!did_scan) {
 				scan_device = true;
 			} else if (++stalled_kicks >= stalled_kicks_limit) {
 				prt_printf(err,
