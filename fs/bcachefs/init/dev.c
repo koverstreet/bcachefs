@@ -839,8 +839,6 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 			 enum bch_member_state new_state, int flags,
 			 struct printbuf *err)
 {
-	int ret = 0;
-
 	bool do_reconcile_scan =
 		new_state == BCH_MEMBER_STATE_rw ||
 		new_state == BCH_MEMBER_STATE_evacuating;
@@ -878,7 +876,7 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 	if (do_reconcile_scan)
 		try(bch2_set_reconcile_needs_scan(c, s, true));
 
-	return ret;
+	return 0;
 }
 
 int bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
@@ -1034,11 +1032,9 @@ err:
 /* Add new device to running filesystem: */
 int bch2_dev_add(struct bch_fs *c, const char *path, struct printbuf *err)
 {
-	int ret = 0;
-
 	struct bch_opts opts = bch2_opts_empty();
 	struct bch_sb_handle sb __cleanup(bch2_free_super) = {};
-	ret = bch2_read_super(path, &opts, &sb);
+	int ret = bch2_read_super(path, &opts, &sb);
 	if (ret) {
 		prt_printf(err, "error reading superblock: %s\n", bch2_err_str(ret));
 		return ret;
@@ -1372,9 +1368,7 @@ static int bch2_dev_resize_thread_start(struct bch_dev *ca)
 	struct task_struct *p =
 		kthread_create(bch2_dev_resize_thread, ca,
 			       "bch-resize/%s:%u", c->name, ca->dev_idx);
-	int ret = PTR_ERR_OR_ZERO(p);
-	if (ret)
-		return ret;
+	try(PTR_ERR_OR_ZERO(p));
 
 	get_task_struct(p);
 	ca->resize_thread = p;
@@ -1896,9 +1890,7 @@ static int bch2_dev_shrink_wait_reconcile(struct bch_dev *ca, u64 new_nbuckets,
 
 	while (true) {
 		bool completed;
-		int ret = bch2_dev_resize_restart_check(ca, seq);
-		if (ret)
-			return ret;
+		try(bch2_dev_resize_restart_check(ca, seq));
 
 		/*
 		 * We only need reconcile to keep running until the shrink tail is
@@ -1921,7 +1913,7 @@ static int bch2_dev_shrink_wait_reconcile(struct bch_dev *ca, u64 new_nbuckets,
 			return 0;
 		}
 
-		ret = wait_event_killable_timeout(c->reconcile.wait,
+		int ret = wait_event_killable_timeout(c->reconcile.wait,
 			bch2_reconcile_completed_kick(c) >= kick ||
 			bch2_dev_resize_seq(ca) != seq ||
 			kthread_should_stop(),
@@ -1939,12 +1931,8 @@ static int bch2_dev_shrink_clear_target(struct bch_fs *c, struct bch_dev *ca,
 					u64 new_nbuckets, u64 seq,
 					struct printbuf *err)
 {
-	int ret = 0;
-
 	scoped_guard(rwsem_write, &c->state_lock) {
-		ret = bch2_dev_resize_restart_check(ca, seq);
-		if (ret)
-			return ret;
+		try(bch2_dev_resize_restart_check(ca, seq));
 
 		if (bch2_dev_resize_target(ca) != new_nbuckets ||
 		    !bch2_dev_is_shrinking(ca))
@@ -1954,7 +1942,7 @@ static int bch2_dev_shrink_clear_target(struct bch_fs *c, struct bch_dev *ca,
 	}
 
 	/* allocations are now no longer blocked after the cutoff, so there may now be more usable space  */
-	ret = bch2_reconcile_pending_wakeup(c); // TODO: also do this when a user requests a shrink cancel (aka a resize to the current size)
+	int ret = bch2_reconcile_pending_wakeup(c); // TODO: also do this when a user requests a shrink cancel (aka a resize to the current size)
 	if (ret)
 		bch_err_fn(c, ret);
 
@@ -1965,14 +1953,10 @@ static int bch2_dev_shrink_finalize(struct bch_fs *c, struct bch_dev *ca,
 				  u64 old_nbuckets, u64 new_nbuckets,
 				  u64 seq, struct printbuf *err)
 {
-	int ret;
-
 	scoped_guard(rwsem_write, &c->state_lock) {
 		bool empty = false;
 
-		ret = bch2_dev_resize_restart_check(ca, seq);
-		if (ret)
-			return ret;
+		try(bch2_dev_resize_restart_check(ca, seq));
 
 		if (bch2_dev_resize_target(ca) != new_nbuckets ||
 		    !bch2_dev_is_shrinking(ca))
@@ -1991,7 +1975,7 @@ static int bch2_dev_shrink_finalize(struct bch_fs *c, struct bch_dev *ca,
 		 */
 		bch2_journal_flush_outstanding_pins(&c->journal);
 
-		ret = bch2_journal_flush_device_pins(&c->journal, ca->dev_idx);
+		int ret = bch2_journal_flush_device_pins(&c->journal, ca->dev_idx);
 		if (ret) {
 			prt_printf(err, "bch2_journal_flush_device_pins() error: %s\n",
 				   bch2_err_str(ret));
@@ -2006,9 +1990,8 @@ static int bch2_dev_shrink_finalize(struct bch_fs *c, struct bch_dev *ca,
 		}
 
 		/* re-check that tail is really empty */
-		ret = tail_is_empty(c, ca, new_nbuckets, &empty);
-		if (ret)
-			return ret;
+		try(tail_is_empty(c, ca, new_nbuckets, &empty));
+
 		if (!empty) {
 			prt_printf(err, "Shrink failed: still has data\n");
 			return -EBUSY;
@@ -2050,9 +2033,7 @@ static int bch2_dev_shrink_finalize(struct bch_fs *c, struct bch_dev *ca,
 			if (bch2_dev_resize_target(ca) == new_nbuckets)
 				m->target_nbuckets = 0;
 
-			ret = bch2_write_super(c);
-			if (ret)
-				return ret;
+			try(bch2_write_super(c));
 		}
 
 		/* resize buckets */
@@ -2074,7 +2055,6 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 			     u64 new_nbuckets, u64 seq, struct printbuf *err)
 {
 	u64 old_nbuckets = ca->mi.nbuckets;
-	int ret = 0;
 
 	scoped_guard(rwsem_write, &c->state_lock) {
 		/* validate shrink size */
@@ -2082,9 +2062,7 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 			return -EAGAIN;
 		}
 
-		ret = bch2_dev_resize_restart_check(ca, seq);
-		if (ret)
-			return ret;
+		try(bch2_dev_resize_restart_check(ca, seq));
 
 		if (bch2_dev_resize_target(ca) != new_nbuckets ||
 		    !bch2_dev_is_shrinking(ca))
@@ -2095,9 +2073,7 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 		bch2_reset_alloc_cursors(c); // avoid churn
 	};
 
-	ret = bch2_dev_resize_restart_check(ca, seq);
-	if (ret)
-		return ret;
+	try(bch2_dev_resize_restart_check(ca, seq));
 
 	/*
 	 * Shrink can start while a discard worker from earlier freespace
@@ -2110,35 +2086,27 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 	flush_work(&c->discards.work);
 	flush_work(&ca->discard_fast_work);
 
-	ret = bch2_dev_resize_restart_check(ca, seq);
-	if (ret)
-		return ret;
+	try(bch2_dev_resize_restart_check(ca, seq));
 
 	/*
 	 * Move journal buckets out of the tail up front: otherwise the journal
 	 * can keep reintroducing metadata references in the region we're trying
 	 * to evacuate while reconcile is draining backpointers from it.
 	 */
-	ret = move_journal_past_cutoff(c, ca, new_nbuckets, err);
-	if (ret)
-		return ret;
+	try(move_journal_past_cutoff(c, ca, new_nbuckets, err));
 
-	ret = bch2_dev_resize_restart_check(ca, seq);
-	if (ret)
-		return ret;
+	try(bch2_dev_resize_restart_check(ca, seq));
 
 
 	/* optimized cached data invalidation - just drops instead of reconcile read + write + drop */
-	ret = bch2_dev_shrink_invalidate_tail_cached(c, ca, new_nbuckets);
+	int ret = bch2_dev_shrink_invalidate_tail_cached(c, ca, new_nbuckets);
 	if (ret) {
 		prt_printf(err, "Failed to invalidate cached shrink-tail data: %s\n",
 			   bch2_err_str(ret));
 		return ret;
 	}
 
-	ret = bch2_dev_resize_restart_check(ca, seq);
-	if (ret)
-		return ret;
+	try(bch2_dev_resize_restart_check(ca, seq));
 
 	/* wait for to-be-shrunk region to be empty */
 	const unsigned stalled_kicks_limit = 32;
@@ -2156,9 +2124,7 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 		struct shrink_tail_progress progress;
 		u32 kick;
 
-		ret = bch2_dev_resize_restart_check(ca, seq);
-		if (ret)
-			return ret;
+		try(bch2_dev_resize_restart_check(ca, seq));
 
 		try(tail_head_snapshot(c, ca, new_nbuckets, &head));
 
@@ -2203,15 +2169,11 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 		bool did_scan = pass == 0 || scan_device;
 		u64 journal_seq_before;
 
-		ret = bch2_dev_shrink_queue_reconcile(c, ca, did_scan, &kick, err);
-		if (ret)
-			return ret;
+		try(bch2_dev_shrink_queue_reconcile(c, ca, did_scan, &kick, err));
 		journal_seq_before = journal_cur_seq(&c->journal);
 
-		ret = bch2_dev_shrink_wait_reconcile(ca, new_nbuckets, seq, kick,
-						     &head, &kick_complete, err);
-		if (ret)
-			return ret;
+		try(bch2_dev_shrink_wait_reconcile(ca, new_nbuckets, seq, kick,
+						     &head, &kick_complete, err));
 
 		try(tail_progress_snapshot(c, ca, new_nbuckets, &progress));
 
@@ -2244,9 +2206,7 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 			} else if (++stalled_kicks >= stalled_kicks_limit) {
 				prt_printf(err,
 					   "Shrink failed: insufficient space on the filesystem to evacuate data from the shrink tail\n");
-				ret = bch2_dev_shrink_clear_target(c, ca, new_nbuckets, seq, err);
-				if (ret)
-					return ret;
+				try(bch2_dev_shrink_clear_target(c, ca, new_nbuckets, seq, err));
 				return -ENOSPC;
 			}
 		}
@@ -2318,7 +2278,6 @@ static int bch2_dev_resize_kick(struct bch_dev *ca)
 
 int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, struct printbuf *err)
 {
-	int ret = 0;
 	u64 target_nbuckets;
 
 	scoped_guard(rwsem_write, &c->state_lock) {
@@ -2326,16 +2285,12 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 			? 0
 			: new_nbuckets;
 
-		ret = bch2_dev_resize_thread_start(ca);
-		if (ret)
-			return ret;
+		try(bch2_dev_resize_thread_start(ca));
 
-		ret = bch2_dev_resize_update_target(c, ca, target_nbuckets, err);
-		if (ret)
-			return ret;
+		try(bch2_dev_resize_update_target(c, ca, target_nbuckets, err));
 	}
 
-	ret = bch2_dev_resize_kick(ca);
+	int ret = bch2_dev_resize_kick(ca);
 	if (ret == -ECANCELED)
 		prt_printf(err, "Resize request superseded by a newer target\n");
 	else if (ret && ret != -EINTR && !err->pos)
@@ -2346,18 +2301,14 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 int bch2_dev_resize_resume(struct bch_fs *c, struct bch_dev *ca,
 			   struct printbuf *err)
 {
-	int ret = 0;
-
 	if (!bch2_dev_resize_pending(ca))
 		return 0;
 
 	scoped_guard(rwsem_write, &c->state_lock) {
-		ret = bch2_dev_resize_thread_start(ca);
-		if (ret)
-			return ret;
+		try(bch2_dev_resize_thread_start(ca));
 	}
 
-	ret = bch2_dev_resize_kick(ca);
+	int ret = bch2_dev_resize_kick(ca);
 	if (ret && ret != -ECANCELED && ret != -EINTR && !err->pos)
 		prt_printf(err, "Resize resume failed; see kernel log for details\n");
 	return ret;
