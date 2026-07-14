@@ -1819,8 +1819,7 @@ static int bch2_dev_shrink_invalidate_cached_bucket(struct btree_trans *trans,
 	}));
 }
 
-static int bch2_dev_shrink_invalidate_tail_cached(struct bch_fs *c, struct bch_dev *ca,
-						  u64 new_nbuckets, bool *invalidated)
+static int bch2_dev_shrink_invalidate_tail_cached(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets)
 {
 	struct bpos start = POS(ca->dev_idx, new_nbuckets);
 	struct bpos end = POS(ca->dev_idx, ca->mi.nbuckets - 1);
@@ -1828,15 +1827,6 @@ static int bch2_dev_shrink_invalidate_tail_cached(struct bch_fs *c, struct bch_d
 
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
 	wb_maybe_flush_init(&last_flushed);
-
-	/*
-	 * Shrink evacuation rewrites live data elsewhere but leaves the old
-	 * buckets behind as cached copies. Those cached-only tail buckets don't
-	 * need reconcile, yet they still keep backpointers alive and make
-	 * tail_is_empty() fail. Drop them directly so shrink only waits on
-	 * buckets that still hold durable data or metadata.
-	 */
-	*invalidated = false;
 
 	try(bch2_btree_write_buffer_flush_sync(trans));
 
@@ -1856,7 +1846,6 @@ static int bch2_dev_shrink_invalidate_tail_cached(struct bch_fs *c, struct bch_d
 
 		try(bch2_dev_shrink_invalidate_cached_bucket(trans, ca, k.k->p,
 							     a->gen, &last_flushed));
-		*invalidated = true;
 		0;
 	}));
 }
@@ -2138,6 +2127,19 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 	if (ret)
 		return ret;
 
+
+	/* optimized cached data invalidation - just drops instead of reconcile read + write + drop */
+	ret = bch2_dev_shrink_invalidate_tail_cached(c, ca, new_nbuckets);
+	if (ret) {
+		prt_printf(err, "Failed to invalidate cached shrink-tail data: %s\n",
+			   bch2_err_str(ret));
+		return ret;
+	}
+
+	ret = bch2_dev_resize_restart_check(ca, seq);
+	if (ret)
+		return ret;
+
 	/* wait for to-be-shrunk region to be empty */
 	const unsigned stalled_kicks_limit = 32;
 	struct shrink_tail_progress best_progress = {
@@ -2171,25 +2173,6 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 			if (shrink_tail_head_empty(&head)) {
 				break;
 			}
-		}
-
-		ret = bch2_dev_shrink_invalidate_tail_cached(c, ca, new_nbuckets,
-							     &invalidated_cached);
-		if (ret) {
-			prt_printf(err, "Failed to invalidate cached shrink-tail data: %s\n",
-				   bch2_err_str(ret));
-			return ret;
-		}
-
-		if (invalidated_cached) {
-			{
-				CLASS(btree_trans, trans)(c);
-				try(bch2_btree_write_buffer_flush_sync(trans));
-			}
-
-			try(tail_head_snapshot(c, ca, new_nbuckets, &head));
-			if (shrink_tail_head_empty(&head))
-				break;
 		}
 
 		/*
