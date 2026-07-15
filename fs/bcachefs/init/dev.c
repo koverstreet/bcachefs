@@ -1763,86 +1763,10 @@ static int tail_is_empty(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets,
 	return 0;
 }
 
-static int bch2_dev_shrink_invalidate_bp(struct btree_trans *trans,
-					 struct bch_dev *ca,
-					 struct bkey_s_c_backpointer bp,
-					 struct wb_maybe_flush *last_flushed)
-{
-	struct bch_fs *c = trans->c;
 
-	CLASS(btree_iter_uninit, iter)(trans);
-	struct bkey_s_c k = bkey_try(bch2_backpointer_get_key(trans, bp, &iter, 0, last_flushed));
-	if (!k.k)
-		return 0;
 
-	struct bkey_i *n = errptr_try(bch2_bkey_make_mut(trans, &iter, &k,
-						BTREE_UPDATE_internal_snapshot_node));
 
-	bch2_bkey_drop_device_noerror(c, bkey_i_to_s(n), ca->dev_idx);
 
-	if (!bch2_bkey_can_read(c, bkey_i_to_s_c(n)))
-		bch2_set_bkey_error(c, n, KEY_TYPE_ERROR_device_removed);
-
-	return 0;
-}
-
-static int bch2_dev_shrink_invalidate_cached_bucket(struct btree_trans *trans,
-						    struct bch_dev *ca,
-						    struct bpos bucket,
-						    u8 gen,
-						    struct wb_maybe_flush *last_flushed)
-{
-	struct bpos bp_start = bucket_pos_to_bp_start(ca, bucket);
-	struct bpos bp_end = bucket_pos_to_bp_end(ca, bucket);
-
-	return for_each_btree_key_max_commit(trans, iter, BTREE_ID_backpointers,
-				      bp_start, bp_end, 0, k,
-				      NULL, NULL,
-				      BCH_WATERMARK_btree|
-				      BCH_TRANS_COMMIT_no_enospc, ({
-		if (k.k->type != KEY_TYPE_backpointer)
-			continue;
-
-		struct bkey_s_c_backpointer bp = bkey_s_c_to_backpointer(k);
-
-		if (bp.v->bucket_gen != gen)
-			continue;
-
-		try(bch2_dev_shrink_invalidate_bp(trans, ca, bp, last_flushed));
-		0;
-	}));
-}
-
-static int bch2_dev_shrink_invalidate_tail_cached(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets)
-{
-	struct bpos start = POS(ca->dev_idx, new_nbuckets);
-	struct bpos end = POS(ca->dev_idx, ca->mi.nbuckets - 1);
-	CLASS(btree_trans, trans)(c);
-
-	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
-	wb_maybe_flush_init(&last_flushed);
-
-	try(bch2_btree_write_buffer_flush_sync(trans));
-
-	return for_each_btree_key_max_commit(trans, iter, BTREE_ID_alloc,
-				start, end, BTREE_ITER_prefetch, k,
-				NULL, NULL,
-				BCH_WATERMARK_btree|
-				BCH_TRANS_COMMIT_no_enospc, ({
-		struct bch_alloc_v4 a_convert;
-		const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &a_convert);
-
-		if (a->data_type != BCH_DATA_cached || !a->cached_sectors)
-			continue;
-
-		if (bch2_bucket_is_open_safe(c, k.k->p.inode, k.k->p.offset))
-			continue;
-
-		try(bch2_dev_shrink_invalidate_cached_bucket(trans, ca, k.k->p,
-							     a->gen, &last_flushed));
-		0;
-	}));
-}
 
 static int bch2_dev_shrink_queue_reconcile(struct bch_fs *c, struct bch_dev *ca,
 					   bool scan_device, u32 *kick,
@@ -2094,17 +2018,6 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 	 * to evacuate while reconcile is draining backpointers from it.
 	 */
 	try(move_journal_past_cutoff(c, ca, new_nbuckets, err));
-
-	try(bch2_dev_resize_restart_check(ca, seq));
-
-
-	/* optimized cached data invalidation - just drops instead of reconcile read + write + drop */
-	int ret = bch2_dev_shrink_invalidate_tail_cached(c, ca, new_nbuckets);
-	if (ret) {
-		prt_printf(err, "Failed to invalidate cached shrink-tail data: %s\n",
-			   bch2_err_str(ret));
-		return ret;
-	}
 
 	try(bch2_dev_resize_restart_check(ca, seq));
 
