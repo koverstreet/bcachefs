@@ -1989,8 +1989,10 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 
 		/* do a definitive check */
 		if (shrink_tail_head_empty(&head)) {
-			CLASS(btree_trans, trans)(c);
-			try(bch2_btree_write_buffer_flush_sync(trans));
+			{
+				CLASS(btree_trans, trans)(c);
+				try(bch2_btree_write_buffer_flush_sync(trans));
+			}
 
 			try(tail_head_snapshot(c, ca, new_nbuckets, &head));
 			if (shrink_tail_head_empty(&head))
