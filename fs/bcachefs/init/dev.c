@@ -2205,7 +2205,7 @@ static int __bch2_dev_shrink(struct bch_fs *c, struct bch_dev *ca,
 				scan_device = true;
 			} else if (++stalled_kicks >= stalled_kicks_limit) {
 				prt_printf(err,
-					   "Shrink failed: insufficient space on the filesystem to evacuate data from the shrink tail\n");
+					   "Shrink failed: evacuating all data from the shrink tail not possible\n");
 				try(bch2_dev_shrink_clear_target(c, ca, new_nbuckets, seq, err));
 				return -ENOSPC;
 			}
