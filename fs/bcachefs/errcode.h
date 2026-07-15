@@ -115,6 +115,7 @@
 	x(ENOMEM,			ENOMEM_promote_limit_init)		\
 	x(ENOMEM,			ENOMEM_bio_bounce_pages_init)		\
 	x(ENOMEM,			ENOMEM_writepage_bioset_init)		\
+	x(ENOMEM,			ENOMEM_writepage_buf_pool_init)		\
 	x(ENOMEM,			ENOMEM_dio_read_bioset_init)		\
 	x(ENOMEM,			ENOMEM_dio_write_bioset_init)		\
 	x(ENOMEM,			ENOMEM_nocow_flush_bioset_init)		\
@@ -154,6 +155,7 @@
 	x(ENOMEM,                       ENOMEM_journal_read_bucket)             \
 	x(ENOMEM,                       ENOMEM_acl)				\
 	x(ENOMEM,                       ENOMEM_move_extent)			\
+	x(ENOMEM,			ENOMEM_reconcile_scan_in_flight)	\
 	x(ENOSPC,			ENOSPC_disk_reservation)		\
 	x(ENOSPC,			ENOSPC_bucket_alloc)			\
 	x(ENOSPC,			ENOSPC_disk_label_add)			\
@@ -200,8 +202,10 @@
 	x(EAGAIN,			freelist_empty)				\
 	x(EAGAIN,			stripe_needs_block_evacuate)		\
 	x(EAGAIN,			stripe_insufficient_devices)		\
+	x(EAGAIN,			max_discards_in_flight)			\
 	x(ENOSPC,			ec_alloc_failed)			\
 	x(BCH_ERR_freelist_empty,	no_buckets_found)			\
+	x(BCH_ERR_freelist_empty,	bucket_alloc_no_progress)		\
 	x(0,				transaction_restart)			\
 	x(BCH_ERR_transaction_restart,	transaction_restart_fault_inject)	\
 	x(BCH_ERR_transaction_restart,	transaction_restart_relock)		\
@@ -211,11 +215,13 @@
 	x(BCH_ERR_transaction_restart,	transaction_restart_lock_node_reused)	\
 	x(BCH_ERR_transaction_restart,	transaction_restart_fill_relock)	\
 	x(BCH_ERR_transaction_restart,	transaction_restart_fill_mem_alloc_fail)\
+	x(BCH_ERR_transaction_restart,	transaction_restart_lock_waitlist_alloc)\
 	x(BCH_ERR_transaction_restart,	transaction_restart_mem_realloced)	\
 	x(BCH_ERR_transaction_restart,	transaction_restart_in_traverse_all)	\
 	x(BCH_ERR_transaction_restart,	transaction_restart_would_deadlock)	\
 	x(BCH_ERR_transaction_restart,	transaction_restart_would_deadlock_write)\
 	x(BCH_ERR_transaction_restart,	transaction_restart_deadlock_recursion_limit)\
+	x(BCH_ERR_transaction_restart,	transaction_restart_deadlock_waitlist_alloc)\
 	x(BCH_ERR_transaction_restart,	transaction_restart_upgrade)		\
 	x(BCH_ERR_transaction_restart,	transaction_restart_key_cache_fill)	\
 	x(BCH_ERR_transaction_restart,	transaction_restart_key_cache_raced)	\
@@ -236,6 +242,7 @@
 	x(BCH_ERR_no_btree_node,	no_btree_node_init)			\
 	x(BCH_ERR_no_btree_node,	no_btree_node_cached)			\
 	x(BCH_ERR_no_btree_node,	no_btree_node_srcu_reset)		\
+	x(BCH_ERR_no_btree_node,	no_btree_node_nofill)			\
 	x(0,				btree_insert_fail)			\
 	x(BCH_ERR_btree_insert_fail,	btree_insert_btree_node_full)		\
 	x(BCH_ERR_btree_insert_fail,	btree_insert_need_mark_replicas)	\
@@ -293,6 +300,7 @@
 	x(EINVAL,			opt_parse_error)			\
 	x(EINVAL,			remove_with_metadata_missing_unimplemented)\
 	x(EINVAL,			remove_would_lose_data)			\
+	x(EINVAL,			remove_by_backpointer_did_not_terminate)\
 	x(EINVAL,			inode_unpack_error)			\
 	x(EINVAL,			inode_not_unlinked)			\
 	x(EINVAL,			inode_has_child_snapshot)		\

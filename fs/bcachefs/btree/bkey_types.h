@@ -4,6 +4,83 @@
 
 #include "bcachefs_format.h"
 
+/* DOC_LATEX(bkey-structures)
+ *
+ * \paragraph{Search keys and bkeys}
+ *
+ * The btree separates the search key (\texttt{struct bpos}) from the outer
+ * container that holds a key and value (\texttt{struct bkey}).
+ *
+ * \begin{verbatim}
+ * struct bpos {
+ *     u64  inode;      // high bits of the search key
+ *     u64  offset;     // middle bits
+ *     u32  snapshot;   // low bits
+ * };
+ *
+ * struct bkey {
+ *     u8          u64s;    // size of key + value in u64s
+ *     u8          format;  // internal: packed bkey format
+ *     u8          type;    // value type (KEY_TYPE_extent, etc.)
+ *     u8          pad;
+ *     bversion    bversion;
+ *     u32         size;    // extent size in sectors (0 for non-extents)
+ *     struct bpos p;       // position (for extents: end position)
+ * };
+ * \end{verbatim}
+ *
+ * The three fields of \texttt{bpos} form a single large integer for
+ * comparison. Not all code uses all fields---the inode field generally
+ * corresponds to an inode number, and for extents the offset field
+ * is the file offset. The snapshot field enables snapshot-aware lookups.
+ *
+ * The \texttt{type} field determines how the value is interpreted. Use
+ * \texttt{bkey\_val\_u64s()} or \texttt{bkey\_val\_bytes()} to get the value
+ * size---the \texttt{u64s} field includes the key header.
+ *
+ * For extents, \texttt{p.offset} points to the \emph{end} of the extent, not
+ * the start. A key with offset 8 and size 8 covers sectors 0--7. This makes
+ * ascending iteration over extent ranges more natural.
+ *
+ * \paragraph{Wrapper types}
+ *
+ * Values are stored inline with keys on disk, but due to packing they are
+ * typically accessed via wrapper types that hold pointers:
+ *
+ * \begin{description}
+ * \item[\texttt{bkey\_i}] Key with inline value (for allocation/insertion)
+ * \item[\texttt{bkey\_s}] Key with split value (pointers to key and value)
+ * \item[\texttt{bkey\_s\_c}] Constant key with split value (for lookups)
+ * \end{description}
+ *
+ * Each value type generates corresponding typed wrappers. For example,
+ * \texttt{struct bch\_xattr} generates:
+ *
+ * \begin{itemize}
+ * \item \texttt{bkey\_i\_xattr} -- inline xattr key
+ * \item \texttt{bkey\_s\_xattr} -- split xattr key
+ * \item \texttt{bkey\_s\_c\_xattr} -- const split xattr key
+ * \end{itemize}
+ *
+ * To convert from a generic \texttt{bkey\_s\_c} to a typed wrapper, use
+ * \texttt{bkey\_s\_c\_to\_xattr(k)}. These accessors assert that the type
+ * field matches, so always check \texttt{k.k->type} first:
+ *
+ * \begin{verbatim}
+ * struct bkey_s_c k = bch2_btree_iter_peek(&iter);
+ *
+ * switch (k.k->type) {
+ * case KEY_TYPE_xattr: {
+ *     struct bkey_s_c_xattr xattr = bkey_s_c_to_xattr(k);
+ *     // access xattr.v->x_name, etc.
+ *     break;
+ * }
+ * }
+ * \end{verbatim}
+ *
+ * See \S\ref{bkey-type-list} for the complete list of key types.
+ */
+
 /*
  * bkey_i	- bkey with inline value
  * bkey_s	- bkey with split value

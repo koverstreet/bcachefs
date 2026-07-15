@@ -542,6 +542,23 @@ struct bch_backpointer {
 	struct bpos		pos;
 } __packed __aligned(8);
 
+/*
+ * Denormalized cache of "is this bp's extent listed in reconcile_phys?":
+ *
+ * fsck needs to check that the reconcile_phys btrees agree with the extents
+ * btree, but a direct reconcile_phys <-> extents check would be expensive:
+ * for every reconcile_phys entry (keyed by bucket position), we'd have to do
+ * a random lookup against the extents btree. Instead, mirror the work_id into
+ * the backpointer so fsck can do two cheap pairwise checks:
+ *
+ *   - reconcile_phys <-> backpointers: both keyed by bucket position, indexed
+ *   - backpointers   <-> extents:	already required for backpointer fsck
+ *
+ * Invariant: when bp.flags PHYS != 0, reconcile_phys[PHYS] must have an entry
+ * at bp.k.p, and the extent must carry a bch_extent_reconcile entry whose
+ * rb_work_id_phys() equals PHYS. Every path that mutates reconcile_opts on an
+ * extent must keep the bp's PHYS flag in sync.
+ */
 BITMASK(BACKPOINTER_RECONCILE_PHYS,	struct bch_backpointer, flags, 0, 2);
 BITMASK(BACKPOINTER_ERASURE_CODED,	struct bch_backpointer, flags, 2, 3);
 BITMASK(BACKPOINTER_STRIPE_PTR,		struct bch_backpointer, flags, 3, 4);
@@ -1228,6 +1245,7 @@ LE64_BITMASK(BCH_SB_REBALANCE_AC_ONLY,	struct bch_sb, flags[6], 23, 24);
 LE64_BITMASK(BCH_SB_WRITEBACK_TIMEOUT,	struct bch_sb, flags[6], 24, 40);
 LE64_BITMASK(BCH_SB_EXTENT_BP_SHIFT,	struct bch_sb, flags[6], 40, 48);
 LE64_BITMASK(BCH_SB_SCRUB_JOURNAL,	struct bch_sb, flags[6], 48, 50);
+LE64_BITMASK(BCH_SB_EC_MAX_DATA_BLOCKS,	struct bch_sb, flags[6], 50, 58);
 
 #define BCH_SB_EXTENT_BP_SHIFT_DEFAULT	10
 

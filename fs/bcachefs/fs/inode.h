@@ -9,11 +9,11 @@
 extern const char * const bch2_inode_opts[];
 
 int bch2_inode_validate(struct bch_fs *, struct bkey_s_c,
-			struct bkey_validate_context);
+			const struct bkey_validate_context *);
 int bch2_inode_v2_validate(struct bch_fs *, struct bkey_s_c,
-			   struct bkey_validate_context);
+			   const struct bkey_validate_context *);
 int bch2_inode_v3_validate(struct bch_fs *, struct bkey_s_c,
-			   struct bkey_validate_context);
+			   const struct bkey_validate_context *);
 void bch2_inode_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 
 int __bch2_inode_has_child_snapshots(struct btree_trans *, struct bpos);
@@ -25,9 +25,7 @@ static inline int bch2_inode_has_child_snapshots(struct btree_trans *trans, stru
 		: 0;
 }
 
-int bch2_trigger_inode(struct btree_trans *, enum btree_id, unsigned,
-		       struct bkey_s_c, struct bkey_s,
-		       enum btree_iter_update_trigger_flags);
+int bch2_trigger_inode(struct btree_trans *, struct btree_trigger_op);
 
 #define bch2_bkey_ops_inode ((struct bkey_ops) {	\
 	.key_validate	= bch2_inode_validate,		\
@@ -58,7 +56,7 @@ static inline bool bkey_is_inode(const struct bkey *k)
 }
 
 int bch2_inode_generation_validate(struct bch_fs *, struct bkey_s_c,
-				   struct bkey_validate_context);
+				   const struct bkey_validate_context *);
 void bch2_inode_generation_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 
 #define bch2_bkey_ops_inode_generation ((struct bkey_ops) {	\
@@ -68,7 +66,7 @@ void bch2_inode_generation_to_text(struct printbuf *, struct bch_fs *, struct bk
 })
 
 int bch2_inode_alloc_cursor_validate(struct bch_fs *, struct bkey_s_c,
-				     struct bkey_validate_context);
+				     const struct bkey_validate_context *);
 void bch2_inode_alloc_cursor_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 
 #define bch2_bkey_ops_inode_alloc_cursor ((struct bkey_ops) {	\

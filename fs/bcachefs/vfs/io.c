@@ -34,7 +34,11 @@
 #include <linux/falloc.h>
 #include <linux/migrate.h>
 #include <linux/mmu_context.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,1,0)
+#include <linux/folio_batch.h>
+#else
 #include <linux/pagevec.h>
+#endif
 #include <linux/rmap.h>
 #include <linux/sched/signal.h>
 #include <linux/task_io_accounting_ops.h>
@@ -202,18 +206,20 @@ fsck_err:
  * insert trigger: look up the btree inode instead
  */
 static int bch2_flush_inode(struct bch_fs *c,
-			    struct bch_inode_info *inode)
+			    struct bch_inode_info *inode,
+			    u64 *flushed_seq)
 {
+	*flushed_seq = 0;
+
 	if (c->opts.journal_flush_disabled)
 		return 0;
 
 	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_fsync))
 		return -EROFS;
 
-	u64 seq;
 	int ret = bch2_trans_commit_do(c, NULL, NULL, 0,
-			    bch2_get_inode_journal_seq_trans(trans, inode_inum(inode), &seq)) ?:
-		  bch2_journal_flush_seq(&c->journal, seq, TASK_INTERRUPTIBLE) ?:
+			    bch2_get_inode_journal_seq_trans(trans, inode_inum(inode), flushed_seq)) ?:
+		  bch2_journal_flush_seq(&c->journal, *flushed_seq, TASK_INTERRUPTIBLE) ?:
 		  bch2_inode_flush_nocow_writes(c, inode);
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_fsync);
 	return ret;
@@ -224,6 +230,7 @@ int bch2_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	struct bch_inode_info *inode = file_bch_inode(file);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	u64 start_time = ktime_get_ns();
+	u64 flushed_seq = 0;
 	int ret, err;
 
 	ret = file_write_and_wait_range(file, start, end);
@@ -232,7 +239,7 @@ int bch2_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	ret = sync_inode_metadata(&inode->v, 1);
 	if (ret)
 		goto out;
-	ret = bch2_flush_inode(c, inode);
+	ret = bch2_flush_inode(c, inode, &flushed_seq);
 out:
 	ret = bch2_err_class(ret);
 	if (ret == -EROFS)
@@ -243,8 +250,12 @@ out:
 		ret = err;
 
 	event_inc_trace(c, fsync, buf, ({
-		prt_printf(&buf, "journal_flush_disabled: %u\n", c->opts.journal_flush_disabled);
+		prt_printf(&buf, "inum: %llu\n",  (u64) inode->ei_inum.inum);
+		prt_printf(&buf, "subvol: %llu\n", (u64) inode->ei_inum.subvol);
+		prt_printf(&buf, "flushed_seq: %llu\n", flushed_seq);
 		prt_printf(&buf, "datasync: %u\n", datasync);
+		prt_printf(&buf, "journal_flush_disabled: %u\n", c->opts.journal_flush_disabled);
+		prt_printf(&buf, "ret: %d\n", ret);
 		prt_printf(&buf, "duration: ");
 		bch2_pr_time_units(&buf, ktime_get_ns() - start_time);
 		prt_newline(&buf);
@@ -362,12 +373,15 @@ static int __bch2_truncate_folio(struct bch_inode_info *inode,
 	 * writeback - doing an i_size update if necessary - or whether it will
 	 * be responsible for the i_size update.
 	 *
-	 * Note that we shouldn't ever see a folio beyond EOF, but check and
-	 * warn if so. This has been observed by failure to clean up folios
-	 * after a short write and there's still a chance reclaim will fix
-	 * things up.
+	 * We can see a folio wholly above i_size here even with the inode fully
+	 * locked: marking a folio dirty doesn't go through i_rwsem (e.g.
+	 * bio_set_pages_dirty() from a DIO read whose destination buffer is an
+	 * mmap of this file, completing after the file was truncated), so "no
+	 * dirty folios above i_size" isn't an invariant we maintain.
+	 * __bch2_writepage cleans up the per-sector dirty bits when it sees
+	 * above-i_size data; here we just need to not walk off the end of the
+	 * folio when computing end_pos.
 	 */
-	WARN_ON_ONCE(folio_pos(folio) >= inode->v.i_size);
 	end_pos = folio_end_pos(folio);
 	if (inode->v.i_size > folio_pos(folio))
 		end_pos = min_t(u64, inode->v.i_size, end_pos);
@@ -950,8 +964,10 @@ static loff_t bch2_remap_file_range_errcode(struct file *file_src, loff_t pos_sr
 			i_size_write(&dst->v, pos_dst + ret);
 
 	if ((file_dst->f_flags & (__O_SYNC | O_DSYNC)) ||
-	    IS_SYNC(file_inode(file_dst)))
-		ret = bch2_flush_inode(c, dst);
+	    IS_SYNC(file_inode(file_dst))) {
+		u64 unused;
+		ret = bch2_flush_inode(c, dst, &unused);
+	}
 err:
 	bch2_quota_reservation_put(c, dst, &quota_res);
 	bch2_unlock_inodes(INODE_PAGECACHE_BLOCK, src, dst);

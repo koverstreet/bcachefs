@@ -138,26 +138,6 @@ static int __bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter,
 				       GFP_KERNEL,
 				       &c->bio_read);
 start:
-		bio->bi_opf		= REQ_OP_READ|REQ_SYNC;
-		bio->bi_iter.bi_sector	= offset >> 9;
-		bio->bi_private		= dio;
-
-		ret = bch2_bio_iov_iter_get_pages(bio, iter, 0);
-		if (ret < 0) {
-			/* XXX: fault inject this path */
-			to_rbio(bio)->ret = ret;
-			bio_endio(bio);
-			break;
-		}
-
-		offset += bio->bi_iter.bi_size;
-
-		if (dio->should_dirty)
-			bio_set_pages_dirty(bio);
-
-		if (iter->count)
-			closure_get(&dio->cl);
-
 		struct bch_read_bio *rbio =
 			rbio_init(bio,
 				  c,
@@ -167,8 +147,27 @@ start:
 				  : bch2_direct_IO_read_endio);
 
 		BUG_ON(rbio->_state);
-		rbio->err_report = err_report;
-		rbio->subvol = inode_inum(inode).subvol;
+		rbio->err_report		= err_report;
+		rbio->subvol			= inode_inum(inode).subvol;
+		rbio->bio.bi_opf		= REQ_OP_READ|REQ_SYNC;
+		rbio->bio.bi_iter.bi_sector	= offset >> 9;
+		rbio->bio.bi_private		= dio;
+
+		ret = bch2_bio_iov_iter_get_pages(&rbio->bio, iter, 0);
+		if (ret < 0) {
+			/* XXX: fault inject this path */
+			rbio->ret = ret;
+			bio_endio(&rbio->bio);
+			break;
+		}
+
+		offset += rbio->bio.bi_iter.bi_size;
+
+		if (dio->should_dirty)
+			bio_set_pages_dirty(&rbio->bio);
+
+		if (iter->count)
+			closure_get(&dio->cl);
 
 		CLASS(btree_trans, trans)(c);
 		bch2_read(trans, rbio, rbio->bio.bi_iter, inode_inum(inode),

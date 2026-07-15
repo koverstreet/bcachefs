@@ -437,15 +437,38 @@ void bch2_dev_io_ref_stop(struct bch_dev *ca, int rw)
 
 static void __bch2_dev_read_only(struct bch_fs *c, struct bch_dev *ca)
 {
-	bch2_dev_io_ref_stop(ca, WRITE);
-
 	/*
 	 * The allocator thread itself allocates btree nodes, so stop it first:
 	 */
 	bch2_dev_allocator_remove(c, ca);
 	bch2_recalc_capacity(c);
+
+	/*
+	 * bch2_dev_allocator_remove() above blocks until every open_bucket on
+	 * this device has been released. Submitting write bios and taking
+	 * write io_refs both happen while we hold open_bucket refs, so that
+	 * drain also waits for any in-flight submits to complete. Only then
+	 * is it safe to stop write io_refs: stopping them sooner would cause
+	 * bch2_dev_get_ioref() to fail at submit time for in-flight writes,
+	 * surfacing as -EIO to userspace even though the underlying block
+	 * device is still healthy (we're going read-only, not removing).
+	 */
+	bch2_dev_io_ref_stop(ca, WRITE);
+
 	bch2_dev_journal_stop(&c->journal, ca);
 	bch2_do_discards_async(c);
+
+	/*
+	 * may_reuse_stripe() / init_new_stripe_from_old() check
+	 * bch2_dev_bad_or_evacuating at stripe allocation time, but state can
+	 * flip to non-rw between that check and the stripe commit. Stripes
+	 * still on stripe_head_list were cancelled by bch2_ec_stop_dev() via
+	 * bch2_dev_allocator_remove() above; stripes that had moved to
+	 * stripe_new_list (commit in progress) may still commit with a ptr
+	 * to ca. Wait for them to finish so the subsequent data-drop pass
+	 * sees their backpointers.
+	 */
+	bch2_fs_ec_flush_outstanding(c);
 }
 
 static void __bch2_dev_read_write(struct bch_fs *c, struct bch_dev *ca)
@@ -839,6 +862,9 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 			 enum bch_member_state new_state, int flags,
 			 struct printbuf *err)
 {
+	int ret = 0;
+
+	bool was_rw = ca->mi.state == BCH_MEMBER_STATE_rw;
 	bool do_reconcile_scan =
 		new_state == BCH_MEMBER_STATE_rw ||
 		new_state == BCH_MEMBER_STATE_evacuating;
@@ -872,6 +898,21 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 
 	if (new_state == BCH_MEMBER_STATE_rw && bch2_dev_is_online(ca))
 		__bch2_dev_read_write(c, ca);
+
+	/*
+	 * Any RW transition (in or out) changes the EC widening target (RW
+	 * members) for this disk_label; queue a stripes scan so can_widen is
+	 * refreshed. Must come after the SB write above so the scan, which
+	 * reads ca->mi.state, sees the new state.
+	 *
+	 * Going-RW grows the target so newly-widenable stripes can be picked
+	 * up; going-from-RW shrinks it, and while get_old_stripe demotes
+	 * lazily on the reuse path, fsck and the canonical can_widen value
+	 * still need the scan to converge.
+	 */
+	if (new_state == BCH_MEMBER_STATE_rw || was_rw)
+		try(bch2_set_reconcile_needs_scan(c,
+			(struct reconcile_scan) { .type = RECONCILE_SCAN_stripes }, false));
 
 	if (do_reconcile_scan)
 		try(bch2_set_reconcile_needs_scan(c, s, true));
@@ -933,6 +974,27 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 		goto err;
 
 	/*
+	 * Flush journal pins that reference the device being removed, and any
+	 * outstanding pins (data_drop's btree updates), before tearing down
+	 * the device. __bch2_dev_offline below kills ca's io_ref and frees
+	 * ca->journal.buckets - any journal write that still needs ca in its
+	 * replicas set will see EROFS.
+	 */
+	bch2_journal_flush_outstanding_pins(&c->journal);
+
+	ret = bch2_journal_flush_device_pins(&c->journal, ca->dev_idx);
+	if (ret) {
+		prt_printf(err, "bch2_journal_flush_device_pins() error: %s\n", bch2_err_str(ret));
+		goto err;
+	}
+
+	ret = bch2_journal_flush(&c->journal);
+	if (ret) {
+		prt_printf(err, "bch2_journal_flush() error: %s\n", bch2_err_str(ret));
+		goto err;
+	}
+
+	/*
 	 * Disallow reads before we remove alloc info, otherwise we'll get
 	 * spurious stale pointer errors:
 	 */
@@ -950,21 +1012,9 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 	}
 
 	/*
-	 * We need to flush the entire journal to get rid of keys that reference
-	 * the device being removed before removing the superblock entry
+	 * dev_remove_alloc issued btree deletes that need to be durable before
+	 * we drop the sb member entry:
 	 */
-	bch2_journal_flush_outstanding_pins(&c->journal);
-
-	/*
-	 * this is really just needed for the bch2_replicas_gc_(start|end)
-	 * calls, and could be cleaned up:
-	 */
-	ret = bch2_journal_flush_device_pins(&c->journal, ca->dev_idx);
-	if (ret) {
-		prt_printf(err, "bch2_journal_flush_device_pins() error: %s\n", bch2_err_str(ret));
-		goto err;
-	}
-
 	ret = bch2_journal_flush(&c->journal);
 	if (ret) {
 		prt_printf(err, "bch2_journal_flush() error: %s\n", bch2_err_str(ret));
@@ -1124,6 +1174,14 @@ int bch2_dev_add(struct bch_fs *c, const char *path, struct printbuf *err)
 
 			bool write_sb = false;
 			__bch2_dev_mi_field_upgrades(c, ca, &write_sb);
+
+			/*
+			 * We don't call bch2_sb_update() until after the
+			 * superblock write finishes - but without sync
+			 * c->sb.nr_devices, write_super won't write to the new
+			 * device:
+			 */
+			c->sb.nr_devices = c->disk_sb.sb->nr_devices;
 
 			bch2_write_super(c);
 		}

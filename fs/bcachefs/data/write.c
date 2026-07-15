@@ -993,7 +993,7 @@ static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
 int bch2_extent_update(struct btree_trans *trans,
 		       subvol_inum inum,
 		       struct btree_iter *iter,
-		       struct bkey_i *k,
+		       struct bkey_i *k, unsigned k_buf_u64s,
 		       struct disk_reservation *disk_res,
 		       u64 new_i_size,
 		       s64 *i_sectors_delta_total,
@@ -1044,10 +1044,11 @@ int bch2_extent_update(struct btree_trans *trans,
 
 	bch2_inode_opts_get_inode(c, &inode, &opts);
 
-	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, k,
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(k), k_buf_u64s,
 					  SET_NEEDS_RECONCILE_foreground,
 					  change_cookie));
-	try(bch2_trans_update(trans, iter, k, 0));
+	try(bch2_trans_update(trans, iter, k,
+			      BTREE_TRIGGER_set_needs_reconcile_done));
 	try(bch2_trans_commit(trans, disk_res, NULL,
 			      BCH_TRANS_COMMIT_no_check_rw|
 			      BCH_TRANS_COMMIT_no_enospc));
@@ -1099,6 +1100,7 @@ static int bch2_write_index_default(struct bch_write_op *op)
 					BTREE_ITER_slots|BTREE_ITER_intent);
 
 		ret =   bch2_extent_update(trans, inum, &iter, sk.k,
+					sk.k->k.u64s + 1 + BCH_REPLICAS_MAX,
 					&op->res,
 					op->new_i_size, &op->i_sectors_delta,
 					op->flags & BCH_WRITE_check_enospc,
@@ -1147,10 +1149,17 @@ void bch2_write_op_error(struct bch_write_op *op, bool full, u64 offset, const c
 	va_end(args);
 }
 
+/*
+ * @cas is the caller's bch_dev pointer array (parallel to @k's ptrs)
+ * for the nocow path — those io_refs were already taken by the caller
+ * via bkey_get_dev_iorefs and we just transfer them to the per-bio
+ * wbios here.  Non-nocow callers pass NULL and we take fresh io_refs
+ * via bch2_dev_get_ioref atomically.
+ */
 void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 			       enum bch_data_type type,
 			       const struct bkey_i *k,
-			       bool nocow)
+			       bool nocow, struct bch_dev **cas)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(k));
 	struct bch_write_bio *n;
@@ -1160,6 +1169,7 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 		: (unsigned) BCH_DEV_WRITE_REF_io_write;
 
 	BUG_ON(c->opts.nochanges);
+	BUG_ON(nocow && !cas);
 
 	const struct bch_extent_ptr *last = NULL;
 	bkey_for_each_ptr(ptrs, ptr)
@@ -1168,6 +1178,9 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 
 	BUG_ON(!last);
 
+	/* For nocow, bkey_get_dev_iorefs would have bailed if it hit an
+	 * invalid ptr, so cas_idx stays in sync with the iterator. */
+	unsigned cas_idx = 0;
 	bkey_for_each_ptr(ptrs, ptr) {
 		if (ptr->dev == BCH_SB_MEMBER_INVALID)
 			continue;
@@ -1178,7 +1191,7 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 		 * removal/ro):
 		 */
 		struct bch_dev *ca = nocow
-			? bch2_dev_have_ref(c, ptr->dev)
+			? cas[cas_idx++]
 			: bch2_dev_get_ioref(c, ptr->dev, ref_rw, ref_idx);
 
 		if (ptr != last) {
@@ -1198,8 +1211,8 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 		}
 
 		n->c			= c;
+		n->ca			= ca;
 		n->dev			= ptr->dev;
-		n->have_ioref		= ca != NULL;
 		n->nocow		= nocow;
 		n->submit_time		= local_clock();
 		n->inode_offset		= bkey_start_offset(&k->k);
@@ -1207,7 +1220,7 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 			n->nocow_bucket	= PTR_BUCKET_NR(ca, ptr);
 		n->bio.bi_iter.bi_sector = ptr->offset;
 
-		if (likely(n->have_ioref)) {
+		if (likely(n->ca)) {
 			this_cpu_add(ca->io_done->sectors[WRITE][type],
 				     bio_sectors(&n->bio));
 
@@ -1445,9 +1458,7 @@ static void bch2_write_endio(struct bio *bio)
 	struct bch_write_bio *wbio	= to_wbio(bio);
 	struct bch_write_bio *parent	= wbio->split ? wbio->parent : NULL;
 	struct bch_fs *c		= wbio->c;
-	struct bch_dev *ca		= wbio->have_ioref
-		? bch2_dev_have_ref(c, wbio->dev)
-		: NULL;
+	struct bch_dev *ca		= wbio->ca;
 
 	bch2_account_io_completion(ca, BCH_MEMBER_ERROR_write,
 				   wbio->submit_time, !bio->bi_status);
@@ -1466,7 +1477,7 @@ static void bch2_write_endio(struct bio *bio)
 		set_bit(wbio->dev, op->devs_need_flush->d);
 	}
 
-	if (wbio->have_ioref)
+	if (ca)
 		enumerated_ref_put(&ca->io_ref[WRITE],
 				   BCH_DEV_WRITE_REF_io_write);
 
@@ -1944,10 +1955,9 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 	 * pointers to BCH_SB_MEMBER_INVALID so the extent is accounted as
 	 * degraded
 	 */
+	unsigned new_buf_u64s = k.k->u64s + 1 + BCH_REPLICAS_MAX;
 	struct bkey_i *new = errptr_try(bch2_trans_kmalloc_nomemzero(trans,
-				bkey_bytes(k.k) +
-				sizeof(struct bch_extent_reconcile) +
-				sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX));
+				new_buf_u64s * sizeof(u64)));
 
 	bkey_reassemble(new, k);
 	bch2_cut_front(c, bkey_start_pos(&orig->k), new);
@@ -1964,22 +1974,19 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 	 * since been created. The write is still outstanding, so we're ok
 	 * w.r.t. snapshot atomicity:
 	 */
-
-	/*
-	 * For transactional consistency, set_needs_reconcile() has to be called
-	 * with the io_opts from the btree in the same transaction:
-	 */
 	struct bch_inode_unpacked inode;
 	struct bch_inode_opts opts;
 
 	return  bch2_extent_update_i_size_sectors(trans, iter,
 					min(new->k.p.offset << 9, new_i_size), 0, &inode) ?:
 		(bch2_inode_opts_get_inode(c, &inode, &opts),
-		 bch2_bkey_set_needs_reconcile(trans, NULL, &opts, new,
+		 bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(new),
+					       new_buf_u64s,
 					       SET_NEEDS_RECONCILE_foreground,
 					       op->opts.change_cookie)) ?:
 		bch2_trans_update(trans, iter, new,
-				  BTREE_UPDATE_internal_snapshot_node);
+				  BTREE_UPDATE_internal_snapshot_node|
+				  BTREE_TRIGGER_set_needs_reconcile_done);
 }
 
 static void bch2_nocow_write_convert_unwritten(struct bch_write_op *op)
@@ -2029,24 +2036,30 @@ static CLOSURE_CALLBACK(bch2_nocow_write_done)
 	bch2_write_done(cl);
 }
 
-static bool bkey_get_dev_iorefs(struct bch_fs *c, struct bkey_ptrs_c ptrs)
+/*
+ * Take an io_ref per ptr, populating @cas (parallel to @ptrs) and
+ * returning the number of refs taken on success.  On partial failure,
+ * walks back through cas[] to drop the refs taken so far — never
+ * re-derives ca via c->devs[idx], which dev_remove may have cleared
+ * while our io_ref still pins the dev.
+ */
+static int bkey_get_dev_iorefs(struct bch_fs *c, struct bkey_ptrs_c ptrs,
+			       struct bch_dev **cas)
 {
+	unsigned i = 0;
 	bkey_for_each_ptr(ptrs, ptr) {
-		struct bch_dev *ca = bch2_dev_get_ioref(c, ptr->dev, WRITE,
-							BCH_DEV_WRITE_REF_io_write);
-		if (unlikely(!ca)) {
-			bkey_for_each_ptr(ptrs, ptr2) {
-				if (ptr2 == ptr)
-					break;
-				enumerated_ref_put(&bch2_dev_have_ref(c, ptr2->dev)->io_ref[WRITE],
+		cas[i] = bch2_dev_get_ioref(c, ptr->dev, WRITE,
+					    BCH_DEV_WRITE_REF_io_write);
+		if (unlikely(!cas[i])) {
+			while (i--)
+				enumerated_ref_put(&cas[i]->io_ref[WRITE],
 						   BCH_DEV_WRITE_REF_io_write);
-			}
-
-			return false;
+			return -1;
 		}
+		i++;
 	}
 
-	return true;
+	return i;
 }
 
 static int bch2_inode_get_i_size(struct btree_trans *trans, struct bpos inode_pos, u64 *i_size)
@@ -2076,6 +2089,8 @@ static bool bch2_nocow_write(struct bch_write_op *op)
 	u32 snapshot;
 	const struct bch_extent_ptr *stale_at;
 	int stale, ret;
+	struct bch_dev *cas[BCH_BKEY_PTRS_MAX];
+	int nr_cas = 0;
 
 	if (op->flags & BCH_WRITE_move)
 		return false;
@@ -2136,7 +2151,8 @@ retry:
 
 		/* Get iorefs before dropping btree locks: */
 		ptrs = bch2_bkey_ptrs_c(k);
-		if (!bkey_get_dev_iorefs(c, ptrs))
+		nr_cas = bkey_get_dev_iorefs(c, ptrs, cas);
+		if (nr_cas < 0)
 			goto out;
 
 		/* Unlock before taking nocow locks, doing IO: */
@@ -2146,25 +2162,28 @@ retry:
 
 		bch2_trans_unlock(trans);
 
-		bch2_bkey_nocow_lock(c, ptrs, ~0U, BUCKET_NOCOW_LOCK_UPDATE);
+		bch2_bkey_nocow_lock(c, ptrs, cas, BUCKET_NOCOW_LOCK_UPDATE);
 
 		/*
 		 * This could be handled better: If we're able to trylock the
 		 * nocow locks with btree locks held we know dirty pointers
 		 * can't be stale
 		 */
-		bkey_for_each_ptr(ptrs, ptr) {
-			struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
+		{
+			unsigned i = 0;
+			bkey_for_each_ptr(ptrs, ptr) {
+				struct bch_dev *ca = cas[i++];
 
-			int gen = bucket_gen_get(ca, PTR_BUCKET_NR(ca, ptr));
-			stale = gen < 0 ? gen : gen_after(gen, ptr->gen);
-			if (unlikely(stale)) {
-				stale_at = ptr;
-				goto err_bucket_stale;
+				int gen = bucket_gen_get(ca, PTR_BUCKET_NR(ca, ptr));
+				stale = gen < 0 ? gen : gen_after(gen, ptr->gen);
+				if (unlikely(stale)) {
+					stale_at = ptr;
+					goto err_bucket_stale;
+				}
+
+				if (ptr->unwritten)
+					op->flags |= BCH_WRITE_convert_unwritten;
 			}
-
-			if (ptr->unwritten)
-				op->flags |= BCH_WRITE_convert_unwritten;
 		}
 
 		bch2_cut_front(c, op->pos, op->insert_keys.top);
@@ -2189,7 +2208,7 @@ retry:
 		closure_get(&op->cl);
 
 		bch2_submit_wbio_replicas(to_wbio(bio), c, BCH_DATA_user,
-					  op->insert_keys.top, true);
+					  op->insert_keys.top, true, cas);
 
 		if (op->flags & BCH_WRITE_convert_unwritten)
 			bch2_keylist_push(&op->insert_keys);
@@ -2241,9 +2260,10 @@ err_bucket_stale:
 			ret = bch_err_throw(c, transaction_restart);
 		}
 
-		bch2_bkey_nocow_unlock(c, k, ~0U, BUCKET_NOCOW_LOCK_UPDATE);
-		bkey_for_each_ptr(ptrs, ptr)
-			enumerated_ref_put(&bch2_dev_have_ref(c, ptr->dev)->io_ref[WRITE],
+		bch2_bkey_nocow_unlock(c, k, cas, BUCKET_NOCOW_LOCK_UPDATE);
+
+		for (int i = 0; i < nr_cas; i++)
+			enumerated_ref_put(&cas[i]->io_ref[WRITE],
 					   BCH_DEV_WRITE_REF_io_write);
 	}
 
@@ -2295,35 +2315,39 @@ again:
 			break;
 
 		CLASS(btree_trans, trans)(c);
-		struct alloc_request *req;
 		bool io_in_flight = op->open_buckets.nr;
 
 		ret = lockrestart_do(trans, ({
-			req = alloc_request_get(trans,
-						op->target,
-						op->opts.erasure_code && !(op->flags & BCH_WRITE_cached),
-						&op->devs_have,
-						op->nr_replicas,
-						op->opts.data_replicas,
-						op->watermark,
-						op->flags,
-						!io_in_flight ? &op->cl : NULL);
-			PTR_ERR_OR_ZERO(req) ?:
+			struct alloc_request *req __free(alloc_request_put) =
+				alloc_request_get(trans,
+						  op->target,
+						  op->opts.erasure_code && !(op->flags & BCH_WRITE_cached),
+						  &op->devs_have,
+						  op->nr_replicas,
+						  op->opts.data_replicas,
+						  op->watermark,
+						  op->flags,
+						  !io_in_flight ? &op->cl : NULL);
+			if (!IS_ERR(req))
+				req->ec_max_data_blocks = c->opts.ec_max_data_blocks;
+			int ret2 = PTR_ERR_OR_ZERO(req) ?:
 			bch2_alloc_sectors_req(trans, req, op->write_point, &wp);
+
+			if (bch2_err_matches(ret2, BCH_ERR_operation_blocked) &&
+			    wait_on_allocator_sync) {
+				bch2_wait_on_allocator(trans, req, ret2, &op->cl);
+				__bch2_write_index(op);
+				op->wbio.failed.nr = 0;
+				ret2 = bch_err_throw(c, transaction_restart_nested);
+			}
+			ret2;
 		}));
 		bch2_trans_unlock_long(trans);
 		if (ret && io_in_flight)
 			break;
 
-		if (bch2_err_matches(ret, BCH_ERR_operation_blocked)) {
-			if (!wait_on_allocator_sync)
-				break;
-
-			bch2_wait_on_allocator(c, req, ret, &op->cl);
-			__bch2_write_index(op);
-			op->wbio.failed.nr = 0;
-			continue;
-		}
+		if (bch2_err_matches(ret, BCH_ERR_operation_blocked))
+			break;
 
 		if (unlikely(ret))
 			goto err;
@@ -2359,7 +2383,7 @@ err:
 					 key_to_write_offset);
 
 		bch2_submit_wbio_replicas(to_wbio(bio), c, BCH_DATA_user,
-					  key_to_write, false);
+					  key_to_write, false, NULL);
 	} while (ret);
 
 	if (op->flags & BCH_WRITE_sync) {

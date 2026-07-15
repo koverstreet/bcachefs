@@ -49,6 +49,7 @@ const char * const bch2_data_ops_strs[] = {
 struct evacuate_bucket_arg {
 	struct bpos		bucket;
 	int			gen;
+	u32			sectors;
 	struct data_update_opts	data_opts;
 };
 
@@ -500,11 +501,38 @@ next_nondata:
 	return ret;
 }
 
+/*
+ * Specifies a backpointer namespace to walk.
+ *
+ * BP_WALK_DEV walks BTREE_ID_backpointers for a real device — the common case
+ * for evacuating extents off a device or out of a bucket.
+ *
+ * BP_WALK_EC_ORPHAN walks BTREE_ID_stripe_backpointers at the synthetic
+ * (ec_idx, ec_block) position used for extents whose data device was removed
+ * but who still hold an EC association — see bch2_extent_ptr_to_bp_pos() and
+ * bp_dev_for_ec_removed_dev().
+ */
+struct bp_walk {
+	enum {
+		BP_WALK_DEV,
+		BP_WALK_EC_ORPHAN,
+	} type;
+	union {
+		struct {
+			unsigned	dev;
+		} dev;
+		struct {
+			u64		ec_idx;
+			unsigned	ec_block;
+		} ec_orphan;
+	};
+	u64	sector_start;
+	u64	sector_end;
+};
+
 static int __bch2_move_data_phys(struct moving_context *ctxt,
 			struct move_bucket *bucket_in_flight,
-			unsigned dev,
-			u64 sector_start,
-			u64 sector_end,
+			const struct bp_walk *w,
 			unsigned data_types,
 			bool copygc,
 			move_pred_fn pred, void *arg)
@@ -514,17 +542,37 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	struct bkey_s_c k;
 	int ret = 0;
 
-	/* Userspace might have supplied @dev: */
-	CLASS(bch2_dev_tryget_noerror, ca)(c, dev);
-	if (!ca)
-		return 0;
+	enum btree_id bp_btree;
+	u64 bp_pos_inode;
+	struct bch_dev *ca __free(bch2_dev_put) = NULL;
 
-	sector_end = min(sector_end, bucket_to_sector(ca, ca->mi.nbuckets));
+	switch (w->type) {
+	case BP_WALK_DEV:
+		bp_btree	= BTREE_ID_backpointers;
+		bp_pos_inode	= w->dev.dev;
+		/* Userspace might have supplied @dev: */
+		ca		= bch2_dev_tryget_noerror(c, w->dev.dev);
+		break;
+	case BP_WALK_EC_ORPHAN:
+		bp_btree	= BTREE_ID_stripe_backpointers;
+		bp_pos_inode	= bp_dev_for_ec_removed_dev(w->ec_orphan.ec_idx,
+							    w->ec_orphan.ec_block);
+		break;
+	default:
+		BUG();
+	}
 
-	u64 check_mismatch_done = sector_to_bucket(ca, sector_start);
+	u64 sector_start = w->sector_start;
+	u64 sector_end	 = w->sector_end;
 
-	struct bpos bp_start	= POS(dev, sector_start	<< c->sb.extent_bp_shift);
-	struct bpos bp_end	= POS(dev, sector_end	<< c->sb.extent_bp_shift);
+	u64 check_mismatch_done = 0;
+	if (ca) {
+		sector_end		= min(sector_end, bucket_to_sector(ca, ca->mi.nbuckets));
+		check_mismatch_done	= sector_to_bucket(ca, sector_start);
+	}
+
+	struct bpos bp_start	= POS(bp_pos_inode, sector_start << c->sb.extent_bp_shift);
+	struct bpos bp_end	= POS(bp_pos_inode, sector_end	 << c->sb.extent_bp_shift);
 
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
 	wb_maybe_flush_init(&last_flushed);
@@ -534,7 +582,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	 */
 	bch2_trans_begin(trans);
 
-	CLASS(btree_iter, bp_iter)(trans, BTREE_ID_backpointers, bp_start, 0);
+	CLASS(btree_iter, bp_iter)(trans, bp_btree, bp_start, 0);
 
 	ret = bch2_btree_write_buffer_tryflush(trans);
 	if (!bch2_err_matches(ret, EROFS))
@@ -555,7 +603,8 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		if (!k.k || bkey_gt(k.k->p, bp_end))
 			break;
 
-		if (check_mismatch_done < bp_pos_to_bucket(ca, k.k->p).offset) {
+		if (ca &&
+		    check_mismatch_done < bp_pos_to_bucket(ca, k.k->p).offset) {
 			while (check_mismatch_done < bp_pos_to_bucket(ca, k.k->p).offset)
 				bch2_check_bucket_backpointer_mismatch(trans, ca, check_mismatch_done++,
 								       copygc, &last_flushed);
@@ -613,7 +662,8 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	if (ret > 0)
 		ret = 0;
 
-	while (check_mismatch_done < sector_to_bucket(ca, sector_end))
+	while (ca &&
+	       check_mismatch_done < sector_to_bucket(ca, sector_end))
 		bch2_check_bucket_backpointer_mismatch(trans, ca, check_mismatch_done++,
 						       copygc, &last_flushed);
 
@@ -642,7 +692,14 @@ int bch2_move_data_phys(struct bch_fs *c,
 
 	bch2_btree_write_buffer_flush_sync(ctxt.trans);
 
-	return __bch2_move_data_phys(&ctxt, NULL, dev, start, end, data_types, false, pred, arg);
+	struct bp_walk w = {
+		.type		= BP_WALK_DEV,
+		.dev		= { .dev = dev },
+		.sector_start	= start,
+		.sector_end	= end,
+	};
+
+	return __bch2_move_data_phys(&ctxt, NULL, &w, data_types, false, pred, arg);
 }
 
 struct evacuate_arg {
@@ -674,11 +731,74 @@ int bch2_evacuate_data(struct moving_context *ctxt,
 {
 	struct evacuate_arg arg = { .dev = dev };
 
-	return __bch2_move_data_phys(ctxt, NULL,
-				     dev, start, end,
-				     ~0,
-				     false,
+	struct bp_walk w = {
+		.type		= BP_WALK_DEV,
+		.dev		= { .dev = dev },
+		.sector_start	= start,
+		.sector_end	= end,
+	};
+
+	return __bch2_move_data_phys(ctxt, NULL, &w, ~0, false,
 				     evacuate_pred, &arg);
+}
+
+struct evacuate_ec_orphan_arg {
+	u64		ec_idx;
+	unsigned	ec_block;
+};
+
+/*
+ * Evacuate predicate for stripe blocks whose underlying device has been
+ * removed: the extent's bch_extent_ptr.dev is BCH_SB_MEMBER_INVALID and the
+ * stripe association lives in the bch_extent_stripe_ptr that pairs with it.
+ * We can't match on ptr->dev here (it's the sentinel for *every* removed-dev
+ * extent); we have to match on the (stripe idx, block) pair carried in the
+ * decoded ec entry.
+ */
+static int evacuate_ec_orphan_pred(struct btree_trans *trans, void *_arg,
+				   enum btree_id btree, struct bkey_s_c k,
+				   struct bch_inode_opts *io_opts,
+				   struct data_update_opts *data_opts)
+{
+	struct bch_fs *c = trans->c;
+	struct evacuate_ec_orphan_arg *arg = _arg;
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
+	unsigned ptr_bit = 1;
+
+	data_opts->read_dev = -1;
+
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		if (p.ptr.dev == BCH_SB_MEMBER_INVALID &&
+		    p.has_ec &&
+		    p.ec.idx == arg->ec_idx &&
+		    p.ec.block == arg->ec_block)
+			data_opts->ptrs_kill |= ptr_bit;
+		ptr_bit <<= 1;
+	}
+
+	return data_opts->ptrs_kill != 0;
+}
+
+int bch2_evacuate_ec_orphan(struct moving_context *ctxt,
+			    u64 ec_idx, unsigned ec_block,
+			    u64 start, u64 end)
+{
+	struct evacuate_ec_orphan_arg arg = {
+		.ec_idx		= ec_idx,
+		.ec_block	= ec_block,
+	};
+
+	struct bp_walk w = {
+		.type		= BP_WALK_EC_ORPHAN,
+		.ec_orphan	= { .ec_idx = ec_idx, .ec_block = ec_block },
+		.sector_start	= start,
+		.sector_end	= end,
+	};
+
+	return __bch2_move_data_phys(ctxt, NULL, &w, ~0, false,
+				     evacuate_ec_orphan_pred, &arg);
 }
 
 static int evacuate_bucket_pred(struct btree_trans *trans, void *_arg,
@@ -692,12 +812,16 @@ static int evacuate_bucket_pred(struct btree_trans *trans, void *_arg,
 	*data_opts = arg->data_opts;
 	data_opts->read_dev = -1;
 
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
 	unsigned i = 0;
-	bkey_for_each_ptr(bch2_bkey_ptrs_c(k), ptr) {
-		if (ptr->dev == arg->bucket.inode &&
-		    (arg->gen < 0 || arg->gen == ptr->gen) &&
-		    !ptr->cached)
+	bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs_c(k), p, entry) {
+		if (p.ptr.dev == arg->bucket.inode &&
+		    (arg->gen < 0 || arg->gen == p.ptr.gen) &&
+		    !p.ptr.cached) {
 			data_opts->ptrs_kill |= BIT(i);
+			arg->sectors += p.crc.compressed_size;
+		}
 		i++;
 	}
 
@@ -710,25 +834,28 @@ int bch2_evacuate_bucket(struct moving_context *ctxt,
 			 struct data_update_opts data_opts)
 {
 	struct bch_fs *c = ctxt->trans->c;
-	struct evacuate_bucket_arg arg = { bucket, gen, data_opts, };
+	struct evacuate_bucket_arg arg = { bucket, gen, 0, data_opts, };
 
 	/* Userspace might have supplied @dev: */
 	CLASS(bch2_dev_tryget_noerror, ca)(c, bucket.inode);
 	if (!ca)
 		return 0;
 
-	int ret = __bch2_move_data_phys(ctxt, bucket_in_flight,
-					bucket.inode,
-					bucket_to_sector(ca, bucket.offset),
-					bucket_to_sector(ca, bucket.offset + 1),
-					~0,
-					true,
+	struct bp_walk w = {
+		.type		= BP_WALK_DEV,
+		.dev		= { .dev = bucket.inode },
+		.sector_start	= bucket_to_sector(ca, bucket.offset),
+		.sector_end	= bucket_to_sector(ca, bucket.offset + 1),
+	};
+
+	int ret = __bch2_move_data_phys(ctxt, bucket_in_flight, &w, ~0, true,
 					evacuate_bucket_pred, &arg);
 
 	event_inc_trace(c, evacuate_bucket, buf, ({
 		prt_printf(&buf, "bucket: ");
 		bch2_bpos_to_text(&buf, bucket);
 		prt_printf(&buf, " gen: %i ret %s\n", gen, bch2_err_str(ret));
+		prt_printf(&buf, "%u/%u sectors\n", arg.sectors, ca->mi.bucket_size);
 	}));
 
 	return ret;

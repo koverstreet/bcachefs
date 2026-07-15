@@ -226,6 +226,11 @@ enum fsck_err_opts {
 	  OPT_BOOL(),							\
 	  BCH_SB_ERASURE_CODE,		false,				\
 	  NULL,		"Enable erasure coding (DO NOT USE YET)")	\
+	x(ec_max_data_blocks,		u8,				\
+	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\
+	  OPT_UINT(0, 15),						\
+	  BCH_SB_EC_MAX_DATA_BLOCKS,	0,				\
+	  NULL,		"Cap data blocks per EC stripe (0 = use all active devs)")\
 	x(casefold,			u8,				\
 	  OPT_FS|OPT_INODE|OPT_FORMAT,					\
 	  OPT_BOOL(),							\
@@ -694,7 +699,9 @@ void bch2_opts_to_text(struct printbuf *,
 		       struct bch_opts_mask *,
 		       unsigned, unsigned, unsigned);
 
-int bch2_opt_hook_pre_set(struct bch_fs *, struct bch_dev *, u64, enum bch_opt_id, u64, bool);
+struct opt_change_scope;
+int bch2_opt_hook_pre_set(struct bch_fs *, struct bch_dev *, u64, enum bch_opt_id, u64, bool,
+			  struct opt_change_scope *);
 int bch2_opts_hooks_pre_set(struct bch_fs *);
 void bch2_opt_hook_post_set(struct bch_fs *, struct bch_dev *, u64, enum bch_opt_id, u64);
 

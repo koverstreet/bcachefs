@@ -6,18 +6,41 @@
 #include "btree/bkey_buf.h"
 #include "alloc/accounting.h"
 
-static inline bool bch2_btree_write_buffer_should_flush(struct bch_fs *c)
+static inline enum bch_wb_btree bch_wb_btree_idx(enum btree_id btree)
 {
-	struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer;
+	switch (btree) {
+#define x(name) case BTREE_ID_##name: return BCH_WB_BTREE_##name;
+	BCH_WRITE_BUFFER_BTREES()
+#undef x
+	default:
+		BUG();
+	}
+}
 
+static inline enum btree_id bch_wb_btree_to_btree_id(enum bch_wb_btree idx)
+{
+	static const u8 tbl[BCH_WB_BTREE_NR] = {
+#define x(name) [BCH_WB_BTREE_##name] = BTREE_ID_##name,
+		BCH_WRITE_BUFFER_BTREES()
+#undef x
+	};
+	return tbl[idx];
+}
+
+static inline bool bch_wb_btree_should_flush(struct bch_fs_btree_write_buffer *wb)
+{
 	return wb->inc.keys.nr + wb->flushing.keys.nr > wb->inc.keys.size / 4;
 }
 
 static inline bool bch2_btree_write_buffer_must_wait(struct bch_fs *c)
 {
-	struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer;
-
-	return wb->inc.keys.nr + wb->flushing.keys.nr > wb->inc.keys.size * 3 / 4;
+	size_t nr = 0, sz = 0;
+	for (unsigned i = 0; i < BCH_WB_BTREE_NR; i++) {
+		struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer[i];
+		nr += wb->inc.keys.nr + wb->flushing.keys.nr;
+		sz += wb->inc.keys.size;
+	}
+	return nr > sz * 3 / 4;
 }
 
 struct btree_trans;
@@ -51,10 +74,14 @@ static inline int wb_maybe_flush_inc(struct wb_maybe_flush *f)
 
 int bch2_btree_write_buffer_maybe_flush(struct btree_trans *, struct bkey_s_c, struct wb_maybe_flush *);
 
-struct journal_keys_to_wb {
-	struct btree_write_buffer_keys	*wb;
+struct journal_keys_to_wb_btree {
+	struct btree_write_buffer_keys	*wb;	/* NULL: not yet acquired */
 	size_t				room;
+};
+
+struct journal_keys_to_wb {
 	u64				seq;
+	struct journal_keys_to_wb_btree	per_btree[BCH_WB_BTREE_NR];
 };
 
 static inline int wb_key_cmp(const void *_l, const void *_r)
@@ -62,7 +89,7 @@ static inline int wb_key_cmp(const void *_l, const void *_r)
 	const struct btree_write_buffered_key *l = _l;
 	const struct btree_write_buffered_key *r = _r;
 
-	return cmp_int(l->btree, r->btree) ?: bpos_cmp(l->k.k.p, r->k.k.p);
+	return bpos_cmp(l->k.k.p, r->k.k.p);
 }
 
 int bch2_accounting_key_to_wb_slowpath(struct bch_fs *,
@@ -71,9 +98,8 @@ int bch2_accounting_key_to_wb_slowpath(struct bch_fs *,
 static inline int bch2_accounting_key_to_wb(struct bch_fs *c,
 			     enum btree_id btree, struct bkey_i_accounting *k)
 {
-	struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer;
+	struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer[bch_wb_btree_idx(btree)];
 	struct btree_write_buffered_key search;
-	search.btree = btree;
 	search.k.k.p = k->k.p;
 
 	unsigned idx = eytzinger0_find(wb->accounting.data, wb->accounting.nr,
@@ -90,7 +116,7 @@ static inline int bch2_accounting_key_to_wb(struct bch_fs *c,
 
 int bch2_journal_key_to_wb_slowpath(struct bch_fs *,
 			     struct journal_keys_to_wb *,
-			     enum btree_id, struct bkey_i *);
+			     enum bch_wb_btree, struct bkey_i *);
 
 static inline unsigned wb_key_u64s(const struct bkey_i *k)
 {
@@ -129,26 +155,29 @@ static inline struct btree_write_buffered_key *wb_key_next(const struct btree_wr
 	     _k = _next)
 
 static inline void bch2_journal_key_to_wb_reserved(struct bch_fs *c,
-			     struct journal_keys_to_wb *dst,
-			     enum btree_id btree, struct bkey_i *k)
+			     struct journal_keys_to_wb_btree *pb,
+			     u64 seq,
+			     struct bkey_i *k)
 {
 	unsigned u64s = wb_key_u64s(k);
-	struct btree_write_buffered_key *wb_k = wb_keys_end(dst->wb);
-	wb_k->journal_seq	= dst->seq;
-	wb_k->btree		= btree;
+	struct btree_write_buffered_key *wb_k = wb_keys_end(pb->wb);
+	wb_k->journal_seq	= seq;
 	bkey_copy(&wb_k->k, k);
-	dst->wb->keys.nr += u64s;
-	dst->room -= u64s;
+	pb->wb->keys.nr += u64s;
+	pb->room -= u64s;
 }
 
 static inline int __bch2_journal_key_to_wb(struct bch_fs *c,
 			     struct journal_keys_to_wb *dst,
-			     enum btree_id btree, struct bkey_i *k)
+			     enum bch_wb_btree idx,
+			     struct bkey_i *k)
 {
-	if (unlikely(dst->room < wb_key_u64s(k)))
-		return bch2_journal_key_to_wb_slowpath(c, dst, btree, k);
+	struct journal_keys_to_wb_btree *pb = &dst->per_btree[idx];
 
-	bch2_journal_key_to_wb_reserved(c, dst, btree, k);
+	if (unlikely(pb->room < wb_key_u64s(k)))
+		return bch2_journal_key_to_wb_slowpath(c, dst, idx, k);
+
+	bch2_journal_key_to_wb_reserved(c, pb, dst->seq, k);
 	return 0;
 }
 
@@ -164,7 +193,7 @@ static inline int bch2_journal_key_to_wb(struct bch_fs *c,
 
 	return bch2_bkey_is_accounting_mem(&k->k)
 		? bch2_accounting_key_to_wb(c, btree, bkey_i_to_accounting(k))
-		: __bch2_journal_key_to_wb(c, dst, btree, k);
+		: __bch2_journal_key_to_wb(c, dst, bch_wb_btree_idx(btree), k);
 }
 
 void bch2_journal_keys_to_write_buffer_start(struct bch_fs *, struct journal_keys_to_wb *, u64);
@@ -173,16 +202,6 @@ int bch2_journal_keys_to_write_buffer_end(struct bch_fs *, struct journal_keys_t
 int bch2_btree_write_buffer_resize(struct bch_fs *, size_t);
 
 void bch2_btree_write_buffer_to_text(struct printbuf *, struct bch_fs *);
-
-static inline void bch2_btree_write_buffer_wakeup(struct bch_fs *c)
-{
-	struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer;
-
-	guard(rcu)();
-	struct task_struct *p = rcu_dereference(wb->thread);
-	if (p)
-		wake_up_process(p);
-}
 
 void bch2_btree_write_buffer_stop(struct bch_fs *);
 int bch2_btree_write_buffer_start(struct bch_fs *);

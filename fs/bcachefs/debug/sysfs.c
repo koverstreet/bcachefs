@@ -252,17 +252,9 @@ write_attribute(perf_test);
 static size_t bch2_btree_cache_size(struct bch_fs *c)
 {
 	struct bch_fs_btree_cache *bc = &c->btree.cache;
-	size_t ret = 0;
-	struct btree *b;
 
-	guard(mutex)(&bc->lock);
-	list_for_each_entry(b, &bc->live[0].list, list)
-		ret += btree_buf_bytes(b);
-	list_for_each_entry(b, &bc->live[1].list, list)
-		ret += btree_buf_bytes(b);
-	list_for_each_entry(b, &bc->freeable, list)
-		ret += btree_buf_bytes(b);
-	return ret;
+	return (btree_cache_list_nr(&bc->live[0]) +
+		btree_cache_list_nr(&bc->live[1])) * c->opts.btree_node_size;
 }
 
 static int bch2_compression_stats_to_text(struct printbuf *out, struct bch_fs *c)
@@ -467,7 +459,7 @@ STORE(bch2_fs)
 		bch2_do_invalidates(c);
 
 	if (attr == &sysfs_trigger_freelist_wakeup)
-		closure_wake_up(&c->allocator.freelist_wait);
+		bch2_alloc_wake_all(c);
 
 	if (attr == &sysfs_trigger_recalc_capacity) {
 		guard(rwsem_read)(&c->state_lock);
@@ -748,6 +740,10 @@ static ssize_t bch2_btree_trans_stats_json_write(struct file *file,
 		guard(mutex)(&s->lock);
 		bch2_time_stats_reset(&s->duration);
 		bch2_time_stats_reset(&s->lock_hold_times);
+		s->nr_max_paths = 0;
+		s->max_mem = 0;
+		kfree(s->max_paths_text);
+		s->max_paths_text = NULL;
 	}
 
 	return count;
@@ -769,12 +765,14 @@ static ssize_t sysfs_opt_show(struct bch_fs *c,
 	const struct bch_option *opt = bch2_opt_table + id;
 	u64 v;
 
-	if (opt->flags & OPT_FS) {
-		v = bch2_opt_get_by_id(&c->opts, id);
-	} else if ((opt->flags & OPT_DEVICE) && opt->get_member)  {
+	if (ca) {
+		if (!((opt->flags & OPT_DEVICE) && opt->get_member))
+			return bch_err_throw(c, EINVAL_sysfs_opt_not_found);
 		v = bch2_opt_from_sb(c->disk_sb.sb, id, ca->dev_idx);
 	} else {
-		return bch_err_throw(c, EINVAL_sysfs_opt_not_found);
+		if (!(opt->flags & OPT_FS))
+			return bch_err_throw(c, EINVAL_sysfs_opt_not_found);
+		v = bch2_opt_get_by_id(&c->opts, id);
 	}
 
 	bch2_opt_to_text(out, c, c->disk_sb.sb, opt, v, OPT_SHOW_FULL_LIST);
@@ -803,10 +801,11 @@ static ssize_t sysfs_opt_store(struct bch_fs *c,
 
 	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(opt_change_lock)(c);
+	CLASS(opt_change_scope, opt_scope)(c);
 
 	u64 v;
 	ret =   bch2_opt_parse(c, opt, strim(tmp), &v, NULL) ?:
-		bch2_opt_hook_pre_set(c, ca, 0, id, v, true);
+		bch2_opt_hook_pre_set(c, ca, 0, id, v, true, &opt_scope);
 
 	if (!ret) {
 		bool is_sb = opt->get_sb || opt->get_member || opt->get_ext;
@@ -869,6 +868,18 @@ int bch2_opts_create_sysfs_files(struct kobject *kobj, unsigned type)
 		if (i->flags & OPT_HIDDEN)
 			continue;
 		if (!(i->flags & type))
+			continue;
+
+		/*
+		 * For options that are both OPT_FS and OPT_DEVICE (currently
+		 * only @discard), expose only the per-device sysfs entry: the
+		 * FS-level entry would alias to c->opts but member-backed
+		 * options have no FS-wide superblock field, so writes via the
+		 * FS path are silent no-ops and reads can't disambiguate
+		 * which scope is being shown. Mount-time @-o discard= remains
+		 * the only fs-scope handle.
+		 */
+		if (type == OPT_FS && (i->flags & OPT_DEVICE))
 			continue;
 
 		try(sysfs_create_file(kobj, &i->attr));

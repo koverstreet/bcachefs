@@ -432,7 +432,7 @@ static int insert_test_overlapping_extent(struct bch_fs *c, u64 inum, u64 start,
 
 	CLASS(btree_trans, trans)(c);
 	int ret = commit_do(trans, NULL, NULL, 0,
-		bch2_btree_insert_nonextent(trans, BTREE_ID_extents, &k.k_i,
+		bch2_btree_insert_nonextent(trans, BTREE_ID_extents, &k.k_i, k.k_i.k.u64s,
 					    BTREE_UPDATE_internal_snapshot_node));
 	bch_err_fn(c, ret);
 	return ret;

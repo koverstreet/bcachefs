@@ -32,7 +32,13 @@ static inline void *fast_list_iter_peek(struct genradix_iter *iter,
 #define fast_list_for_each(_list, _iter, _i)				\
 	fast_list_for_each_from(_list, _iter, _i, 0)
 
-int fast_list_get_idx(struct fast_list *l);
+static inline void fast_list_set(struct fast_list *l, unsigned idx, void *item)
+{
+	*genradix_ptr_inlined(&l->items, idx) = item;
+}
+
+int fast_list_get_idx(struct fast_list *l, gfp_t gfp);
+void fast_list_put_idx(struct fast_list *l, unsigned idx);
 int fast_list_add(struct fast_list *l, void *item);
 void fast_list_remove(struct fast_list *l, unsigned idx);
 void fast_list_exit(struct fast_list *l);

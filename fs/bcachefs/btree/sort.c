@@ -310,11 +310,18 @@ void bch2_sort_whiteouts(struct bch_fs *c, struct btree *b)
 	struct bkey_packed *new_whiteouts, **ptrs, **ptrs_end, *k;
 	bool used_mempool = false;
 	size_t bytes = b->whiteout_u64s * sizeof(u64);
+	/*
+	 * __bch2_bkey_unpack_key_b reads one byte before the key for its
+	 * header trick; pad the start of the bounce buffer so that read is
+	 * always against valid memory.
+	 */
+	size_t alloc_bytes = bytes + sizeof(u64);
 
 	if (!b->whiteout_u64s)
 		return;
 
-	new_whiteouts = bch2_btree_bounce_alloc(c, bytes, &used_mempool);
+	void *bounce = bch2_btree_bounce_alloc(c, alloc_bytes, &used_mempool);
+	new_whiteouts = bounce + sizeof(u64);
 
 	ptrs = ptrs_end = ((void *) new_whiteouts + bytes);
 
@@ -339,7 +346,7 @@ void bch2_sort_whiteouts(struct bch_fs *c, struct btree *b)
 	memcpy_u64s(unwritten_whiteouts_start(b),
 		    new_whiteouts, b->whiteout_u64s);
 
-	bch2_btree_bounce_free(c, bytes, used_mempool, new_whiteouts);
+	bch2_btree_bounce_free(c, alloc_bytes, used_mempool, bounce);
 }
 
 static bool should_compact_bset(struct btree *b, struct bset_tree *t,

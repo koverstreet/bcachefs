@@ -123,7 +123,8 @@
 	x(need_discard_by_journal_seq,				\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_alloc_info),		\
 	  BCH_FSCK_ERR_need_discard_freespace_key_bad,		\
-	  BCH_FSCK_ERR_need_discard_key_wrong)
+	  BCH_FSCK_ERR_need_discard_key_wrong,			\
+	  BCH_FSCK_ERR_need_discard_freespace_key_to_invalid_dev_bucket)
 
 #define UPGRADE_TABLE_INCOMPAT()				\
 	x(reconcile,						\

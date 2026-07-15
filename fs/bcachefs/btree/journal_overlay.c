@@ -418,6 +418,8 @@ static void __bch2_journal_key_overwritten(struct journal_keys *keys, size_t pos
 	struct journal_key *k = keys->data + pos;
 	size_t idx = pos_to_idx(keys, pos);
 
+	lockdep_assert_held(&keys->overwrite_lock);
+
 	k->overwritten = true;
 
 	struct journal_key *prev = idx > 0 ? keys->data + idx_to_pos(keys, idx - 1) : NULL;

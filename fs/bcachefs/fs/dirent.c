@@ -147,7 +147,7 @@ const struct bch_hash_desc bch2_dirent_hash_desc = {
 };
 
 int bch2_dirent_validate(struct bch_fs *c, struct bkey_s_c k,
-			 struct bkey_validate_context from)
+			 const struct bkey_validate_context *from)
 {
 	struct bkey_s_c_dirent d = bkey_s_c_to_dirent(k);
 	unsigned name_block_len = bch2_dirent_name_bytes(d);
@@ -168,7 +168,7 @@ int bch2_dirent_validate(struct bch_fs *c, struct bkey_s_c k,
 	 * Check new keys don't exceed the max length
 	 * (older keys may be larger.)
 	 */
-	bkey_fsck_err_on((from.flags & BCH_VALIDATE_commit) && d_name.len > BCH_NAME_MAX,
+	bkey_fsck_err_on((from->flags & BCH_VALIDATE_commit) && d_name.len > BCH_NAME_MAX,
 			 c, dirent_name_too_long,
 			 "dirent name too big (%u > %u)",
 			 d_name.len, BCH_NAME_MAX);
@@ -192,7 +192,7 @@ int bch2_dirent_validate(struct bch_fs *c, struct bkey_s_c k,
 			 "dirent points to own directory");
 
 	if (d.v->d_casefold) {
-		bkey_fsck_err_on(from.from == BKEY_VALIDATE_commit &&
+		bkey_fsck_err_on(from->from == BKEY_VALIDATE_commit &&
 				 d_cf_name.len > BCH_NAME_MAX,
 				 c, dirent_cf_name_too_big,
 				 "dirent w/ cf name too big (%u > %u)",

@@ -8,6 +8,9 @@
 #include "data/move_types.h"
 #include "init/progress.h"
 
+#include <linux/mutex.h>
+#include <linux/rhashtable-types.h>
+
 struct bch_fs_reconcile {
 	struct task_struct __rcu	*thread;
 	atomic_t			kick;
@@ -27,6 +30,11 @@ struct bch_fs_reconcile {
 	struct bbpos			scan_start;
 	struct bbpos			scan_end;
 	struct bch_move_stats		scan_stats;
+
+	/* In-flight opt changes - see bch2_set_reconcile_needs_scan_pre/post() */
+	struct rhashtable		scans_in_flight;
+	bool				scans_in_flight_init_done;
+	struct mutex			scans_in_flight_lock;
 
 	bool				on_battery;
 #ifdef CONFIG_POWER_SUPPLY

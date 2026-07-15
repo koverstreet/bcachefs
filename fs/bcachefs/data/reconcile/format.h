@@ -201,6 +201,7 @@ static const enum btree_id reconcile_work_phys_btree[] = {
 };
 
 #define RECONCILE_SCAN_COOKIE_device	32
+#define RECONCILE_SCAN_COOKIE_stripes	3
 #define RECONCILE_SCAN_COOKIE_pending	2
 #define RECONCILE_SCAN_COOKIE_metadata	1
 #define RECONCILE_SCAN_COOKIE_fs	0

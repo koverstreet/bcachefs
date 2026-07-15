@@ -77,6 +77,8 @@ enum bch_counters_flags {
 	  "Sectors scanned for metadata reconcile")			\
 	x(reconcile_scan_pending,		115, TYPE_SECTORS,	\
 	  "Sectors scanned for pending reconcile")			\
+	x(reconcile_scan_stripes,		133, TYPE_SECTORS,	\
+	  "Sectors scanned for stripes reconcile")			\
 	x(reconcile_scan_device,		116, TYPE_SECTORS,	\
 	  "Sectors scanned for device reconcile")			\
 	x(reconcile_scan_inum,			117, TYPE_SECTORS,	\
@@ -260,6 +262,9 @@ enum bch_counters_flags {
 	x(trans_restart_would_deadlock_recursion_limit,			\
 						74,  TYPE_COUNTER,	\
 	  "Transaction restart: deadlock recursion limit")		\
+	x(trans_restart_deadlock_waitlist_alloc,			\
+						132, TYPE_COUNTER,	\
+	  "Transaction restart: deadlock detector waitlist alloc fail")	\
 	x(trans_restart_write_buffer_flush,	75,  TYPE_COUNTER,	\
 	  "Transaction restart: write buffer flush")			\
 	x(trans_restart_split_race,		76,  TYPE_COUNTER,	\

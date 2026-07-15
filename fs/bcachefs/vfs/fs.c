@@ -1141,10 +1141,24 @@ int bch2_setattr_nonsize(struct mnt_idmap *idmap,
 		qid.q[QTYP_GRP] = from_kgid(i_user_ns(&inode->v), kgid);
 	}
 
+	struct bch_qid old_qid = inode->ei_qid;
+
 	try(bch2_fs_quota_transfer(c, inode, qid, ~0, KEY_TYPE_QUOTA_PREALLOC));
 
 	CLASS(btree_trans, trans)(c);
-	return lockrestart_do(trans, bch2_setattr_nonsize_trans(trans, idmap, inode, attr));
+	int ret = lockrestart_do(trans, bch2_setattr_nonsize_trans(trans, idmap, inode, attr));
+	if (unlikely(ret))
+		/*
+		 * Roll back the in-memory quota transfer: the btree commit
+		 * failed, so the inode on disk still has the old qid. Without
+		 * this rollback, in-memory quota counts diverge from what an
+		 * inode scan would compute - generic/270 catches it.
+		 *
+		 * NOCHECK because we're returning to a qid we just came from;
+		 * it had room.
+		 */
+		bch2_fs_quota_transfer(c, inode, old_qid, ~0, KEY_TYPE_QUOTA_NOCHECK);
+	return ret;
 }
 
 static int bch2_getattr(struct mnt_idmap *idmap,
@@ -2481,6 +2495,7 @@ void bch2_fs_vfs_exit(struct bch_fs *c)
 	bioset_exit(&c->vfs.dio_read_bioset);
 	bioset_exit(&c->vfs.writepage_bioset);
 	bioset_exit(&c->vfs.nocow_flush_bioset);
+	mempool_exit(&c->vfs.writepage_buf_pool);
 
 	if (c->vfs.writeback_wq)
 		destroy_workqueue(c->vfs.writeback_wq);
@@ -2513,6 +2528,10 @@ int bch2_fs_vfs_init_rw(struct bch_fs *c)
 			4, offsetof(struct bch_writepage_io, op.wbio.bio),
 			BIOSET_NEED_BVECS))
 		return bch_err_throw(c, ENOMEM_writepage_bioset_init);
+
+	if (mempool_init_kvmalloc_pool(&c->vfs.writepage_buf_pool, 4,
+				       BCH_WRITEPAGE_BUF_BYTES))
+		return bch_err_throw(c, ENOMEM_writepage_buf_pool_init);
 
 	if (bioset_init(&c->vfs.dio_write_bioset,
 			4, offsetof(struct dio_write, op.wbio.bio),

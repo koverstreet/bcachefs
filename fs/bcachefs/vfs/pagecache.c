@@ -12,7 +12,11 @@
 #include "vfs/io.h"
 #include "vfs/pagecache.h"
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,1,0)
+#include <linux/folio_batch.h>
+#else
 #include <linux/pagevec.h>
+#endif
 #include <linux/writeback.h>
 
 int bch2_filemap_get_contig_folios_d(struct address_space *mapping,
@@ -562,15 +566,14 @@ bool bch2_set_folio_dirty(struct bch_fs *c,
 	 * Potentially a nasty performance bug, we'll be dirtying more than
 	 * we're supposed to.
 	 *
-	 * We'd like to be stricter here, we shouldn't be dirtying above i_size,
-	 * but since we're not given the correct range the uncommented warning
-	 * is the best we can do; __bch2_writepage has to fix it up.
-	 *
-	 * WARN_ON((u64) folio_pos(folio) + offset + len >
-	 *	   round_up((u64) i_size_read(&inode->v), block_bytes(c)));
+	 * We may also legitimately be dirtying folios above i_size: truncate_setsize()
+	 * drops i_size before truncate_pagecache() runs, and folios pinned by
+	 * gup (e.g. DIO read destinations into an mmap'd region of this file)
+	 * stay attached to the address_space until the pin drops. The VFS
+	 * truncate path documents this in truncate_cleanup_folio() and handles
+	 * it via folio_cancel_dirty() ordering; __bch2_writepage cleans up the
+	 * sectors_dirty bits we set here.
 	 */
-
-	WARN_ON((u64) folio_pos(folio) >= i_size_read(&inode->v));
 
 	BUG_ON(!s);
 	BUG_ON(!s->uptodate);

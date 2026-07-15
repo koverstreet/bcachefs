@@ -15,8 +15,6 @@
 #include "bcachefs.h"
 #include "fast_list.h"
 
-#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
-
 struct fast_list_pcpu {
 	u32			nr;
 	u32			entries[31];
@@ -46,7 +44,7 @@ static int fast_list_alloc_idx(struct fast_list *l, gfp_t gfp)
  *
  * Returns: positive integer on success, -ENOMEM on failure
  */
-int fast_list_get_idx(struct fast_list *l)
+int fast_list_get_idx(struct fast_list *l, gfp_t gfp)
 {
 	unsigned long flags;
 	int idx;
@@ -60,7 +58,7 @@ int fast_list_get_idx(struct fast_list *l)
 
 			local_irq_restore(flags);
 			while (nr < ARRAY_SIZE(entries) &&
-			       (idx = fast_list_alloc_idx(l, GFP_KERNEL)))
+			       (idx = fast_list_alloc_idx(l, gfp)))
 				entries[nr++] = idx;
 			local_irq_save(flags);
 
@@ -102,7 +100,7 @@ int fast_list_get_idx(struct fast_list *l)
  */
 int fast_list_add(struct fast_list *l, void *item)
 {
-	int idx = fast_list_get_idx(l);
+	int idx = fast_list_get_idx(l, GFP_KERNEL);
 	if (idx < 0)
 		return idx;
 
@@ -111,21 +109,19 @@ int fast_list_add(struct fast_list *l, void *item)
 }
 
 /**
- * fast_list_remove - remove an item from a fast_list
+ * fast_list_put_idx - return a slot index obtained from fast_list_get_idx()
  * @l:		list
- * @idx:	item's slot index
+ * @idx:	slot index to return
  *
- * Zeroes out the slot in the radix tree and frees the slot for future
- * fast_list_add() operations.
+ * Inverse of fast_list_get_idx(). Use this when the slot was reserved but
+ * never populated (so no slot-clearing is needed).
  */
-void fast_list_remove(struct fast_list *l, unsigned idx)
+void fast_list_put_idx(struct fast_list *l, unsigned idx)
 {
 	u32 entries[16], nr = 0;
 
 	if (!idx)
 		return;
-
-	*genradix_ptr_inlined(&l->items, idx) = NULL;
 
 	scoped_guard(irqsave) {
 		struct fast_list_pcpu *lp = this_cpu_ptr(l->buffer);
@@ -140,6 +136,23 @@ void fast_list_remove(struct fast_list *l, unsigned idx)
 	if (unlikely(nr))
 		while (nr)
 			ida_free(&l->slots_allocated, entries[--nr]);
+}
+
+/**
+ * fast_list_remove - remove an item from a fast_list
+ * @l:		list
+ * @idx:	item's slot index
+ *
+ * Zeroes out the slot in the radix tree and frees the slot for future
+ * fast_list_add() operations.
+ */
+void fast_list_remove(struct fast_list *l, unsigned idx)
+{
+	if (!idx)
+		return;
+
+	*genradix_ptr_inlined(&l->items, idx) = NULL;
+	fast_list_put_idx(l, idx);
 }
 
 void fast_list_exit(struct fast_list *l)
@@ -172,5 +185,3 @@ int fast_list_init(struct fast_list *l)
 		return -ENOMEM;
 	return 0;
 }
-
-#endif /* CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS */

@@ -134,45 +134,62 @@ static inline u64 journal_cur_seq(struct journal *j)
 	return atomic64_read(&j->seq);
 }
 
-static inline u64 journal_last_unwritten_seq(struct journal *j)
+/*
+ * Look up the buffer for @seq via the in_flight FIFO. Caller must hold
+ * j->lock (or otherwise be serialized against seq_ondisk advancing and
+ * FIFO mutation), since the FIFO front moves with seq_ondisk and
+ * buffers are freed on pop.
+ *
+ * For the fast path when holding a reservation, use journal_res_buf()
+ * instead — the reservation pins its ring slot.
+ */
+static inline struct journal_buf *
+journal_seq_to_buf(struct journal *j, u64 seq)
 {
-	return j->seq_ondisk + 1;
+	lockdep_assert_held(&j->lock);
+	EBUG_ON(seq > journal_cur_seq(j));
+
+	return seq >= j->in_flight.front
+		? &fifo_entry(&j->in_flight, seq)
+		: NULL;
 }
 
 static inline u64 journal_last_unallocated_seq(struct journal *j)
 {
-	for (u64 seq = journal_last_unwritten_seq(j);
-	     seq <= journal_cur_seq(j);
-	     seq++)
-		if (!j->buf[seq & JOURNAL_BUF_MASK].write_allocated)
+	struct journal_buf *buf;
+	u64 seq;
+	fifo_for_each_entry_ptr(buf, &j->in_flight, seq)
+		if (!buf->write_allocated)
 			return seq;
 	return 0;
 }
 
-static inline bool journal_seq_unwritten(struct journal *j, u64 seq)
-{
-	return seq > j->seq_ondisk;
-}
-
 static inline struct journal_buf *journal_cur_buf(struct journal *j)
 {
-	unsigned idx = (journal_cur_seq(j) &
-			JOURNAL_BUF_MASK &
-			~JOURNAL_STATE_BUF_MASK) + j->reservations.idx;
-
-	return j->buf + idx;
+	return j->ring[j->reservations.idx].buf;
 }
 
+/*
+ * Fastpath buffer lookup for a held reservation. No lock required: the
+ * reservation holds a count on the ring slot's state index, so the slot
+ * still points at the buf for res->seq until the reservation is released.
+ */
 static inline struct journal_buf *
-journal_seq_to_buf(struct journal *j, u64 seq)
+journal_res_buf(struct journal *j, struct journal_res *res)
 {
-	struct journal_buf *buf = NULL;
+	return j->ring[res->seq & JOURNAL_STATE_BUF_MASK].buf;
+}
 
-	EBUG_ON(seq > journal_cur_seq(j));
-
-	if (journal_seq_unwritten(j, seq))
-		buf = j->buf + (seq & JOURNAL_BUF_MASK);
-	return buf;
+/*
+ * Fastpath access to the staging buffer (jset) for a held reservation.
+ * Equivalent to journal_res_buf(j, res)->data, but goes through the
+ * cached pointer in the ring slot to avoid an extra dereference on the
+ * hot reservation-write path.
+ */
+static inline struct jset *
+journal_res_data(struct journal *j, struct journal_res *res)
+{
+	return j->ring[res->seq & JOURNAL_STATE_BUF_MASK].data;
 }
 
 static inline int journal_state_count(union journal_res_state s, int idx)
@@ -234,7 +251,7 @@ bch2_journal_add_entry_noreservation(struct journal_buf *buf, size_t u64s)
 static inline struct jset_entry *
 journal_res_entry(struct journal *j, struct journal_res *res)
 {
-	return vstruct_idx(j->buf[res->seq & JOURNAL_BUF_MASK].data, res->offset);
+	return vstruct_idx(journal_res_data(j, res), res->offset);
 }
 
 static inline unsigned journal_entry_init(struct jset_entry *entry, unsigned type,
@@ -410,7 +427,7 @@ static inline int journal_res_get_fast(struct journal *j,
 	res->offset	= old.cur_entry_offset;
 	res->seq	= journal_cur_seq(j);
 	res->seq -= (res->seq - old.idx) & JOURNAL_STATE_BUF_MASK;
-	res->has_overwrites = j->buf[res->seq & JOURNAL_BUF_MASK].has_overwrites;
+	res->has_overwrites = journal_res_buf(j, res)->has_overwrites;
 	return 1;
 }
 
@@ -437,6 +454,7 @@ static inline int bch2_journal_res_get(struct journal *j, struct journal_res *re
 }
 
 void bch2_journal_quiesce(struct journal *);
+void bch2_journal_shutdown_quiesce(struct journal *);
 void bch2_journal_write_work(struct work_struct *);
 
 /* journal_entry_res: */

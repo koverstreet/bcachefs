@@ -49,6 +49,7 @@ struct journal_keys {
 	/* must match layout in darray_types.h */
 	size_t			nr, size;
 	struct journal_key	*data;
+	struct journal_key	preallocated[0];
 	/*
 	 * Gap buffer: instead of all the empty space in the array being at the
 	 * end of the buffer - from @nr to @size - the empty space is at @gap.

@@ -244,6 +244,8 @@ static void bchfs_read(struct btree_trans *trans,
 
 		if (rbio->bio.bi_iter.bi_size == bytes)
 			flags |= BCH_READ_last_fragment;
+		else
+			flags |= BCH_READ_must_clone;
 
 		bch2_bio_page_state_set(c, &rbio->bio, k);
 
@@ -409,7 +411,6 @@ struct bch_writepage_state {
 	struct bch_writepage_io	*io;
 	struct bch_inode_opts	opts;
 	struct bch_folio_sector	*tmp;
-	unsigned		tmp_sectors;
 	struct blk_plug		plug;
 };
 
@@ -606,12 +607,6 @@ do_io:
 	s = bch2_folio(folio);
 	BUG_ON(!s);
 
-	if (f_sectors > w->tmp_sectors) {
-		kfree(w->tmp);
-		w->tmp = kcalloc(f_sectors, sizeof(struct bch_folio_sector), GFP_NOFS|__GFP_NOFAIL);
-		w->tmp_sectors = f_sectors;
-	}
-
 	/*
 	 * Things get really hairy with errors during writeback:
 	 */
@@ -708,6 +703,8 @@ int bch2_writepages(struct address_space *mapping, struct writeback_control *wbc
 	struct bch_fs *c = mapping->host->i_sb->s_fs_info;
 	struct bch_writepage_state *w = kzalloc(sizeof(*w), GFP_NOFS|__GFP_NOFAIL);
 
+	w->tmp = mempool_alloc(&c->vfs.writepage_buf_pool, GFP_NOFS);
+
 	bch2_inode_opts_get_inode(c, &to_bch_ei(mapping->host)->ei_inode, &w->opts);
 
 	blk_start_plug(&w->plug);
@@ -724,7 +721,7 @@ int bch2_writepages(struct address_space *mapping, struct writeback_control *wbc
 	if (w->io)
 		bch2_writepage_do_io(w);
 	blk_finish_plug(&w->plug);
-	kfree(w->tmp);
+	mempool_free(w->tmp, &c->vfs.writepage_buf_pool);
 	kfree(w);
 	return bch2_err_class(ret);
 }

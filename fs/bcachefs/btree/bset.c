@@ -6,6 +6,84 @@
  * Copyright 2012 Google, Inc.
  */
 
+/* DOC(auxiliary-search-trees)
+ *
+ * Btree nodes are large (typically 256KB) and contain multiple sorted sets
+ * (bsets) that must all be searched on lookup. The code for doing lookups,
+ * insertions, etc. within a btree node is relatively separated from the btree
+ * code itself, living in bset.c. There's a `struct btree_node_iter` separate
+ * from `struct btree_iter`---the btree iterator contains one btree node
+ * iterator per level of the btree.
+ *
+ * The bulk of the machinery is the auxiliary search trees---the data structures
+ * for efficiently searching within a bset.
+ *
+ * There are two different data structures and lookup paths:
+ *
+ * **Read-write bsets:** For the bset that's currently being inserted into, we
+ * maintain a simple table in an array, with one entry per cacheline of data in
+ * the original bset, that tracks the offset of the first key in that cacheline.
+ * This is enough to do a binary search (and then a linear search when we're
+ * down to a single cacheline), and it's much cheaper to keep up to date.
+ *
+ * **Read-only bsets:** For the const bsets, we construct a binary search tree
+ * in an array (same layout as is used for heaps) where each node corresponds
+ * to one cacheline of data in the original bset, and the first key within that
+ * cacheline. Note that the auxiliary search tree is not full, i.e. not of size
+ * (2^n) - 1.
+ *
+ * Walking down the auxiliary search tree thus corresponds roughly to doing a
+ * binary search on the original bset---but it has the advantage of much
+ * friendlier memory access patterns, since at every iteration the children of
+ * the current node are adjacent in memory (and all the grandchildren, and all
+ * the great grandchildren)---meaning unlike with a binary search it's possible
+ * to prefetch.
+ *
+ * Then there are a couple tricks we use to make these nodes as small as
+ * possible:
+ *
+ * 1. Because each node in the auxiliary search tree corresponds to precisely
+ *    one cacheline, we don't have to store a full pointer to the original
+ *    key---if we can compute given a node's position in the array/tree its
+ *    index in an inorder traversal, we only have to store the key's offset
+ *    within that cacheline. This is done by `eytzinger1_to_inorder()`, and
+ *    it's mostly just shifts and bit operations.
+ *
+ * 2. Observe that as we're doing the lookup and walking down the tree, we have
+ *    constrained the keys we're going to compare against to lie within a
+ *    certain range [l, r).
+ *
+ *    Then l and r will be equal in some number of their high bits (possibly 0);
+ *    the keys we'll be comparing against and our search key will all be equal
+ *    in the same bits---meaning we don't have to compare against, or store,
+ *    any bits after that position.
+ *
+ *    We also don't have to store all the low bits, either---we need to store
+ *    enough bits to correctly pivot on the key the current node points to
+ *    (call it m); i.e. we need to store enough bits to tell m apart from the
+ *    key immediately prior to m (call it p). We're not looking for strict
+ *    equality comparisons here, we're going to follow this up with a linear
+ *    search anyways.
+ *
+ *    So the node in the auxiliary search tree (roughly) needs to store the
+ *    bits from where l and r first differed to where m and p first
+ *    differed---and usually that's not going to be very many bits. The full
+ *    `struct bkey` has 160-bit keys, but 16-bit keys in the auxiliary search
+ *    tree will suffice > 99% of the time.
+ *
+ *    Lastly, since we'd really like these nodes to be fixed size---we just
+ *    pick a size and then when we're constructing the auxiliary search tree
+ *    check if we weren't able to construct a node, and flag it; the lookup
+ *    code will fall back to comparing against the original key. Provided this
+ *    happens rarely enough, the performance impact will be negligible.
+ *
+ * The auxiliary search trees were an enormous improvement to bcachefs's
+ * performance when they were introduced---before they were introduced the
+ * lookup code was a simple binary search (eons ago when keys were still fixed
+ * size). On random lookups with a large btree the auxiliary search trees are
+ * easily over an order of magnitude faster.
+ */
+
 #include "bcachefs.h"
 #include "btree/cache.h"
 #include "btree/bset.h"

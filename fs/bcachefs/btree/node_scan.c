@@ -228,7 +228,7 @@ static int read_btree_nodes_worker(void *p)
 		goto err;
 	}
 
-	bio = bio_alloc(NULL, buf_pages(b->data, c->opts.btree_node_size), 0, GFP_KERNEL);
+	bio = bio_alloc(NULL, buf_nr_bvecs(b->data, c->opts.btree_node_size), 0, GFP_KERNEL);
 	if (!bio) {
 		bch_err(c, "read_btree_nodes_worker: error allocating bio");
 		w->f->ret = -ENOMEM;
@@ -260,9 +260,10 @@ static int read_btree_nodes_worker(void *p)
 		}
 	}
 err:
-	if (b)
-		bch2_btree_node_data_free_locked(b);
-	kfree(b);
+	if (b) {
+		bch2_btree_node_data_free(b);
+		bch2_btree_node_mem_free(c, b);
+	}
 	bio_put(bio);
 	enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_btree_node_scan);
 	closure_put(w->cl);
@@ -565,12 +566,12 @@ int bch2_get_scanned_nodes(struct bch_fs *c, enum btree_id btree,
 
 		found_btree_node_to_key(&tmp.k, &n);
 
-		BUG_ON(bch2_bkey_validate(c, bkey_i_to_s_c(&tmp.k),
-					  (struct bkey_validate_context) {
-						.from	= BKEY_VALIDATE_btree_node,
-						.level	= level + 1,
-						.btree	= btree,
-					  }));
+		struct bkey_validate_context from = {
+			.from	= BKEY_VALIDATE_btree_node,
+			.level	= level + 1,
+			.btree	= btree,
+		};
+		BUG_ON(bch2_bkey_validate(c, bkey_i_to_s_c(&tmp.k), &from));
 
 		if (!*nodes_found) {
 			prt_printf(out, "recovering from btree node scan at ");

@@ -251,16 +251,6 @@ int bch2_set_may_go_rw(struct bch_fs *c)
 
 /* journal replay: */
 
-static void replay_now_at(struct journal *j, u64 seq)
-{
-	BUG_ON(seq < j->replay_journal_seq);
-
-	seq = min(seq, j->replay_journal_seq_end);
-
-	while (j->replay_journal_seq < seq)
-		bch2_journal_pin_put(j, j->replay_journal_seq++);
-}
-
 static int bch2_journal_replay_accounting_key(struct btree_trans *trans,
 					      struct journal_key *k)
 {
@@ -473,9 +463,9 @@ int bch2_journal_replay(struct bch_fs *c)
 		struct journal_key *k = *kp;
 
 		if (!k->allocated)
-			replay_now_at(j, c->journal_entries_base_seq + k->journal_seq_offset);
+			bch2_journal_replay_pins_put(j, c->journal_entries_base_seq + k->journal_seq_offset);
 		else
-			replay_now_at(j, j->replay_journal_seq_end);
+			bch2_journal_replay_pins_put(j, j->replay_journal_seq_end);
 
 		ret = commit_do(trans, NULL, NULL,
 				BCH_TRANS_COMMIT_no_enospc|
@@ -501,7 +491,7 @@ int bch2_journal_replay(struct bch_fs *c)
 	    c->recovery.pass_done >= BCH_RECOVERY_PASS_journal_replay)
 		bch2_journal_keys_put_initial(c);
 
-	replay_now_at(j, j->replay_journal_seq_end);
+	bch2_journal_replay_pins_put(j, j->replay_journal_seq_end);
 	j->replay_journal_seq = 0;
 
 	bch2_journal_set_replay_done(j);
@@ -677,6 +667,7 @@ static int __bch2_fs_recovery(struct bch_fs *c)
 
 	if (!c->sb.clean ||
 	    c->opts.retain_recovery_info ||
+	    c->opts.journal_rewind ||
 	    c->opts.scrub_recent_journal_entries == BCH_SCRUB_JOURNAL_always) {
 		struct genradix_iter iter;
 		struct journal_replay **i;
@@ -783,6 +774,7 @@ use_clean:
 				journal_start.replay_end,
 				c->opts.journal_rewind));
 		bch2_ignore_journal_rewind_errors(c);
+		try(bch2_journal_reread_for_rewind(c));
 	}
 
 	if (c->sb.features & BIT_ULL(BCH_FEATURE_no_alloc_info)) {
@@ -802,7 +794,7 @@ use_clean:
 	 * journal sequence numbers:
 	 */
 	if (!c->sb.clean)
-		journal_start.cur_seq += JOURNAL_BUF_NR * 4;
+		journal_start.cur_seq += 64;
 
 	if (journal_start.replay_end &&
 	    journal_start.replay_end + 1 != journal_start.cur_seq) {
@@ -908,20 +900,21 @@ use_clean:
 		bch2_flush_fsck_errs(c);
 
 		bch_info(c, "Fixed errors, running fsck a second time to verify fs is clean");
-		errors_fixed = test_bit(BCH_FS_errors_fixed, &c->flags);
-		clear_bit(BCH_FS_errors_fixed, &c->flags);
-		clear_bit(BCH_FS_errors_fixed_silent, &c->flags);
+
+		bool saved_fixed        = test_and_clear_bit(BCH_FS_errors_fixed,        &c->flags);
+		bool saved_fixed_silent = test_and_clear_bit(BCH_FS_errors_fixed_silent, &c->flags);
 
 		try(bch2_run_recovery_passes_startup(c, BCH_RECOVERY_PASS_check_alloc_info));
 
-		if (errors_fixed ||
-		    test_bit(BCH_FS_errors_not_fixed, &c->flags)) {
+		if (test_bit(BCH_FS_errors_fixed,        &c->flags) ||
+		    test_bit(BCH_FS_errors_fixed_silent, &c->flags) ||
+		    test_bit(BCH_FS_errors_not_fixed,    &c->flags)) {
 			bch_err(c, "Second fsck run was not clean");
 			set_bit(BCH_FS_errors_not_fixed, &c->flags);
 		}
 
-		if (errors_fixed)
-			set_bit(BCH_FS_errors_fixed, &c->flags);
+		mod_bit(BCH_FS_errors_fixed,        &c->flags, saved_fixed);
+		mod_bit(BCH_FS_errors_fixed_silent, &c->flags, saved_fixed_silent);
 	}
 
 	if (enabled_qtypes(c)) {

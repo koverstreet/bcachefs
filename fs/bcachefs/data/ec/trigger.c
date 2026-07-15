@@ -43,7 +43,7 @@
 /* Stripes btree keys: */
 
 int bch2_stripe_validate(struct bch_fs *c, struct bkey_s_c k,
-			 struct bkey_validate_context from)
+			 const struct bkey_validate_context *from)
 {
 	const struct bch_stripe *s = bkey_s_c_to_stripe(k).v;
 	int ret = 0;
@@ -102,6 +102,9 @@ void bch2_stripe_to_text(struct printbuf *out, struct bch_fs *c,
 
 	if (s.needs_reconcile)
 		prt_str(out, " needs_reconcile");
+
+	if (s.can_widen)
+		prt_printf(out, " can_widen=%u", s.can_widen);
 
 	guard(printbuf_indent)(out);
 	guard(printbuf_atomic)(out);
@@ -338,21 +341,17 @@ static int stripe_needs_reconcile(const struct bch_stripe *s)
 	return s ? s->needs_reconcile : 0;
 }
 
-int bch2_trigger_stripe(struct btree_trans *trans,
-			enum btree_id btree, unsigned level,
-			struct bkey_s_c old, struct bkey_s _new,
-			enum btree_iter_update_trigger_flags flags)
+int bch2_trigger_stripe(struct btree_trans *trans, struct btree_trigger_op op)
 {
-	struct bkey_s_c new = _new.s_c;
 	struct bch_fs *c = trans->c;
-	u64 idx = new.k->p.offset;
-	const struct bch_stripe *old_s = old.k->type == KEY_TYPE_stripe
-		? bkey_s_c_to_stripe(old).v : NULL;
-	const struct bch_stripe *new_s = new.k->type == KEY_TYPE_stripe
-		? bkey_s_c_to_stripe(new).v : NULL;
+	u64 idx = op.new.k->p.offset;
+	const struct bch_stripe *old_s = op.old.k->type == KEY_TYPE_stripe
+		? bkey_s_c_to_stripe(op.old).v : NULL;
+	const struct bch_stripe *new_s = op.new.k->type == KEY_TYPE_stripe
+		? bkey_s_c_to_stripe(op.new.s_c).v : NULL;
 
-	if (unlikely(flags & BTREE_TRIGGER_check_repair))
-		return bch2_check_fix_ptrs(trans, btree, level, _new.s_c, flags);
+	if (unlikely(op.flags & BTREE_TRIGGER_check_repair))
+		return bch2_check_fix_ptrs(trans, op.btree, op.level, op.new.s_c, op.flags);
 
 	BUG_ON(new_s && old_s &&
 	       (new_s->sectors		!= old_s->sectors ||
@@ -363,19 +362,44 @@ int bch2_trigger_stripe(struct btree_trans *trans,
 		stripe_needs_reconcile(new_s) -
 		stripe_needs_reconcile(old_s);
 
-	if ((flags & (BTREE_TRIGGER_atomic|BTREE_TRIGGER_gc)) == BTREE_TRIGGER_atomic) {
+	if ((op.flags & (BTREE_TRIGGER_atomic|BTREE_TRIGGER_gc)) == BTREE_TRIGGER_atomic) {
 		if (new_s && stripe_lru_pos(new_s) == 1)
 			bch2_do_stripe_deletes(c);
 	}
 
-	if (flags & BTREE_TRIGGER_transactional) {
+	if (op.flags & BTREE_TRIGGER_transactional) {
+		/*
+		 * Refresh can_widen from current rw_member_devs and the
+		 * fs-level ec_max_data_blocks cap before consumers (lru_pos
+		 * below) read it. This races against reconcile_scan_stripes:
+		 * without the trigger doing the update, a stripe-mod that
+		 * commits after the scan walked past that pos would carry a
+		 * stale can_widen and the cookie clear before fsck would miss
+		 * it. Same shape as the reconcile-opts split-fragment fix.
+		 */
+		if (new_s) {
+			struct bch_devs_mask rw_member_devs;
+			bch2_disk_label_ec_rw_member_devs(c, new_s->disk_label,
+							  &rw_member_devs,
+							  le16_to_cpu(new_s->sectors));
+			u8 want_can_widen = stripe_widen_value(
+				stripe_widen_target_nr_data(
+					dev_mask_nr(&rw_member_devs),
+					new_s->nr_redundant,
+					c->opts.ec_max_data_blocks),
+				new_s->nr_blocks - new_s->nr_redundant);
+
+			if (new_s->can_widen != want_can_widen)
+				bkey_s_to_stripe(op.new).v->can_widen = want_can_widen;
+		}
+
 		u64 old_lru_pos = stripe_lru_pos(old_s);
 		u64 new_lru_pos = stripe_lru_pos(new_s);
 
 		if (unlikely(new_lru_pos == STRIPE_LRU_POS_EMPTY) &&
 		    !bch2_stripe_is_open(c, idx)) {
-			_new.k->type = KEY_TYPE_deleted;
-			set_bkey_val_u64s(_new.k, 0);
+			op.new.k->type = KEY_TYPE_deleted;
+			set_bkey_val_u64s(op.new.k, 0);
 			new_s = NULL;
 			new_lru_pos = 0;
 			needs_reconcile_delta =
@@ -389,18 +413,18 @@ int bch2_trigger_stripe(struct btree_trans *trans,
 
 		if (needs_reconcile_delta)
 			try(bch2_btree_bit_mod_buffered(trans, BTREE_ID_reconcile_hipri,
-					data_to_rb_work_pos(BTREE_ID_stripes, new.k->p),
+					data_to_rb_work_pos(BTREE_ID_stripes, op.new.k->p),
 					needs_reconcile_delta > 0));
 	}
 
-	if (flags & (BTREE_TRIGGER_transactional|BTREE_TRIGGER_gc)) {
+	if (op.flags & (BTREE_TRIGGER_transactional|BTREE_TRIGGER_gc)) {
 		if (needs_reconcile_delta) {
 			const struct bch_stripe *s = old_s ?: new_s;
 
 			u64 v[2] = { s->nr_blocks * le16_to_cpu(s->sectors), 0 };
 			v[0] *= needs_reconcile_delta;
 
-			try(bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc, v,
+			try(bch2_disk_accounting_mod2(trans, op.flags & BTREE_TRIGGER_gc, v,
 						      reconcile_work, BCH_RECONCILE_ACCOUNTING_stripes));
 		}
 
@@ -416,7 +440,7 @@ int bch2_trigger_stripe(struct btree_trans *trans,
 			return 0;
 
 		struct gc_stripe *gc = NULL;
-		if (flags & BTREE_TRIGGER_gc) {
+		if (op.flags & BTREE_TRIGGER_gc) {
 			gc = genradix_ptr_alloc(&c->ec.gc_stripes, idx, GFP_KERNEL);
 			if (!gc) {
 				bch_err(c, "error allocating memory for gc_stripes, idx %llu", idx);
@@ -450,7 +474,7 @@ int bch2_trigger_stripe(struct btree_trans *trans,
 			struct disk_accounting_pos acc;
 			memset(&acc, 0, sizeof(acc));
 			acc.type = BCH_DISK_ACCOUNTING_replicas;
-			bch2_bkey_to_replicas(c, &acc.replicas, new);
+			bch2_bkey_to_replicas(c, &acc.replicas, op.new.s_c);
 			try(bch2_disk_accounting_mod(trans, &acc, &sectors, 1, gc));
 
 			if (gc)
@@ -464,11 +488,11 @@ int bch2_trigger_stripe(struct btree_trans *trans,
 			struct disk_accounting_pos acc;
 			memset(&acc, 0, sizeof(acc));
 			acc.type = BCH_DISK_ACCOUNTING_replicas;
-			bch2_bkey_to_replicas(c, &acc.replicas, old);
+			bch2_bkey_to_replicas(c, &acc.replicas, op.old);
 			try(bch2_disk_accounting_mod(trans, &acc, &sectors, 1, gc));
 		}
 
-		try(mark_stripe_buckets(trans, old, new, flags));
+		try(mark_stripe_buckets(trans, op.old, op.new.s_c, op.flags));
 	}
 
 	return 0;
@@ -527,7 +551,7 @@ static void stripe_new_bucket_add(struct bch_fs *c, struct ec_stripe_new_bucket 
 
 void bch2_stripe_new_buckets_add(struct bch_fs *c, struct ec_stripe_new *s)
 {
-	unsigned nr_blocks = s->nr_data + s->nr_parity;
+	unsigned nr_blocks = s->new_stripe.key.v.nr_blocks;
 
 	guard(spinlock)(&c->ec.stripes_new_lock);
 	for (unsigned i = 0; i < nr_blocks; i++) {

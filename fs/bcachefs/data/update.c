@@ -48,10 +48,28 @@ static const struct rhashtable_params bch_update_params = {
 	.automatic_shrinking	= true,
 };
 
-bool bch2_data_update_in_flight(struct bch_fs *c, struct bbpos *pos)
+bool bch2_data_update_in_flight(struct bch_fs *c, struct bbpos *pos,
+				enum bch_data_update_types type)
 {
 	guard(rcu)();
-	return rhltable_lookup(&c->update_table, pos, bch_update_params) != NULL;
+	struct rhlist_head *list = rhltable_lookup(&c->update_table, pos,
+						   bch_update_params);
+	if (!list)
+		return false;
+
+	/* non-copygc updates are excluded by any in-flight update at the same
+	 * pos */
+	if (type != BCH_DATA_UPDATE_copygc)
+		return true;
+
+	/* copygc is only excluded by another copygc — promotes, reconciles,
+	 * etc. shouldn't block bucket evacuation */
+	struct data_update *m;
+	struct rhlist_head *p;
+	rhl_for_each_entry_rcu(m, p, list, hash)
+		if (m->opts.type == BCH_DATA_UPDATE_copygc)
+			return true;
+	return false;
 }
 
 static void ptr_bits_to_text(struct printbuf *out, unsigned ptrs, const char *name)
@@ -63,30 +81,40 @@ static void ptr_bits_to_text(struct printbuf *out, unsigned ptrs, const char *na
 	}
 }
 
-static void bkey_put_dev_refs(struct bch_fs *c, struct bkey_s_c k, unsigned ptrs_held)
+/*
+ * Walks @cas (parallel to the ptrs in @k) and drops refs taken in
+ * bkey_get_dev_refs.  Doesn't re-derive ca via c->devs[idx] — dev_remove
+ * may have cleared that slot while our refs still pin the dev objects.
+ */
+static void bkey_put_dev_refs(struct bch_fs *c, struct bkey_s_c k,
+			      struct bch_dev **cas)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	unsigned ptr_bit = 1;
+	unsigned i = 0;
 
 	bkey_for_each_ptr(ptrs, ptr) {
-		if (ptrs_held & ptr_bit)
-			bch2_dev_put(bch2_dev_have_ref(c, ptr->dev));
-		ptr_bit <<= 1;
+		if (cas[i])
+			bch2_dev_put(cas[i]);
+		i++;
 	}
 }
 
-static unsigned bkey_get_dev_refs(struct bch_fs *c, struct bkey_s_c k)
+/*
+ * Take a dev ref per ptr, populating @cas (NULL where tryget failed).
+ * @cas is consumed by bkey_put_dev_refs at exit, and by nocow lock/unlock
+ * helpers — cas[i] non-NULL is the authoritative "we hold a ref / we locked
+ * this bucket" indicator.
+ */
+static void bkey_get_dev_refs(struct bch_fs *c, struct bkey_s_c k,
+			      struct bch_dev **cas)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	unsigned ptrs_held = 0, ptr_bit = 1;
+	unsigned i = 0;
 
 	bkey_for_each_ptr(ptrs, ptr) {
-		if (likely(bch2_dev_bkey_tryget(c, k, ptr->dev)))
-			ptrs_held |= ptr_bit;
-		ptr_bit <<= 1;
+		cas[i] = bch2_dev_bkey_tryget(c, k, ptr->dev);
+		i++;
 	}
-
-	return ptrs_held;
 }
 
 static unsigned ptr_remap(struct bch_fs *c, struct bkey_s_c old,
@@ -232,16 +260,13 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	 * degraded due to option changes:
 	 */
 	struct bkey_i_extent *new = bkey_i_to_extent(bch2_keylist_front(&u->op.insert_keys));
-	new = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(&new->k) +
-				 sizeof(struct bch_extent_reconcile) +
-				 sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX));
+	unsigned new_buf_u64s = new->k.u64s + 1 + BCH_REPLICAS_MAX;
+	new = errptr_try(bch2_trans_kmalloc(trans, new_buf_u64s * sizeof(u64)));
 	bkey_copy(&new->k_i, bch2_keylist_front(&u->op.insert_keys));
 
+	unsigned insert_buf_u64s = k.k->u64s + bkey_val_u64s(&new->k) + 1 + BCH_REPLICAS_MAX;
 	struct bkey_i *insert = errptr_try(bch2_trans_kmalloc(trans,
-				    bkey_bytes(k.k) +
-				    bkey_val_bytes(&new->k) +
-				    sizeof(struct bch_extent_reconcile) +
-				    sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX));
+						insert_buf_u64s * sizeof(u64)));
 	bkey_reassemble(insert, k);
 
 	bch2_cut_front(c, iter->pos,	&new->k_i);
@@ -420,11 +445,8 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	 * incorrectly written data due to needs_rb already being set on the
 	 * existing extent
 	 */
-	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, &new->k_i,
-					  SET_NEEDS_RECONCILE_foreground,
-					  u->op.opts.change_cookie));
-	/* This is the real set_needs_reconcile() call */
-	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, insert,
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(&new->k_i),
+					  new_buf_u64s,
 					  SET_NEEDS_RECONCILE_foreground,
 					  u->op.opts.change_cookie));
 
@@ -433,9 +455,12 @@ static int data_update_index_update_key(struct btree_trans *trans,
 		try(bch2_bkey_durability(trans, k, &old_durability));
 		try(bch2_bkey_durability(trans, bkey_i_to_s_c(insert), &new_durability));
 
-		if ((new_durability.total < old_durability.total &&
-		     new_durability.total < min(u->op.opts.data_replicas, opts.data_replicas)) ||
-		    !new_durability.total) {
+		if (((new_durability.total < old_durability.total &&
+		      new_durability.total < min(u->op.opts.data_replicas, opts.data_replicas)) ||
+		     !new_durability.total) &&
+		    ({smp_mb();
+		     u->op.opts.change_cookie == READ_ONCE(c->opt_change_cookie);})) {
+
 			CLASS(bch_log_msg, msg)(c);
 			prt_printf(&msg.m, "Data update would have reduced extent durability:\n");
 			prt_printf(&msg.m, "Old extent %u, new %u, option specifies %u\n",
@@ -448,7 +473,15 @@ static int data_update_index_update_key(struct btree_trans *trans,
 		}
 	}
 
-	try(bch2_trans_update(trans, iter, insert, BTREE_UPDATE_internal_snapshot_node));
+	/* This is the real set_needs_reconcile() call */
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(insert),
+					  insert_buf_u64s,
+					  SET_NEEDS_RECONCILE_foreground,
+					  u->op.opts.change_cookie));
+
+	try(bch2_trans_update(trans, iter, insert,
+			      BTREE_UPDATE_internal_snapshot_node|
+			      BTREE_TRIGGER_set_needs_reconcile_done));
 	try(bch2_trans_commit(trans, &u->op.res, NULL,
 			      BCH_TRANS_COMMIT_no_check_rw|
 			      BCH_TRANS_COMMIT_no_enospc|
@@ -525,19 +558,22 @@ static int data_update_index_update_key_nowrite(struct btree_trans *trans,
 	if (!ptrs_kill)
 		return 0;
 
-	struct bkey_i *new = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) +
-				 sizeof(struct bch_extent_reconcile) +
-				 sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX));
+	unsigned new_buf_u64s = k.k->u64s + 1 + BCH_REPLICAS_MAX;
+	struct bkey_i *new = errptr_try(bch2_trans_kmalloc(trans,
+						new_buf_u64s * sizeof(u64)));
 	bkey_reassemble(new, k);
 
 	bch2_bkey_drop_ptrs_mask(c, new, ptrs_kill);
 
 	struct bch_inode_opts opts;
 	try(bch2_bkey_get_io_opts(trans, NULL, k, &opts));
-	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, new,
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(new),
+					  new_buf_u64s,
 					  SET_NEEDS_RECONCILE_foreground,
 					  u->op.opts.change_cookie - 1));
-	try(bch2_trans_update(trans, iter, new, BTREE_UPDATE_internal_snapshot_node));
+	try(bch2_trans_update(trans, iter, new,
+			      BTREE_UPDATE_internal_snapshot_node|
+			      BTREE_TRIGGER_set_needs_reconcile_done));
 
 	prt_printf(msg, "new: ");
 	bch2_bkey_val_to_text(msg, c, bkey_i_to_s_c(new));
@@ -777,8 +813,8 @@ void bch2_data_update_exit(struct data_update *update, int ret)
 	update->bvecs = NULL;
 
 	if (c->opts.nocow_enabled)
-		bch2_bkey_nocow_unlock(c, k, update->ptrs_held, 0);
-	bkey_put_dev_refs(c, k, update->ptrs_held);
+		bch2_bkey_nocow_unlock(c, k, update->cas, 0);
+	bkey_put_dev_refs(c, k, update->cas);
 	bch2_disk_reservation_put(c, &update->op.res);
 	bch2_bkey_buf_exit(&update->k);
 }
@@ -931,6 +967,7 @@ static int bch2_extent_drop_ptrs(struct btree_trans *trans,
 				 struct data_update_opts *data_opts)
 {
 	struct bch_fs *c = trans->c;
+	CLASS(disk_reservation, res)(c); /* extents btree updates always require a disk res passed in */
 
 	struct bkey_i *n = errptr_try(bch2_bkey_make_mut_noupdate(trans, k));
 
@@ -958,7 +995,7 @@ static int bch2_extent_drop_ptrs(struct btree_trans *trans,
 
 	return bch2_trans_relock(trans) ?:
 		bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node) ?:
-		bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
+		bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
 }
 
 static int bch2_data_update_bios_init(struct data_update *m, struct bch_fs *c,
@@ -1405,12 +1442,12 @@ int bch2_data_update_init(struct btree_trans *trans,
 			ret = __bch2_can_do_write(c, io_opts, &m->opts, &m->op.devs_have, k, NULL);
 			if (ret)
 				goto out;
+		}
 
-			if (bch2_data_update_in_flight(c, &m->pos)) {
-				event_inc(c, data_update_in_flight);
-				ret = bch_err_throw(c, data_update_fail_in_flight);
-				goto out;
-			}
+		if (bch2_data_update_in_flight(c, &m->pos, data_opts.type)) {
+			event_inc(c, data_update_in_flight);
+			ret = bch_err_throw(c, data_update_fail_in_flight);
+			goto out;
 		}
 
 		/*
@@ -1443,10 +1480,10 @@ int bch2_data_update_init(struct btree_trans *trans,
 	 * read from the pointer we're operating on
 	 */
 
-	m->ptrs_held = bkey_get_dev_refs(c, k);
+	bkey_get_dev_refs(c, k, m->cas);
 
 	if (c->opts.nocow_enabled) {
-		if (!bch2_bkey_nocow_trylock(c, ptrs, m->ptrs_held, 0)) {
+		if (!bch2_bkey_nocow_trylock(c, ptrs, m->cas, 0)) {
 			if (!ctxt) {
 				/* We're being called from the promote path:
 				 * there is a btree_trans on the stack that's
@@ -1460,12 +1497,12 @@ int bch2_data_update_init(struct btree_trans *trans,
 			bool locked = false;
 			if (ctxt)
 				move_ctxt_wait_event(ctxt,
-					(locked = bch2_bkey_nocow_trylock(c, ptrs, m->ptrs_held, 0)) ||
+					(locked = bch2_bkey_nocow_trylock(c, ptrs, m->cas, 0)) ||
 					list_empty(&ctxt->ios));
 			if (!locked) {
 				if (ctxt)
 					bch2_trans_unlock(ctxt->trans);
-				bch2_bkey_nocow_lock(c, ptrs, m->ptrs_held, 0);
+				bch2_bkey_nocow_lock(c, ptrs, m->cas, 0);
 			}
 		}
 	}
@@ -1487,7 +1524,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 	return 0;
 out_nocow_unlock:
 	if (c->opts.nocow_enabled)
-		bch2_bkey_nocow_unlock(c, k, m->ptrs_held, 0);
+		bch2_bkey_nocow_unlock(c, k, m->cas, 0);
 out:
 	BUG_ON(!ret);
 
@@ -1500,8 +1537,8 @@ out:
 		m->on_hashtable = false;
 	}
 
-	bkey_put_dev_refs(c, k, m->ptrs_held);
-	m->ptrs_held = 0;
+	bkey_put_dev_refs(c, k, m->cas);
+	memset(m->cas, 0, sizeof(m->cas));
 	bch2_disk_reservation_put(c, &m->op.res);
 	bch2_bkey_buf_exit(&m->k);
 

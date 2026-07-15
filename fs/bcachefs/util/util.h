@@ -56,14 +56,30 @@ static inline struct bio_vec *bio_inline_vecs(struct bio *bio)
 }
 #endif
 
+/*
+ * 7.1 introduced bdev_rot() and removed bdev_nonrot(). Shim bdev_rot for
+ * older kernels and userspace so call sites can always use bdev_rot.
+ */
+#if !defined(__KERNEL__) || LINUX_VERSION_CODE < KERNEL_VERSION(7,0,0)
+static inline bool bdev_rot(struct block_device *bdev)
+{
+	return !bdev_nonrot(bdev);
+}
+#endif
+
 DEFINE_FREE(bio_put, struct bio *, if (_T) bio_put(_T))
 
-/* Userspace doesn't align allocations as nicely as the kernel allocators: */
-static inline size_t buf_pages(void *p, size_t len)
+/*
+ * Number of bvecs needed to describe [p, p+len) in a bio, matching how
+ * bch2_bio_map() will add it: physically contiguous buffers take one bvec,
+ * vmalloc buffers take one bvec per page.
+ */
+static inline size_t buf_nr_bvecs(void *p, size_t len)
 {
-	return DIV_ROUND_UP(len +
-			    ((unsigned long) p & (PAGE_SIZE - 1)),
-			    PAGE_SIZE);
+	return is_vmalloc_addr(p)
+		? DIV_ROUND_UP(len + ((unsigned long) p & (PAGE_SIZE - 1)),
+			       PAGE_SIZE)
+		: 1;
 }
 
 static inline void *bch2_kvmalloc_noprof(size_t n, gfp_t flags)
@@ -374,6 +390,10 @@ static inline unsigned fract_exp_two(unsigned x, unsigned fract_bits)
 }
 
 void bch2_bio_map(struct bio *bio, void *base, size_t);
+struct bio *bch2_bio_map_and_chain(struct block_device *, void *, size_t,
+				   sector_t, blk_opf_t, gfp_t,
+				   struct bio_set *);
+int bch2_bio_submit_buf_wait(struct block_device *, void *, size_t, sector_t, blk_opf_t);
 int bch2_bio_alloc_pages(struct bio *, unsigned, size_t, gfp_t);
 
 #define closure_bio_submit(bio, cl)					\
@@ -846,6 +866,58 @@ static inline mempool_t *mempool_create_kvmalloc_pool(int min_nr, size_t size)
 {
         return mempool_create(min_nr, mempool_kvmalloc, mempool_kvfree, (void *) size);
 }
+#endif
+
+#include <linux/wait_bit.h>
+
+int bch2_bit_wait_io_timeout(struct wait_bit_key *, int);
+
+/*
+ * wait_on_bit_io_timeout() - missing from <linux/wait_bit.h>; same as
+ * wait_on_bit_timeout() but uses io_schedule_timeout() so the wait is
+ * accounted as iowait.
+ */
+static inline int wait_on_bit_io_timeout(unsigned long *word, int bit,
+					 unsigned mode, unsigned long timeout)
+{
+	might_sleep();
+	if (!test_bit_acquire(bit, word))
+		return 0;
+	return out_of_line_wait_on_bit_timeout(word, bit,
+					       bch2_bit_wait_io_timeout,
+					       mode, timeout);
+}
+
+/*
+ * bch2_alloc_percpu_init(): run init() on every per-cpu instance of a
+ * dynamically-allocated percpu variable.
+ *
+ * Kernel: iterates for_each_possible_cpu and calls init() once per cpu
+ * at allocation time.
+ *
+ * Userspace: alloc_percpu() returns an offset into a per-thread chunk;
+ * threads come and go dynamically, so init() must also be called for
+ * each thread that's spawned later. The userspace shim stashes the
+ * (init, ctx) pair alongside the percpu variable so it can call init()
+ * for every existing chunk now and every future chunk at thread
+ * creation time.
+ *
+ * The init function takes (per-instance ptr, caller ctx, cpu id).
+ */
+#ifdef __KERNEL__
+#define bch2_alloc_percpu_init(_pcv, _init, _ctx)			\
+do {									\
+	int _cpu;							\
+	for_each_possible_cpu(_cpu)					\
+		(_init)(per_cpu_ptr((_pcv), _cpu), (_ctx), _cpu);	\
+} while (0)
+#else
+void __bch2_alloc_percpu_init(void *pcv,
+			      void (*init)(void *, void *, unsigned),
+			      void *ctx);
+#define bch2_alloc_percpu_init(_pcv, _init, _ctx)			\
+	__bch2_alloc_percpu_init((_pcv),				\
+		(void (*)(void *, void *, unsigned))(_init), (_ctx))
 #endif
 
 #endif /* _BCACHEFS_UTIL_H */

@@ -102,9 +102,7 @@ journal_dev_space_available(struct journal *j, struct bch_dev *ca,
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct journal_device *ja = &ca->journal;
-	unsigned sectors, buckets, unwritten;
 	unsigned bucket_size_aligned = round_down(ca->mi.bucket_size, block_sectors(c));
-	u64 seq;
 
 	if (from == journal_space_total)
 		return (struct journal_space) {
@@ -112,18 +110,17 @@ journal_dev_space_available(struct journal *j, struct bch_dev *ca,
 			.total		= bucket_size_aligned * ja->nr,
 		};
 
-	buckets = bch2_journal_dev_buckets_available(j, ja, from);
-	sectors = round_down(ja->sectors_free, block_sectors(c));
+	unsigned buckets = bch2_journal_dev_buckets_available(j, ja, from);
+	unsigned sectors = round_down(ja->sectors_free, block_sectors(c));
 
 	/*
 	 * We that we don't allocate the space for a journal entry
 	 * until we write it out - thus, account for it here:
 	 */
-	for (seq = journal_last_unwritten_seq(j);
-	     seq <= journal_cur_seq(j);
-	     seq++) {
-		unwritten = j->buf[seq & JOURNAL_BUF_MASK].sectors;
-
+	struct journal_buf *buf;
+	u64 seq;
+	fifo_for_each_entry_ptr(buf, &j->in_flight, seq) {
+		unsigned unwritten = buf->sectors;
 		if (!unwritten)
 			continue;
 
@@ -208,8 +205,21 @@ void bch2_journal_space_available(struct journal *j)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	unsigned clean, clean_ondisk, total;
-	unsigned max_entry_size	 = min(j->buf[0].buf_size >> 9,
-				       j->buf[1].buf_size >> 9);
+
+	/*
+	 * Max entry size we'll let callers use — take the min over any
+	 * currently-live ring buffers, or fall back to the target buf size
+	 * when no ring slot has a buf assigned yet.
+	 */
+	unsigned max_entry_size = UINT_MAX;
+	struct journal_buf *buf;
+	u64 seq;
+	fifo_for_each_entry_ptr(buf, &j->in_flight, seq)
+		if (buf->buf_size)
+			max_entry_size = min(max_entry_size, buf->buf_size >> 9);
+	if (max_entry_size == UINT_MAX)
+		max_entry_size = j->buf_size_want >> 9;
+
 	unsigned nr_online = 0, nr_devs_want;
 	bool can_discard = false;
 
@@ -404,18 +414,23 @@ int bch2_journal_update_last_seq_ondisk(struct journal *j, u64 last_seq_ondisk,
 	return 0;
 }
 
-bool __bch2_journal_pin_put(struct journal *j, u64 seq)
+void bch2_journal_replay_pins_put(struct journal *j, u64 seq)
 {
-	struct journal_entry_pin_list *pin_list = journal_seq_pin(j, seq);
+	BUG_ON(seq < j->replay_journal_seq);
 
-	return atomic_dec_and_test(&pin_list->count);
-}
+	seq = min(seq, j->replay_journal_seq_end);
 
-void bch2_journal_pin_put(struct journal *j, u64 seq)
-{
-	if (__bch2_journal_pin_put(j, seq)) {
-		guard(spinlock)(&j->lock);
-		bch2_journal_update_last_seq(j);
+	while (j->replay_journal_seq < seq) {
+		struct journal_entry_pin_list *pin_list =
+			journal_seq_pin(j, j->replay_journal_seq++);
+
+		BUG_ON(!pin_list->unreplayed);
+		pin_list->unreplayed = false;
+
+		if (atomic_dec_and_test(&pin_list->count)) {
+			guard(spinlock)(&j->lock);
+			bch2_journal_update_last_seq(j);
+		}
 	}
 }
 
@@ -431,8 +446,11 @@ static inline bool __journal_pin_drop(struct journal *j,
 		j->flush_in_progress_dropped = true;
 
 	pin_list = journal_seq_pin(j, pin->seq);
-	pin->seq = 0;
 	list_del_init(&pin->list);
+	/*
+	 * Don't clear pin->seq here; caller may be updating the pin, and we
+	 * don't want other threads to see pin->seq in an intermediate state
+	 */
 
 	if (j->reclaim_flush_wait.list.first)
 		__closure_wake_up(&j->reclaim_flush_wait);
@@ -451,6 +469,7 @@ void bch2_journal_pin_drop(struct journal *j,
 	guard(spinlock)(&j->lock);
 	if (__journal_pin_drop(j, pin))
 		bch2_journal_update_last_seq(j);
+	pin->seq = 0;
 }
 
 static enum journal_pin_type journal_pin_type(struct journal_entry_pin *pin,
@@ -585,6 +604,14 @@ journal_get_next_pin(struct journal *j,
 	struct journal_entry_pin *ret = NULL;
 
 	fifo_for_each_entry_ptr(pin_list, &j->pin, *seq) {
+		/*
+		 * Flushing journal pins (writing btree nodes) requires
+		 * consuming journal space: don't get ahead of journal replay to
+		 * avoid deadlocking
+		 */
+		if (pin_list->unreplayed)
+			break;
+
 		if (*seq > seq_to_flush && !allowed_above_seq)
 			break;
 
@@ -765,6 +792,9 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 		if (ret)
 			break;
 
+		closure_wait_event(&bc->nr_in_flight_wait,
+				   atomic_long_read(&bc->nr_in_flight_inner) < BTREE_WRITE_IO_LIMIT(c));
+
 		seq_to_flush = journal_seq_to_flush(j);
 		min_nr = 0;
 
@@ -779,16 +809,18 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 		if (journal_low_on_space(j))
 			min_nr = 1;
 
-		size_t btree_cache_live = bc->live[0].nr + bc->live[1].nr;
-		if (atomic_long_read(&bc->nr_dirty) * 2 > btree_cache_live)
+		size_t btree_cache_live = btree_cache_list_nr(&bc->live[0]) +
+					  btree_cache_list_nr(&bc->live[1]);
+		size_t btree_cache_dirty = bc->live[0].nr_dirty + bc->live[1].nr_dirty;
+		if (btree_cache_dirty * 2 > btree_cache_live)
 			min_nr = 1;
 
 		min_key_cache = min(bch2_nr_btree_keys_need_flush(c), (size_t) 128);
 
 		event_inc_trace(c, journal_reclaim_start, buf, ({
 			prt_printf(&buf, "direct %u kicked %u\n", direct, kicked);
-			prt_printf(&buf, "btree cache %lu/%zu min %zu\n",
-				   atomic_long_read(&bc->nr_dirty), btree_cache_live, min_nr);
+			prt_printf(&buf, "btree cache %zu/%zu min %zu\n",
+				   btree_cache_dirty, btree_cache_live, min_nr);
 			prt_printf(&buf, "key cache %lu/%lu min %zu\n",
 				   atomic_long_read(&c->btree.key_cache.nr_dirty),
 				   atomic_long_read(&c->btree.key_cache.nr_keys),
@@ -1045,7 +1077,10 @@ bool bch2_journal_seq_pins_to_text(struct printbuf *out, struct journal *j, u64 
 
 	pin_list = journal_seq_pin(j, *seq);
 
-	prt_printf(out, "%llu: count %u\n", *seq, atomic_read(&pin_list->count));
+	prt_printf(out, "%llu: count %u", *seq, atomic_read(&pin_list->count));
+	if (pin_list->unreplayed)
+		prt_str(out, " unreplayed");
+	prt_newline(out);
 	guard(printbuf_indent)(out);
 
 	bch2_replicas_entry_to_text(out, &pin_list->devs.e);

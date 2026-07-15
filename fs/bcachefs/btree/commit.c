@@ -19,6 +19,7 @@
 #include "journal/journal.h"
 #include "journal/read.h"
 #include "journal/reclaim.h"
+#include "journal/validate.h"
 
 #include "init/error.h"
 #include "init/fs.h"
@@ -245,25 +246,29 @@ static int __btree_node_flush(struct journal *j, struct journal_entry_pin *pin,
 	unsigned idx = w - b->writes;
 
 	CLASS(btree_trans, trans)(c);
-	btree_node_lock_nopath_nofail(trans, &b->c, SIX_LOCK_read);
+	return lockrestart_do(trans, ({
+		btree_path_idx_t path_idx;
+		int ret = bch2_btree_node_lock_with_path(trans, &b->c, SIX_LOCK_read, &path_idx);
+		if (!ret) {
+			old = READ_ONCE(b->flags);
+			do {
+				new = old;
 
-	old = READ_ONCE(b->flags);
-	do {
-		new = old;
+				if (!(old & (1 << BTREE_NODE_dirty)) ||
+				    !!(old & (1 << BTREE_NODE_write_idx)) != idx ||
+				    w->journal.seq != seq)
+					break;
 
-		if (!(old & (1 << BTREE_NODE_dirty)) ||
-		    !!(old & (1 << BTREE_NODE_write_idx)) != idx ||
-		    w->journal.seq != seq)
-			break;
+				new &= ~BTREE_WRITE_TYPE_MASK;
+				new |= BTREE_WRITE_journal_reclaim;
+				new |= 1 << BTREE_NODE_need_write;
+			} while (!try_cmpxchg(&b->flags, &old, new));
 
-		new &= ~BTREE_WRITE_TYPE_MASK;
-		new |= BTREE_WRITE_journal_reclaim;
-		new |= 1 << BTREE_NODE_need_write;
-	} while (!try_cmpxchg(&b->flags, &old, new));
-
-	btree_node_write_if_need(trans, b, SIX_LOCK_read);
-	six_unlock_read(&b->c.lock);
-	return 0;
+			btree_node_write_if_need(trans, b, SIX_LOCK_read);
+			bch2_btree_node_unlock_with_path(trans, path_idx, b->c.level);
+		}
+		ret;
+	}));
 }
 
 int bch2_btree_node_flush0(struct journal *j, struct journal_entry_pin *pin, u64 seq)
@@ -330,16 +335,16 @@ inline void bch2_btree_insert_key_leaf(struct btree_trans *trans,
 
 	if (unlikely(!btree_node_dirty(b))) {
 		EBUG_ON(test_bit(BCH_FS_clean_shutdown, &c->flags));
-		set_btree_node_dirty_acct(c, b);
+		bch2_btree_node_set_dirty(c, b);
 	}
 
 	live_u64s_added = (int) b->nr.live_u64s - old_live_u64s;
 	u64s_added = (int) bset_u64s(t) - old_u64s;
 
 	if (b->sib_u64s[0] != U16_MAX && live_u64s_added < 0)
-		b->sib_u64s[0] = max(0, (int) b->sib_u64s[0] + live_u64s_added);
+		b->sib_u64s[0] = max(b->nr.live_u64s, (int) b->sib_u64s[0] + live_u64s_added);
 	if (b->sib_u64s[1] != U16_MAX && live_u64s_added < 0)
-		b->sib_u64s[1] = max(0, (int) b->sib_u64s[1] + live_u64s_added);
+		b->sib_u64s[1] = max(b->nr.live_u64s, (int) b->sib_u64s[1] + live_u64s_added);
 
 	if (u64s_added > live_u64s_added &&
 	    bch2_maybe_compact_whiteouts(c, b))
@@ -514,12 +519,17 @@ static int run_one_mem_trigger(struct btree_trans *trans,
 	const struct bkey_ops *new_ops = bch2_bkey_type_ops(i->k->k.type);
 
 	if (old_ops->trigger == new_ops->trigger)
-		return bch2_key_trigger(trans, i->btree_id, i->level,
-				old, bkey_i_to_s(new),
-				BTREE_TRIGGER_insert|BTREE_TRIGGER_overwrite|flags);
+		return bch2_key_trigger(trans, (struct btree_trigger_op) {
+			.btree		= i->btree_id,
+			.level		= i->level,
+			.old		= old,
+			.new		= bkey_i_to_s(new),
+			.new_buf_u64s	= i->k_buf_u64s,
+			.flags		= BTREE_TRIGGER_insert|BTREE_TRIGGER_overwrite|flags,
+		});
 	else
 		return bch2_key_trigger_new(trans, i->btree_id, i->level,
-				bkey_i_to_s(new), flags) ?:
+				bkey_i_to_s(new), i->k_buf_u64s, flags) ?:
 		       bch2_key_trigger_old(trans, i->btree_id, i->level,
 				old, flags);
 }
@@ -548,15 +558,22 @@ static int run_one_trans_trigger(struct btree_trans *trans, struct btree_insert_
 	    old_ops->trigger == new_ops->trigger) {
 		i->overwrite_trigger_run = true;
 		i->insert_trigger_run = true;
-		return bch2_key_trigger(trans, i->btree_id, i->level, old, bkey_i_to_s(i->k),
-					BTREE_TRIGGER_insert|
-					BTREE_TRIGGER_overwrite|flags) ?: 1;
+		return bch2_key_trigger(trans, (struct btree_trigger_op) {
+			.btree		= i->btree_id,
+			.level		= i->level,
+			.old		= old,
+			.new		= bkey_i_to_s(i->k),
+			.new_buf_u64s	= i->k_buf_u64s,
+			.flags		= BTREE_TRIGGER_insert|
+					  BTREE_TRIGGER_overwrite|flags,
+		}) ?: 1;
 	} else if (!i->overwrite_trigger_run) {
 		i->overwrite_trigger_run = true;
 		return bch2_key_trigger_old(trans, i->btree_id, i->level, old, flags) ?: 1;
 	} else if (!i->insert_trigger_run) {
 		i->insert_trigger_run = true;
-		return bch2_key_trigger_new(trans, i->btree_id, i->level, bkey_i_to_s(i->k), flags) ?: 1;
+		return bch2_key_trigger_new(trans, i->btree_id, i->level, bkey_i_to_s(i->k),
+					    i->k_buf_u64s, flags) ?: 1;
 	} else {
 		return 0;
 	}
@@ -755,7 +772,7 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 		validate_context.level	= i->level;
 		validate_context.btree	= i->btree_id;
 
-		ret = bch2_bkey_validate(c, bkey_i_to_s_c(i->k), validate_context);
+		ret = bch2_bkey_validate(c, bkey_i_to_s_c(i->k), &validate_context);
 		if (unlikely(ret)){
 			bch2_trans_inconsistent(trans, "invalid bkey on insert from %s -> %ps\n",
 						trans->fn, (void *) i->ip_allocated);
@@ -887,7 +904,7 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 				struct btree_path *path = trans->paths + i->path;
 				struct btree *b = path->l[i->level].b;
 
-				if (unlikely(btree_node_needs_merge(trans, b, u64s_delta))) {
+				if (unlikely(btree_node_needs_merge(c, b, u64s_delta))) {
 					flags = btree_update_set_watermark_hipri(flags);
 
 					try(bch2_foreground_maybe_merge(trans, i->path, i->level,
@@ -908,28 +925,29 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 		try(bch2_trans_subbuf_reserve(trans, &trans->journal_entries,
 					      trans->extra_journal_u64s));
 
+	try(bch2_trans_lock_write(trans));
+
 	if (unlikely(trans->journal_replay_not_finished)) {
-		try(bch2_trans_mutex_lock(trans, &c->journal_keys.overwrite_lock));
+		mutex_lock(&c->journal_keys.overwrite_lock);
 
 		if ((flags & BCH_TRANS_COMMIT_journal_replay) &&
 		    bch2_check_drop_overwrites_from_journal(trans, true)) {
 			mutex_unlock(&c->journal_keys.overwrite_lock);
+			bch2_trans_unlock_updates_write(trans);
 			return btree_trans_restart(trans,
-					     BCH_ERR_transaction_restart_journal_overwrites_changed);
+					BCH_ERR_transaction_restart_journal_overwrites_changed);
 		}
 	}
 
-	int ret = bch2_trans_lock_write(trans);
-	if (likely(!ret)) {
-		ret = bch2_trans_commit_write_locked(trans, flags, stopped_at, trace_ip);
-		bch2_trans_unlock_updates_write(trans);
-	}
+	int ret = bch2_trans_commit_write_locked(trans, flags, stopped_at, trace_ip);
 
 	if (unlikely(trans->journal_replay_not_finished)) {
 		if (!ret)
 			bch2_check_drop_overwrites_from_journal(trans, false);
 		mutex_unlock(&c->journal_keys.overwrite_lock);
 	}
+
+	bch2_trans_unlock_updates_write(trans);
 
 	if (!ret && trans->journal_pin)
 		bch2_journal_pin_add(&c->journal, trans->journal_res.seq,
@@ -993,7 +1011,7 @@ static int __bch2_trans_commit_error(struct btree_trans *trans, unsigned flags,
 		if (trans_commit_has_extents(trans))
 			flags = btree_update_set_watermark_hipri(flags);
 
-		ret = bch2_btree_split_leaf(trans, i->path, flags);
+		ret = bch2_btree_split_leaf(trans, i->path, i->k->k.u64s, flags);
 		if (!ret && trans->has_interior_updates)
 			return btree_trans_restart(trans,
 					     BCH_ERR_transaction_restart_split_with_interior_updates);
@@ -1141,6 +1159,25 @@ revert_fs_usage:
 	return ret;
 }
 
+static noinline int bch2_trans_commit_btree_write_ratelimit(struct btree_trans *trans)
+{
+	struct bch_fs_btree_cache *bc = &trans->c->btree.cache;
+
+	/*
+	 * Journal reclaim doesn't run ahead of journal replay, to avoid journal
+	 * deadlocks - it'll be blocked if replay isn't done:
+	 */
+	if (unlikely(!test_bit(JOURNAL_replay_done, &trans->c->journal.flags)))
+		return 0;
+
+	return drop_locks_do(trans, ({
+		trans_wait_event(trans, &bc->nr_in_flight_wait,
+			atomic_long_read(&bc->nr_in_flight_inner) < BTREE_WRITE_IO_LIMIT(c) * 3 / 4 &&
+			btree_cache_nr_dirty(bc) < btree_cache_nr_live(bc) * 3 / 4);
+		0;
+	}));
+}
+
 int __bch2_trans_commit(struct btree_trans *trans, enum bch_trans_commit_flags flags)
 {
 	struct btree_insert_entry *errored_at = NULL;
@@ -1156,6 +1193,15 @@ int __bch2_trans_commit(struct btree_trans *trans, enum bch_trans_commit_flags f
 
 	if (!bch2_trans_has_updates(trans))
 		goto out_reset;
+
+	struct bch_fs_btree_cache *bc = &trans->c->btree.cache;
+	if ((flags & BCH_WATERMARK_MASK) <= BCH_WATERMARK_normal &&
+	    unlikely(atomic_long_read(&bc->nr_in_flight_inner) > BTREE_WRITE_IO_LIMIT(c) ||
+		     btree_cache_nr_dirty(bc) > btree_cache_nr_live(bc) * 4 / 5)) {
+		ret = bch2_trans_commit_btree_write_ratelimit(trans);
+		if (ret)
+			goto out_reset;
+	}
 
 	ret = bch2_trans_commit_run_triggers(trans);
 	if (ret)

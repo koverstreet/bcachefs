@@ -179,12 +179,12 @@ static int set_node_max(struct bch_fs *c, struct btree *b, struct bpos new_max)
 
 	bch2_btree_node_drop_keys_outside_node(b);
 
-	guard(mutex)(&c->btree.cache.lock);
-	__bch2_btree_node_hash_remove(&c->btree.cache, b);
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 
+	/* unhash, rehash */
+	BUG_ON(bch2_btree_node_transition_state(bc, b, BTREE_NODE_CACHE_FREEABLE));
 	bkey_copy(&b->key, &new->k_i);
-	ret = __bch2_btree_node_hash_insert(&c->btree.cache, b);
-	BUG_ON(ret);
+	BUG_ON(bch2_btree_node_transition_state(bc, b, btree_node_live_state(b)));
 	return 0;
 }
 
@@ -595,7 +595,7 @@ int bch2_check_topology(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
 
-	bch2_trans_srcu_unlock(trans);
+	bch2_trans_unlock_long(trans);
 
 	for (unsigned i = 0; i < btree_id_nr_alive(c); i++) {
 		bool reconstructed_root = false;
@@ -605,14 +605,44 @@ recover:
 		struct btree_root *r = bch2_btree_id_root(c, i);
 		struct btree *b = r->b;
 
+		/*
+		 * XXX: _nofail() locks need to die in a fire.
+		 *
+		 * Any nofail lock take is invisible to the cycle detector
+		 * (the caller isn't recorded as a holder via any path), and
+		 * in multithreaded mode nofail takers piling up on a single
+		 * contended lock can blow through the wait_fifo cap and BUG.
+		 * The cycle detector can't unwind deadlocks it can't see.
+		 *
+		 * The correct shape is may-fail: take the lock via a path,
+		 * wrap in lockrestart_do, propagate transaction_restart up.
+		 * But topology repair is old code that walks the btree with
+		 * its own bch2_btree_and_journal_iter_* infrastructure, not
+		 * via paths — and shoving a synthetic "I locked the root"
+		 * path into that walking code doesn't work (the path's state
+		 * isn't maintained by the walk, and verify_locks on mem_alloc
+		 * slow paths blows up on the mismatch).
+		 *
+		 * Keeping nofail here is only OK because topology repair
+		 * runs at mount/recovery time, before any worker threads are
+		 * started, so there's physically nothing else that could be
+		 * contending for these locks — wait_fifo can't fill up, cycle
+		 * detection isn't needed.
+		 *
+		 * Proper fix is either (a) rewrite topology repair on top of
+		 * paths, or (b) redo the whole nofail → may-fail plumbing so
+		 * nofail callers can still get cycle-detector visibility via
+		 * a thin "lock holder record" that isn't a full path. Either
+		 * is bigger than this commit wants to be.
+		 */
 		btree_node_lock_nopath_nofail(trans, &b->c, SIX_LOCK_read);
 		int ret = btree_check_root_boundaries(trans, b) ?:
 			  bch2_btree_repair_topology_recurse(trans, b);
 		six_unlock_read(&b->c.lock);
 
 		if (bch2_err_matches(ret, BCH_ERR_topology_repair_drop_this_node)) {
-			scoped_guard(mutex, &c->btree.cache.lock)
-				bch2_btree_node_hash_remove(&c->btree.cache, b);
+			bch2_btree_node_transition_state(&c->btree.cache, b,
+								  BTREE_NODE_CACHE_FREEABLE);
 
 			r->b = NULL;
 
@@ -696,8 +726,15 @@ static int bch2_gc_mark_key(struct btree_trans *trans, enum btree_id btree_id,
 	 */
 	unsigned flags = !iter ? BTREE_TRIGGER_is_root : 0;
 
-	try(bch2_key_trigger(trans, btree_id, level, old, unsafe_bkey_s_c_to_s(k),
-			     BTREE_TRIGGER_check_repair|flags));
+	struct btree_trigger_op op = {
+		.btree		= btree_id,
+		.level		= level,
+		.old		= old,
+		.new		= unsafe_bkey_s_c_to_s(k),
+		.new_buf_u64s	= k.k->u64s,
+		.flags		= BTREE_TRIGGER_check_repair|flags,
+	};
+	try(bch2_key_trigger(trans, op));
 
 	if (bch2_trans_has_updates(trans)) {
 		CLASS(disk_reservation, res)(c);
@@ -705,8 +742,8 @@ static int bch2_gc_mark_key(struct btree_trans *trans, enum btree_id btree_id,
 			bch_err_throw(c, transaction_restart_commit);
 	}
 
-	try(bch2_key_trigger(trans, btree_id, level, old, unsafe_bkey_s_c_to_s(k),
-			     BTREE_TRIGGER_gc|BTREE_TRIGGER_insert|flags));
+	op.flags = BTREE_TRIGGER_gc|BTREE_TRIGGER_insert|flags;
+	try(bch2_key_trigger(trans, op));
 fsck_err:
 	return ret;
 }
@@ -858,10 +895,23 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 	}
 
 	/*
-	 * gc.data_type doesn't yet include need_discard & need_gc_gen states -
-	 * fix that here:
+	 * gc tracks sector counts via extent triggers but does not follow
+	 * empty-state transitions (need_discard, need_gc_gens) - those are
+	 * decided by bch2_trigger_alloc() using old vs new state and stick
+	 * in data_type until the discard / gc_gens path clears them.
+	 *
+	 * For nonempty buckets gc.data_type is authoritative from the
+	 * extent walk. For empty buckets gc.data_type is BCH_DATA_free
+	 * (gc never sets need_*); use the on-disk hint instead so a bucket
+	 * correctly in need_discard or need_gc_gens compares equal.
+	 *
+	 * Using new.data_type unconditionally would break reconstruct_alloc:
+	 * post-kill_btree the on-disk key is zeros, hint=free, and
+	 * alloc_data_type() falls into bucket_data_type(free) → free even
+	 * with dirty_sectors > 0, contradicting the rebuilt counters.
 	 */
-	alloc_data_type_set(&gc, gc.data_type);
+	alloc_data_type_set(&gc,
+		!data_type_is_empty(gc.data_type) ? gc.data_type : new.data_type);
 	if (gc.data_type != old_gc.data_type ||
 	    gc.dirty_sectors != old_gc.dirty_sectors) {
 		try(bch2_alloc_key_to_dev_counters(trans, ca, &old_gc, &gc, BTREE_TRIGGER_gc));
@@ -883,8 +933,20 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 			iter->pos.inode, iter->pos.offset,
 			gc.gen,
 			bch2_data_type_str(new.data_type),
-			bch2_data_type_str(gc.data_type)))
+			bch2_data_type_str(gc.data_type))) {
 		new.data_type = gc.data_type;
+
+		/*
+		 * Reconstruct runs under BTREE_TRIGGER_gc which skips the
+		 * transactional path that maintains NEED_DISCARD. Set it
+		 * here on non-empty buckets for downgrade compat (older
+		 * kernels read the bit to decide need_discard state).
+		 */
+		if (!data_type_is_empty(new.data_type) &&
+		    new.data_type != BCH_DATA_sb &&
+		    new.data_type != BCH_DATA_journal)
+			SET_BCH_ALLOC_V4_NEED_DISCARD(&new, true);
+	}
 
 #define copy_bucket_field(_errtype, _f)					\
 	if (ret_fsck_err_on(new._f != gc._f,				\
@@ -1078,7 +1140,7 @@ out:
 	 * At startup, allocations can happen directly instead of via the
 	 * allocator thread - issue wakeup in case they blocked on gc_lock:
 	 */
-	closure_wake_up(&c->allocator.freelist_wait);
+	bch2_alloc_wake_all(c);
 
 	if (!ret && !test_bit(BCH_FS_errors_not_fixed, &c->flags))
 		bch2_sb_members_clean_deleted(c);
@@ -1239,7 +1301,7 @@ static int merge_btree_node_one(struct btree_trans *trans,
 
 	try(bch2_progress_update_iter(trans, progress, iter));
 
-	if (!btree_node_needs_merge(trans, b, 0)) {
+	if (!btree_node_needs_merge(trans->c, b, 0)) {
 		if (bpos_eq(b->key.k.p, SPOS_MAX))
 			return 1;
 

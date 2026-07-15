@@ -6,6 +6,7 @@
 #include "btree/cache.h"
 #include "btree/types.h"
 
+#include "closure.h"
 #include "sb/counters.h"
 
 void bch2_trans_updates_to_text(struct printbuf *, struct btree_trans *);
@@ -283,7 +284,7 @@ btree_path_idx_t bch2_path_get(struct btree_trans *, enum btree_id, struct bpos,
 			       enum btree_iter_update_trigger_flags,
 			       unsigned long);
 btree_path_idx_t bch2_path_get_unlocked_mut(struct btree_trans *, enum btree_id,
-					    unsigned, struct bpos);
+					    unsigned, struct bpos, bool);
 
 struct bkey_s_c bch2_btree_path_peek_slot(struct btree_path *, struct bkey *);
 
@@ -346,6 +347,123 @@ int bch2_trans_relock(struct btree_trans *);
 int bch2_trans_relock_notrace(struct btree_trans *);
 void bch2_trans_unlock(struct btree_trans *);
 void bch2_trans_unlock_long(struct btree_trans *);
+
+/*
+ * Returns the timeout to use for the next blocking wait done by this trans.
+ *
+ * The trans takes an SRCU read lock on bch2_trans_begin(); holding it across
+ * a long blocking wait stalls memory reclaim. So if SRCU has been held for
+ * longer than HZ when we're about to wait, drop it now (via unlock_long) and
+ * let the caller wait the full timeout SRCU-free.
+ *
+ * Otherwise cap the returned timeout at the unconsumed portion of HZ — the
+ * caller's wait will time out before SRCU has been held too long, and on
+ * the next call (after the caller's natural retry) we'll be in the
+ * elapsed >= HZ branch and drop SRCU here.
+ */
+static inline long bch2_trans_short_wait_budget(struct btree_trans *trans, long timeout)
+{
+	if (!trans || !trans->srcu_held)
+		return timeout;
+
+	long elapsed = jiffies - trans->srcu_lock_time;
+	if (elapsed >= HZ) {
+		bch2_trans_unlock_long(trans);
+		return timeout;
+	}
+	return min(HZ - elapsed, timeout);
+}
+
+/*
+ * SRCU-aware wrappers around closure_sync{,_timeout}: short waits under SRCU
+ * until the budget is exhausted, then drop SRCU and wait the remainder.
+ *
+ * trans_closure_sync_timeout() returns 0 on success (closure drained),
+ * -ETIME if timeout fully elapsed.
+ */
+static inline int trans_closure_sync_timeout(struct btree_trans *trans,
+					     struct closure *cl,
+					     long timeout)
+{
+	long remaining = timeout;
+
+	while (remaining > 0) {
+		if (closure_nr_remaining(cl) <= 1)
+			return 0;
+
+		unsigned long start = jiffies;
+		long wait = bch2_trans_short_wait_budget(trans, remaining);
+
+		if (!closure_sync_timeout(cl, wait))
+			return 0;
+		remaining -= (long)(jiffies - start);
+	}
+	return -ETIME;
+}
+
+static inline void trans_closure_sync(struct btree_trans *trans, struct closure *cl)
+{
+	trans_closure_sync_timeout(trans, cl, MAX_SCHEDULE_TIMEOUT);
+}
+
+/*
+ * Wrappers around closure_wait_event{,_timeout} that drop SRCU before
+ * blocking long. Use these instead of closure_wait_event() directly when a
+ * btree_trans is in scope.
+ *
+ * Mirrors closure_wait_event_timeout(); the only change is that the inner
+ * sync uses trans_closure_sync_timeout() so the SRCU short-wait budget is
+ * honoured on each blocking pass.
+ */
+#define __trans_wait_event_timeout(_trans, waitlist, _cond, _until)		\
+({										\
+	CLASS(closure_stack, cl)();						\
+	long _t;								\
+										\
+	while (1) {								\
+		bch2_closure_wait(waitlist, &cl);				\
+		if (_cond) {							\
+			_t = max_t(long, 1L, _until - jiffies);			\
+			break;							\
+		}								\
+		_t = max_t(long, 0L, _until - jiffies);				\
+		if (!_t)							\
+			break;							\
+		trans_closure_sync_timeout(_trans, &cl, _t);			\
+	}									\
+	closure_wake_up(waitlist);						\
+	_t;									\
+})
+
+#define trans_wait_event_timeout(_trans, waitlist, _cond, _timeout)		\
+({										\
+	unsigned long _until = jiffies + (_timeout);				\
+	(_cond)									\
+		? max_t(long, 1L, _until - jiffies)				\
+		: __trans_wait_event_timeout(_trans, waitlist, _cond, _until);	\
+})
+
+#define trans_wait_event(_trans, _waitlist, _condition)				\
+	trans_wait_event_timeout(_trans, _waitlist, _condition, MAX_SCHEDULE_TIMEOUT)
+
+/*
+ * SRCU-aware wrapper around wait_on_bit_io(): under SRCU, do bounded
+ * io_schedule_timeout() waits; once the SRCU short-wait budget is
+ * exhausted, drop SRCU and fall through to an unbounded io_schedule()
+ * wait.
+ */
+static inline void trans_wait_on_bit_io(struct btree_trans *trans,
+					unsigned long *word, int bit)
+{
+	while (test_bit_acquire(bit, word)) {
+		long budget = bch2_trans_short_wait_budget(trans, MAX_SCHEDULE_TIMEOUT);
+
+		if (budget == MAX_SCHEDULE_TIMEOUT)
+			wait_on_bit_io(word, bit, TASK_UNINTERRUPTIBLE);
+		else
+			wait_on_bit_io_timeout(word, bit, TASK_UNINTERRUPTIBLE, budget);
+	}
+}
 
 static inline int trans_was_restarted(struct btree_trans *trans, u32 restart_count)
 {
@@ -786,8 +904,6 @@ static inline int __bch2_bkey_get_val_typed(struct btree_trans *trans,
 	__bch2_bkey_get_val_typed(_trans, _btree_id, _pos, _flags,	\
 				  KEY_TYPE_##_type, sizeof(*_val), _val)
 
-void bch2_trans_srcu_unlock(struct btree_trans *);
-
 u32 bch2_trans_begin(struct btree_trans *);
 
 #define __for_each_btree_node(_trans, _iter, _btree_id, _start,			\
@@ -799,16 +915,24 @@ u32 bch2_trans_begin(struct btree_trans *);
 				      _locks_want, _depth, _flags);		\
 	int _ret3 = 0;								\
 	do {									\
-		_ret3 = lockrestart_do((_trans), ({				\
-			struct btree *_b = bch2_btree_iter_peek_node(&_iter);	\
-			if (!_b)						\
-				break;						\
+		u32 _restart_count = bch2_trans_begin((_trans));		\
 										\
-			PTR_ERR_OR_ZERO(_b) ?: (_do);				\
-		})) ?:								\
-		lockrestart_do((_trans),					\
-			PTR_ERR_OR_ZERO(bch2_btree_iter_next_node(&_iter)));	\
-	} while (!_ret3);							\
+		struct btree *_b = bch2_btree_iter_peek_node(&_iter);		\
+		_ret3 = PTR_ERR_OR_ZERO(_b);					\
+		if (_ret3)							\
+			continue; /* may be restart; re-evaluated below */	\
+		if (!_b)							\
+			break;							\
+										\
+		_ret3 = (_do);							\
+		if (_ret3)							\
+			continue;						\
+										\
+		_ret3 = PTR_ERR_OR_ZERO(bch2_btree_iter_next_node(&_iter));	\
+		if (!_ret3)							\
+			bch2_trans_verify_not_restarted((_trans), _restart_count);\
+	} while (bch2_err_matches(_ret3, BCH_ERR_transaction_restart) ||	\
+		 !_ret3);							\
 										\
 	_ret3;									\
 })
@@ -856,23 +980,21 @@ static inline int btree_trans_too_many_iters(struct btree_trans *trans)
 }
 
 /*
- * goto instead of loop, so that when used inside for_each_btree_key2()
- * break/continue work correctly
+ * Loop-form, so that __cleanup/CLASS attributes on resources allocated inside
+ * _do fire their cleanup on each restart iteration. Callers that need break/
+ * continue inside _do to refer to an outer loop must open-code their own
+ * restart loop instead of using lockrestart_do (see for_each_btree_key_*).
  */
 #define lockrestart_do(_trans, _do)					\
 ({									\
-	__label__ transaction_restart;					\
-	u32 _restart_count;						\
 	int _ret2;							\
-transaction_restart:							\
-	_restart_count = bch2_trans_begin(_trans);			\
-	_ret2 = (_do);							\
+	do {								\
+		u32 _restart_count = bch2_trans_begin(_trans);		\
+		_ret2 = (_do);						\
 									\
-	if (bch2_err_matches(_ret2, BCH_ERR_transaction_restart))	\
-		goto transaction_restart;				\
-									\
-	if (!_ret2)							\
-		bch2_trans_verify_not_restarted(_trans, _restart_count);\
+		if (!_ret2)						\
+			bch2_trans_verify_not_restarted(_trans, _restart_count);\
+	} while (bch2_err_matches(_ret2, BCH_ERR_transaction_restart));	\
 	_ret2;								\
 })
 
@@ -908,15 +1030,19 @@ transaction_restart:							\
 	int _ret3 = 0;							\
 									\
 	do {								\
-		_ret3 = lockrestart_do(_trans, ({			\
-			(_k) = bch2_btree_iter_peek_max_type(&(_iter),	\
-						_end, (_flags));	\
-			if (!(_k).k)					\
-				break;					\
+		u32 _restart_count = bch2_trans_begin(_trans);		\
+		_ret3 = 0;						\
 									\
-			bkey_err(_k) ?: (_do);				\
-		}));							\
-	} while (!_ret3 && bch2_btree_iter_advance(&(_iter)));		\
+		(_k) = bch2_btree_iter_peek_max_type(&(_iter),		\
+						_end, (_flags));	\
+		if (!(_k).k)						\
+			break;						\
+									\
+		_ret3 = bkey_err(_k) ?: (_do);				\
+		if (!_ret3)						\
+			bch2_trans_verify_not_restarted(_trans, _restart_count);\
+	} while (bch2_err_matches(_ret3, BCH_ERR_transaction_restart) ||\
+		 (!_ret3 && bch2_btree_iter_advance(&(_iter))));	\
 									\
 	_ret3;								\
 })
@@ -944,15 +1070,19 @@ transaction_restart:							\
 	CLASS(btree_iter, iter)((_trans), (_btree_id), (_start), (_flags));	\
 										\
 	do {									\
-		_ret3 = lockrestart_do(_trans, ({				\
-			struct bkey_s_c _k =					\
-				bch2_btree_iter_peek_prev_type(&(_iter), (_flags));\
-			if (!(_k).k)						\
-				break;						\
+		u32 _restart_count = bch2_trans_begin(_trans);			\
+		_ret3 = 0;							\
 										\
-			bkey_err(_k) ?: (_do);					\
-		}));								\
-	} while (!_ret3 && bch2_btree_iter_rewind(&(_iter)));			\
+		struct bkey_s_c _k =						\
+			bch2_btree_iter_peek_prev_type(&(_iter), (_flags));	\
+		if (!(_k).k)							\
+			break;							\
+										\
+		_ret3 = bkey_err(_k) ?: (_do);					\
+		if (!_ret3)							\
+			bch2_trans_verify_not_restarted(_trans, _restart_count);\
+	} while (bch2_err_matches(_ret3, BCH_ERR_transaction_restart) ||	\
+		 (!_ret3 && bch2_btree_iter_rewind(&(_iter))));			\
 										\
 	_ret3;									\
 })

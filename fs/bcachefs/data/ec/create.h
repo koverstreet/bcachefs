@@ -3,6 +3,7 @@
 #define _BCACHEFS_DATA_EC_CREATE_H
 
 #include "io.h"
+#include "util/darray.h"
 
 struct ec_dev_stripe_state {
 	struct list_head	list;
@@ -39,12 +40,12 @@ struct ec_stripe_new {
 
 	atomic_t		ref[STRIPE_REF_NR];
 
+	u64			seq;
+
 	int			err;
 
 	struct bch_devs_mask	devs;
 	enum bch_watermark	watermark;
-	u8			nr_data;
-	u8			nr_parity;
 
 	bool			have_old_stripe:1;
 
@@ -71,6 +72,36 @@ struct ec_stripe_new {
 	u8			old_blocks_nr;
 };
 
+/*
+ * Geometry lives entirely in the on-disk bkey; ec_stripe_new derives
+ * the nr_data/nr_parity split from it.
+ */
+static inline unsigned ec_stripe_new_nr_data(const struct ec_stripe_new *s)
+{
+	return s->new_stripe.key.v.nr_blocks - s->new_stripe.key.v.nr_redundant;
+}
+
+static inline unsigned ec_stripe_new_nr_parity(const struct ec_stripe_new *s)
+{
+	return s->new_stripe.key.v.nr_redundant;
+}
+
+/*
+ * Stripe block layout: data slots at [0, nr_data), parity slots at
+ * [nr_data, nr_data + nr_parity). These macros name the ranges for
+ * readers; pass nr_data/nr_parity directly so they work for both
+ * struct ec_stripe_new (via accessors) and struct bch_stripe
+ * (nr_blocks - nr_redundant, nr_redundant).
+ */
+#define for_each_data_block(_i, _nr_data)				\
+	for (unsigned _i = 0; _i < (_nr_data); _i++)
+
+#define for_each_parity_block(_i, _nr_data, _nr_parity)			\
+	for (unsigned _i = (_nr_data); _i < (_nr_data) + (_nr_parity); _i++)
+
+#define for_each_data_parity_block(_i, _nr_data, _nr_parity)		\
+	for (unsigned _i = 0; _i < (_nr_data) + (_nr_parity); _i++)
+
 struct ec_stripe_head {
 	struct list_head	list;
 	struct mutex		lock;
@@ -96,6 +127,27 @@ struct ec_stripe_head {
 };
 
 void *bch2_writepoint_ec_buf(struct bch_fs *, struct write_point *);
+
+unsigned bch2_disk_label_ec_devs(struct bch_fs *, unsigned, struct bch_devs_mask *, unsigned);
+void bch2_disk_label_ec_rw_member_devs(struct bch_fs *, unsigned,
+				       struct bch_devs_mask *, unsigned);
+
+/*
+ * Lazy per-(disk_label, sectors) cache of RW member counts (the can_widen
+ * target); shared by callers that walk stripes and need the widening target
+ * many times (scan, check). Kept eytzinger-sorted between inserts.
+ */
+struct widen_cache_entry {
+	u8	disk_label;
+	u16	sectors;
+	u16	nr_devs;
+};
+
+DEFINE_DARRAY_NAMED(widen_cache, struct widen_cache_entry);
+
+int bch2_widen_cache_init(widen_cache *);
+int bch2_widen_cache_lookup(widen_cache *, struct bch_fs *,
+			    u8 disk_label, u16 sectors, unsigned *nr_devs);
 
 void bch2_ec_stripe_new_cancel(struct bch_fs *, struct ec_stripe_head *, int);
 void bch2_ec_bucket_cancel(struct bch_fs *, struct open_bucket *, int);
@@ -129,6 +181,13 @@ static inline void ec_stripe_new_put(struct bch_fs *c, struct ec_stripe_new *s,
 			bch2_ec_stripe_new_free(c, s);
 			break;
 		case STRIPE_REF_io:
+			/*
+			 * seq is the commit-ready marker: assigned when all
+			 * accumulating writes have finished (refs drained).
+			 * bch2_fs_ec_flush_outstanding() waits on this.
+			 */
+			s->seq = atomic64_inc_return(&c->ec.stripe_new_seq);
+			wake_up(&c->ec.stripe_new_wait);
 			bch2_ec_stripe_create_start(c, s);
 			break;
 		default:

@@ -19,6 +19,7 @@
 #include "journal/read.h"
 #include "journal/reclaim.h"
 #include "journal/write.h"
+#include "journal/validate.h"
 
 #include "sb/clean.h"
 #include "sb/counters.h"
@@ -102,6 +103,10 @@ static void __journal_write_alloc(struct journal *j,
 					ja->sectors_free,
 				  .dev = ca->dev_idx,
 		});
+
+		/* Stash ca alongside the just-appended ptr; submit + no_io
+		 * walk @key.k.u64s ptrs in order, so the index lines up. */
+		w->cas[bkey_val_u64s(&w->key.k) - 1] = ca;
 
 		ja->sectors_free -= sectors;
 		ja->bucket_seq[ja->cur_idx] = le64_to_cpu(w->data->seq);
@@ -198,22 +203,46 @@ static void replicas_refs_put(struct bch_fs *c, darray_replicas_entry_refs *refs
 	refs->nr = 0;
 }
 
+/*
+ * write_done has two-state semantics that matter for concurrent
+ * journal_write_done() callbacks:
+ *
+ *   write_done == false: bio for this seq has completed, but post-completion
+ *	bookkeeping (replicas_refs_put, last_seq_ondisk / flushed_seq_ondisk
+ *	advance) has NOT yet finished, OR we haven't entered the callback for
+ *	this seq yet.
+ *   write_done == true:  ALL post-completion bookkeeping is finished. Safe
+ *	for an unrelated thread to treat the seq as fully flushed.
+ *
+ * The completion loop in journal_write_done() is allowed to drive seqs
+ * forward in two cases:
+ *
+ *   - write_done is set (a prior callback already finished the bookkeeping
+ *     and left this seq queued for a later callback to pop), or
+ *   - seq == seq_completing (we are the callback for this seq, so we own
+ *     its bookkeeping for this iteration of the loop, even though write_done
+ *     isn't set yet - it gets set only after the loop finishes).
+ *
+ * Setting write_done up front would collapse the distinction: a concurrent
+ * journal_write_done() callback could observe write_done == true during
+ * our lock-drop window for replicas_refs_put, advance flushed_seq_ondisk
+ * past our seq, and let going-RO mark the FS clean before our refs are
+ * actually put.
+ */
 static inline u64 last_uncompleted_write_seq(struct journal *j, u64 seq_completing)
 {
-	u64 seq = journal_last_unwritten_seq(j);
+	if (fifo_empty(&j->in_flight))
+		return 0;
 
-	if (seq <= journal_cur_seq(j) &&
-	    (j->buf[seq & JOURNAL_BUF_MASK].write_done ||
-	     seq == seq_completing))
-		return seq;
-
-	return 0;
+	u64 seq = j->in_flight.front;
+	return (fifo_peek_front(&j->in_flight).write_done || seq == seq_completing)
+		? seq : 0;
 }
 
 static CLOSURE_CALLBACK(journal_write_done)
 {
 	closure_type(w, struct journal_buf, io);
-	struct journal *j = container_of(w, struct journal, buf[w->idx]);
+	struct journal *j = w->j;
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	u64 seq_wrote = le64_to_cpu(w->data->seq);
 	int err = 0;
@@ -284,7 +313,7 @@ static CLOSURE_CALLBACK(journal_write_done)
 
 	u64 seq;
 	while ((seq = last_uncompleted_write_seq(j, seq_wrote))) {
-		w = j->buf + (seq & JOURNAL_BUF_MASK);
+		w = journal_seq_to_buf(j, seq);
 
 		if (!j->err_seq && !w->noflush) {
 			BUG_ON(w->empty && w->last_seq != seq);
@@ -331,14 +360,37 @@ static CLOSURE_CALLBACK(journal_write_done)
 
 		closure_wake_up(&w->wait);
 		completed = true;
+
+		/*
+		 * Advance the in_flight FIFO front. Maintains the invariant
+		 * fifo.front == seq_ondisk + 1 so journal_seq_to_buf()'s
+		 * fifo_entry() indexing stays consistent with seq. The buf
+		 * storage is inline in the FIFO's backing array; buf->data
+		 * was already recycled/freed above.
+		 */
+		BUG_ON(j->in_flight.front != seq);
+		j->in_flight.front++;
 	}
 
 	/*
-	 * Writes might complete out of order, but we have to do the completions
-	 * in order: if we complete out of order we note it here so the next
-	 * write completion will pick it up:
+	 * Mark our buffer's bookkeeping done. Two cases:
+	 *
+	 *  - The loop above popped past us (front advanced beyond seq_wrote):
+	 *    journal_seq_to_buf() returns NULL, nothing to do - the pop already
+	 *    obviated the need.
+	 *  - The loop stopped before reaching us (some earlier seq is still
+	 *    in flight): we're still in the FIFO, mark write_done so a later
+	 *    journal_write_done() callback can drive its loop through our seq.
+	 *
+	 * Must come after the loop: write_done is the "all bookkeeping done"
+	 * signal. Setting it before the loop opens a race where a concurrent
+	 * callback observes us as fully done during our lock-drop window for
+	 * replicas_refs_put.
 	 */
-	j->buf[seq_wrote & JOURNAL_BUF_MASK].write_done = true;
+	struct journal_buf *w_wrote = journal_seq_to_buf(j, seq_wrote);
+	if (w_wrote)
+		w_wrote->write_done = true;
+
 	j->pin.front = min(j->pin.back, j->last_seq_ondisk);
 
 	if (completed) {
@@ -360,7 +412,7 @@ static CLOSURE_CALLBACK(journal_write_done)
 		journal_wake(j);
 	}
 
-	if (journal_last_unwritten_seq(j) == journal_cur_seq(j) &&
+	if (fifo_used(&j->in_flight) == 1 &&
 	    j->reservations.cur_entry_offset < JOURNAL_ENTRY_CLOSED_VAL) {
 		struct journal_buf *buf = journal_cur_buf(j);
 		long delta = buf->expires - jiffies;
@@ -384,7 +436,6 @@ static CLOSURE_CALLBACK(journal_write_done)
 
 	if (last_seq_ondisk_updated) {
 		bch2_reset_alloc_cursors(c);
-		closure_wake_up(&c->allocator.freelist_wait);
 		bch2_do_discards_async(c);
 	}
 
@@ -395,9 +446,9 @@ static void journal_write_endio(struct bio *bio)
 {
 	struct journal_bio *jbio = container_of(bio, struct journal_bio, bio);
 	struct bch_dev *ca = jbio->ca;
-	struct journal *j = &ca->fs->journal;
+	struct journal_buf *w = jbio->buf;
+	struct journal *j = w->j;
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
-	struct journal_buf *w = j->buf + jbio->buf_idx;
 
 	bch2_account_io_completion(ca, BCH_MEMBER_ERROR_write,
 				   jbio->submit_time, !bio->bi_status);
@@ -411,56 +462,75 @@ static void journal_write_endio(struct bio *bio)
 
 	closure_put(&w->io);
 	enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_journal_write);
+	bio_put(bio);
 }
 
 static CLOSURE_CALLBACK(journal_write_submit)
 {
 	closure_type(w, struct journal_buf, io);
-	struct journal *j = container_of(w, struct journal, buf[w->idx]);
+	struct journal *j = w->j;
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	unsigned sectors = vstruct_sectors(w->data, c->block_bits);
 
 	event_inc_trace(c, journal_write, buf, ({
-		prt_printf(&buf, "seq %llu\n", le64_to_cpu(w->data->seq));
+		prt_printf(&buf, "seq %llu flush %u sectors %u\n",
+			   le64_to_cpu(w->data->seq),
+			   !JSET_NO_FLUSH(w->data),
+			   sectors);
 		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&w->key));
 	}));
 
+	struct blk_plug plug;
+	blk_start_plug(&plug);
+
+	unsigned ptr_idx = 0;
 	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
-		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
+		struct bch_dev *ca = w->cas[ptr_idx++];
 
 		this_cpu_add(ca->io_done->sectors[WRITE][BCH_DATA_journal],
 			     sectors);
 
 		struct journal_device *ja = &ca->journal;
-		struct journal_bio *jbio = ja->bio[w->idx];
-		struct bio *bio = &jbio->bio;
 
-		jbio->submit_time	= local_clock();
+		BUG_ON(ptr->offset == ca->prev_journal_sector);
+		ca->prev_journal_sector = ptr->offset;
 
 		/*
 		 * blk-wbt.c throttles all writes except those that have both
 		 * REQ_SYNC and REQ_IDLE set...
 		 */
-		bio_reset(bio, ca->disk_sb.bdev, REQ_OP_WRITE|REQ_SYNC|REQ_IDLE|REQ_META);
-		bio->bi_iter.bi_sector	= ptr->offset;
+		blk_opf_t opf = REQ_OP_WRITE|REQ_SYNC|REQ_IDLE|REQ_META;
+		if (!JSET_NO_FLUSH(w->data))
+			opf |= REQ_FUA;
+		if (!JSET_NO_FLUSH(w->data) && !w->separate_flush)
+			opf |= REQ_PREFLUSH;
+
+		/*
+		 * Large vmalloc'd journal buffers may exceed BIO_MAX_VECS
+		 * and need multiple bios chained together; physically
+		 * contiguous buffers fit in a single bvec and the helper
+		 * returns one bio.
+		 */
+		struct bio *bio = bch2_bio_map_and_chain(ca->disk_sb.bdev,
+				w->data, sectors << 9, ptr->offset,
+				opf, GFP_NOFS, &ja->bio_set);
+		struct journal_bio *jbio =
+			container_of(bio, struct journal_bio, bio);
+
+		jbio->ca		= ca;
+		jbio->buf		= w;
+		jbio->submit_time	= local_clock();
+
 		bio->bi_end_io		= journal_write_endio;
 		bio->bi_private		= ca;
 		bio->bi_ioprio		= IOPRIO_PRIO_VALUE(IOPRIO_CLASS_RT, 0);
-
-		BUG_ON(bio->bi_iter.bi_sector == ca->prev_journal_sector);
-		ca->prev_journal_sector = bio->bi_iter.bi_sector;
-
-		if (!JSET_NO_FLUSH(w->data))
-			bio->bi_opf    |= REQ_FUA;
-		if (!JSET_NO_FLUSH(w->data) && !w->separate_flush)
-			bio->bi_opf    |= REQ_PREFLUSH;
-
-		bch2_bio_map(bio, w->data, sectors << 9);
 
 		closure_bio_submit(bio, cl);
 
 		ja->bucket_seq[ja->cur_idx] = le64_to_cpu(w->data->seq);
 	}
+
+	blk_finish_plug(&plug);
 
 	continue_at(cl, journal_write_done, j->wq);
 }
@@ -468,7 +538,7 @@ static CLOSURE_CALLBACK(journal_write_submit)
 static CLOSURE_CALLBACK(journal_write_preflush)
 {
 	closure_type(w, struct journal_buf, io);
-	struct journal *j = container_of(w, struct journal, buf[w->idx]);
+	struct journal *j = w->j;
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 
 	/*
@@ -492,11 +562,15 @@ static CLOSURE_CALLBACK(journal_write_preflush)
 					   BCH_DEV_WRITE_REF_journal_write);
 
 			struct journal_device *ja = &ca->journal;
-			struct journal_bio *jbio = ja->bio[w->idx];
-			struct bio *bio = &jbio->bio;
+			struct bio *bio = bio_alloc_bioset(ca->disk_sb.bdev, 0,
+					REQ_OP_WRITE|REQ_SYNC|REQ_META|REQ_PREFLUSH,
+					GFP_NOFS, &ja->bio_set);
+			struct journal_bio *jbio = container_of(bio, struct journal_bio, bio);
+
+			jbio->ca		= ca;
+			jbio->buf		= w;
 			jbio->submit_time	= local_clock();
-			bio_reset(bio, ca->disk_sb.bdev,
-				  REQ_OP_WRITE|REQ_SYNC|REQ_META|REQ_PREFLUSH);
+
 			bio->bi_end_io		= journal_write_endio;
 			bio->bi_private		= ca;
 			closure_bio_submit(bio, cl);
@@ -517,13 +591,25 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct jset_entry *start, *end;
 	struct jset *jset = w->data;
-	struct journal_keys_to_wb wb = { NULL };
+	struct journal_keys_to_wb wb = {};
 	unsigned u64s;
 	unsigned long btree_roots_have = 0;
 	u64 seq = le64_to_cpu(jset->seq);
 	int ret;
 
 	bool empty = jset->seq == jset->last_seq;
+
+	if (w->need_flush_to_write_buffer) {
+		bch2_journal_keys_to_write_buffer_start(c, &wb, seq);
+
+		/*
+		 * need_flush_to_write_buffer must be cleared under the write buffer's
+		 * locks, dropped by bch2_journal_keys_to_write_buffer_end(), to avoid
+		 * racing with write buffer flushing
+		 */
+		scoped_guard(spinlock, &c->journal.lock)
+			w->need_flush_to_write_buffer = false;
+	}
 
 	/*
 	 * Simple compaction, dropping empty jset_entries (from journal
@@ -559,11 +645,6 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 			__set_bit(i->btree_id, &btree_roots_have);
 			break;
 		case BCH_JSET_ENTRY_write_buffer_keys:
-			EBUG_ON(!w->need_flush_to_write_buffer);
-
-			if (!wb.wb)
-				bch2_journal_keys_to_write_buffer_start(c, &wb, seq);
-
 			jset_entry_for_each_key(i, k) {
 				ret = bch2_journal_key_to_wb(c, &wb, i->btree_id, k);
 				if (ret) {
@@ -578,7 +659,7 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 		}
 	}
 
-	if (wb.wb) {
+	if (wb.seq) {
 		ret = bch2_journal_keys_to_write_buffer_end(c, &wb);
 		if (ret) {
 			bch2_fs_fatal_error(c, "error flushing journal keys to btree write buffer: %s",
@@ -587,9 +668,9 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 		}
 	}
 
-	scoped_guard(spinlock, &c->journal.lock) {
-		w->need_flush_to_write_buffer = false;
-		w->empty = empty;
+	if (empty) {
+		scoped_guard(spinlock, &c->journal.lock)
+			w->empty = true;
 	}
 
 	start = end = vstruct_last(jset);
@@ -727,7 +808,7 @@ static int bch2_journal_write_pick_flush(struct journal *j, struct journal_buf *
 CLOSURE_CALLBACK(bch2_journal_write)
 {
 	closure_type(w, struct journal_buf, io);
-	struct journal *j = container_of(w, struct journal, buf[w->idx]);
+	struct journal *j = w->j;
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	unsigned nr_rw_members = dev_mask_nr(&c->allocator.rw_devs[BCH_DATA_free]);
 	int ret;
@@ -735,13 +816,14 @@ CLOSURE_CALLBACK(bch2_journal_write)
 	BUG_ON(!w->write_started);
 	BUG_ON(w->write_allocated);
 	BUG_ON(w->write_done);
-	BUG_ON(journal_last_unallocated_seq(j) != le64_to_cpu(w->data->seq));
 
 	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 
 	j->write_start_time = local_clock();
 
 	scoped_guard(spinlock, &j->lock) {
+		BUG_ON(journal_last_unallocated_seq(j) != le64_to_cpu(w->data->seq));
+
 		if (nr_rw_members > 1)
 			w->separate_flush = true;
 
@@ -835,9 +917,12 @@ err:
 		bch2_fs_emergency_read_only(c, &msg.m);
 	}
 no_io:
-	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
-		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
-		enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_journal_write);
+	{
+		unsigned ptr_idx = 0;
+		extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
+			struct bch_dev *ca = w->cas[ptr_idx++];
+			enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_journal_write);
+		}
 	}
 
 	continue_at(cl, journal_write_done, j->wq);

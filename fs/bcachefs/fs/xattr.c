@@ -76,7 +76,7 @@ const struct bch_hash_desc bch2_xattr_hash_desc = {
 };
 
 int bch2_xattr_validate(struct bch_fs *c, struct bkey_s_c k,
-			struct bkey_validate_context from)
+			const struct bkey_validate_context *from)
 {
 	struct bkey_s_c_xattr xattr = bkey_s_c_to_xattr(k);
 	unsigned val_u64s = xattr_val_u64s(xattr.v->x_name_len,
@@ -526,6 +526,7 @@ static int __bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 
 	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(opt_change_lock)(c);
+	CLASS(opt_change_scope, opt_scope)(c);
 
 	if (value) {
 		char *buf __free(kfree) = kmalloc(size + 1, GFP_KERNEL);
@@ -535,7 +536,7 @@ static int __bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 		buf[size] = '\0';
 
 		try(bch2_opt_parse(c, opt, buf, &v, NULL));
-		try(bch2_opt_hook_pre_set(c, NULL, inode->ei_inode.bi_inum, opt_id, v, true));
+		try(bch2_opt_hook_pre_set(c, NULL, inode->ei_inode.bi_inum, opt_id, v, true, &opt_scope));
 
 		/* +1 bias for inode options: */
 		s.v = v + 1;

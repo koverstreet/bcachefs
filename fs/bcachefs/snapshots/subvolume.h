@@ -9,11 +9,9 @@ int bch2_check_subvols(struct bch_fs *);
 int bch2_check_subvol_children(struct bch_fs *);
 
 int bch2_subvolume_validate(struct bch_fs *, struct bkey_s_c,
-			    struct bkey_validate_context);
+			    const struct bkey_validate_context *);
 void bch2_subvolume_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
-int bch2_subvolume_trigger(struct btree_trans *, enum btree_id, unsigned,
-			   struct bkey_s_c, struct bkey_s,
-			   enum btree_iter_update_trigger_flags);
+int bch2_subvolume_trigger(struct btree_trans *, struct btree_trigger_op);
 
 #define bch2_bkey_ops_subvolume ((struct bkey_ops) {		\
 	.key_validate	= bch2_subvolume_validate,		\
@@ -51,15 +49,19 @@ bch2_btree_iter_peek_in_subvolume_max_type(struct btree_iter *iter, struct bpos 
 	int _ret3 = 0;								\
 										\
 	do {									\
-		_ret3 = lockrestart_do(_trans, ({				\
-			struct bkey_s_c _k = bch2_btree_iter_peek_in_subvolume_max_type(&(_iter),\
-						_end, _subvolid, (_flags));	\
-			if (!(_k).k)						\
-				break;						\
+		u32 _restart_count = bch2_trans_begin(_trans);			\
+		_ret3 = 0;							\
 										\
-			bkey_err(_k) ?: (_do);					\
-		}));								\
-	} while (!_ret3 && bch2_btree_iter_advance(&(_iter)));			\
+		struct bkey_s_c _k = bch2_btree_iter_peek_in_subvolume_max_type(&(_iter),\
+						_end, _subvolid, (_flags));	\
+		if (!(_k).k)							\
+			break;							\
+										\
+		_ret3 = bkey_err(_k) ?: (_do);					\
+		if (!_ret3)							\
+			bch2_trans_verify_not_restarted(_trans, _restart_count);\
+	} while (bch2_err_matches(_ret3, BCH_ERR_transaction_restart) ||	\
+		 (!_ret3 && bch2_btree_iter_advance(&(_iter))));		\
 										\
 	_ret3;									\
 })

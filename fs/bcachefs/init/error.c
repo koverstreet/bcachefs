@@ -677,15 +677,15 @@ static const char * const bch2_bkey_validate_contexts[] = {
 
 int __bch2_bkey_fsck_err(struct bch_fs *c,
 			 struct bkey_s_c k,
-			 struct bkey_validate_context from,
+			 const struct bkey_validate_context *from,
 			 enum bch_sb_error_id err,
 			 const char *fmt, ...)
 {
-	if (from.flags & BCH_VALIDATE_silent)
+	if (from->flags & BCH_VALIDATE_silent)
 		return bch_err_throw(c, fsck_delete_bkey);
 
 	unsigned fsck_flags = 0;
-	if (!(from.flags & (BCH_VALIDATE_write|BCH_VALIDATE_commit))) {
+	if (!(from->flags & (BCH_VALIDATE_write|BCH_VALIDATE_commit))) {
 		if (test_bit(err, c->sb.errors_silent))
 			return bch_err_throw(c, fsck_delete_bkey);
 
@@ -696,15 +696,15 @@ int __bch2_bkey_fsck_err(struct bch_fs *c,
 
 	CLASS(printbuf, buf)();
 	prt_printf(&buf, "invalid bkey in %s",
-		   bch2_bkey_validate_contexts[from.from]);
+		   bch2_bkey_validate_contexts[from->from]);
 
-	if (from.from == BKEY_VALIDATE_journal)
+	if (from->from == BKEY_VALIDATE_journal)
 		prt_printf(&buf, " journal seq=%llu offset=%u",
-			   from.journal_seq, from.journal_offset);
+			   from->journal_seq, from->journal_offset);
 
 	prt_str(&buf, " btree=");
-	bch2_btree_id_to_text(&buf, from.btree);
-	prt_printf(&buf, " level=%u: ", from.level);
+	bch2_btree_id_to_text(&buf, from->btree);
+	prt_printf(&buf, " level=%u: ", from->level);
 
 	bch2_bkey_val_to_text(&buf, c, k);
 	prt_newline(&buf);

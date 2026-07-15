@@ -36,6 +36,7 @@ static inline bool bch2_btree_key_cache_wait_done(struct bch_fs *c)
 
 int bch2_btree_key_cache_journal_flush(struct journal *,
 				struct journal_entry_pin *, u64);
+int bch2_btree_key_cache_flush_going_ro(struct bch_fs *);
 
 struct bkey_cached *
 bch2_btree_key_cache_find(struct bch_fs *, enum btree_id, struct bpos);

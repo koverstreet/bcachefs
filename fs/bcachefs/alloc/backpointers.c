@@ -33,7 +33,7 @@ static inline struct bbpos bp_to_bbpos(struct bch_backpointer bp)
 }
 
 int bch2_backpointer_validate(struct bch_fs *c, struct bkey_s_c k,
-			      struct bkey_validate_context from)
+			      const struct bkey_validate_context *from)
 {
 	struct bkey_s_c_backpointer bp = bkey_s_c_to_backpointer(k);
 	int ret = 0;
@@ -490,7 +490,7 @@ found:
 	}
 
 	struct bio *bio __free(bio_put) =
-		bio_alloc(ca->disk_sb.bdev, buf_pages(data_buf, bytes), REQ_OP_READ, GFP_KERNEL);
+		bio_alloc(ca->disk_sb.bdev, buf_nr_bvecs(data_buf, bytes), REQ_OP_READ, GFP_KERNEL);
 
 	CLASS(printbuf, buf)(); /* before first goto */
 
@@ -815,13 +815,14 @@ static int bch2_check_extents_to_backpointers_pass(struct btree_trans *trans,
 	bch2_progress_init(&progress, "extents_to_backpointers", trans->c,
 		btree_has_data_ptrs_mask,
 		~0ULL);
+	CLASS(disk_reservation, res)(c); /* extents btree updates always require a disk res passed in */
 
 	for (enum btree_id btree_id = 0;
 	     btree_id < btree_id_nr_alive(c);
 	     btree_id++) {
 		int level, depth = btree_type_has_data_ptrs(btree_id) ? 0 : 1;
 
-		try(commit_do(trans, NULL, NULL,
+		try(commit_do(trans, &res.r, NULL,
 			      BCH_TRANS_COMMIT_no_enospc,
 			      check_btree_root_to_backpointers(trans, s, btree_id, &level)));
 
@@ -832,7 +833,7 @@ static int bch2_check_extents_to_backpointers_pass(struct btree_trans *trans,
 				bch2_progress_update_iter(trans, &progress, &iter) ?:
 				wb_maybe_flush_inc(&s->last_flushed) ?:
 				check_extent_to_backpointers(trans, s, btree_id, level, k) ?:
-				bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
+				bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
 			})));
 
 			--level;
@@ -871,18 +872,12 @@ static int check_bucket_backpointers_to_extents(struct btree_trans *, struct bch
 static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct bkey_s_c alloc_k,
 					     bool *had_mismatch,
 					     struct wb_maybe_flush *last_flushed,
-					     struct bpos *last_pos,
-					     unsigned *nr_iters)
+					     struct bpos *checked_bad)
 {
 	struct bch_fs *c = trans->c;
 	struct bch_alloc_v4 a_convert;
 	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(alloc_k, &a_convert);
 	bool need_commit = false;
-
-	if (!bpos_eq(*last_pos, alloc_k.k->p))
-		*nr_iters = 0;
-
-	*last_pos = alloc_k.k->p;
 
 	*had_mismatch = false;
 
@@ -943,39 +938,37 @@ static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct b
 	if (sectors[ALLOC_dirty]  > a->dirty_sectors ||
 	    sectors[ALLOC_cached] > a->cached_sectors ||
 	    sectors[ALLOC_stripe] > a->stripe_sectors) {
-		if (*nr_iters) {
-			CLASS(bch_log_msg, msg)(c);
-
-			prt_printf(&msg.m, "backpointer sectors > bucket sectors, but found no bad backpointers\n"
-				   "bucket %llu:%llu data type %s, counters\n",
-				   alloc_k.k->p.inode,
-				   alloc_k.k->p.offset,
-				   bch2_data_type_str(a->data_type));
-			if (sectors[ALLOC_dirty]  > a->dirty_sectors)
-				prt_printf(&msg.m, "dirty: %u > %u\n",
-					   sectors[ALLOC_dirty], a->dirty_sectors);
-			if (sectors[ALLOC_cached] > a->cached_sectors)
-				prt_printf(&msg.m, "cached: %u > %u\n",
-					   sectors[ALLOC_cached], a->cached_sectors);
-			if (sectors[ALLOC_stripe] > a->stripe_sectors)
-				prt_printf(&msg.m, "stripe: %u > %u\n",
-					   sectors[ALLOC_stripe], a->stripe_sectors);
-
-			for_each_btree_key_max_norestart(trans, iter, BTREE_ID_backpointers,
-						bucket_pos_to_bp_start(ca, alloc_k.k->p),
-						bucket_pos_to_bp_end(ca, alloc_k.k->p), 0, bp_k, ret) {
-				bch2_bkey_val_to_text(&msg.m, c, bp_k);
-				prt_newline(&msg.m);
-			}
-
-			__WARN();
-			return ret;
+		if (!bpos_eq(*checked_bad, alloc_k.k->p)) {
+			*checked_bad = alloc_k.k->p;
+			return check_bucket_backpointers_to_extents(trans, ca, alloc_k.k->p, last_flushed) ?:
+				bch_err_throw(c, transaction_restart_nested);
 		}
 
-		*nr_iters += 1;
+		try(bch2_backpointers_maybe_flush(trans, alloc_k, last_flushed));
 
-		return check_bucket_backpointers_to_extents(trans, ca, alloc_k.k->p, last_flushed) ?:
-			bch_err_throw(c, transaction_restart_nested);
+		CLASS(bch_log_msg, msg)(c);
+		prt_printf(&msg.m, "backpointer sectors > bucket sectors, but found no bad backpointers\n"
+			   "bucket %llu:%llu data type %s, counters\n",
+			   alloc_k.k->p.inode,
+			   alloc_k.k->p.offset,
+			   bch2_data_type_str(a->data_type));
+		if (sectors[ALLOC_dirty]  > a->dirty_sectors)
+			prt_printf(&msg.m, "dirty: %u > %u\n",
+				   sectors[ALLOC_dirty], a->dirty_sectors);
+		if (sectors[ALLOC_cached] > a->cached_sectors)
+			prt_printf(&msg.m, "cached: %u > %u\n",
+				   sectors[ALLOC_cached], a->cached_sectors);
+		if (sectors[ALLOC_stripe] > a->stripe_sectors)
+			prt_printf(&msg.m, "stripe: %u > %u\n",
+				   sectors[ALLOC_stripe], a->stripe_sectors);
+
+		for_each_btree_key_max_norestart(trans, iter, BTREE_ID_backpointers,
+					bucket_pos_to_bp_start(ca, alloc_k.k->p),
+					bucket_pos_to_bp_end(ca, alloc_k.k->p), 0, bp_k, ret) {
+			bch2_bkey_val_to_text(&msg.m, c, bp_k);
+			prt_newline(&msg.m);
+		}
+		__WARN();
 	}
 
 	if (sectors[ALLOC_dirty]  != a->dirty_sectors ||
@@ -1147,8 +1140,7 @@ int bch2_check_extents_to_backpointers(struct bch_fs *c)
 
 	CLASS(btree_trans, trans)(c);
 	struct extents_to_bp_state s = { .bp_start = POS_MIN };
-	struct bpos last_pos = POS_MIN;
-	unsigned nr_iters = 0;
+	struct bpos checked_bad = POS_MAX;
 
 	wb_maybe_flush_init(&s.last_flushed);
 
@@ -1157,7 +1149,7 @@ int bch2_check_extents_to_backpointers(struct bch_fs *c)
 		bool had_mismatch;
 		bch2_recovery_cancelled(c) ?:
 		check_bucket_backpointer_mismatch(trans, k, &had_mismatch, &s.last_flushed,
-						  &last_pos, &nr_iters);
+						  &checked_bad);
 	}));
 	if (ret)
 		goto err;
@@ -1224,11 +1216,9 @@ static int check_bucket_backpointer_pos_mismatch(struct btree_trans *trans,
 	CLASS(btree_iter, alloc_iter)(trans, BTREE_ID_alloc, bucket, BTREE_ITER_cached);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&alloc_iter));
 
-	struct bpos last_pos = POS_MIN;
-	unsigned nr_iters = 0;
+	struct bpos checked_bad = POS_MAX;
 	return check_bucket_backpointer_mismatch(trans, k, had_mismatch,
-						 last_flushed,
-						 &last_pos, &nr_iters);
+						 last_flushed, &checked_bad);
 }
 
 int bch2_check_bucket_backpointer_mismatch(struct btree_trans *trans,

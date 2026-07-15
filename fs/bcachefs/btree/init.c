@@ -113,6 +113,34 @@
  * context find the correct version through the snapshot ID in the key
  * position.
  *
+ * \subsubsection{Important invariants}
+ *
+ * \textbf{No duplicate keys.} There are no duplicate keys in a btree;
+ * insertions implicitly overwrite existing keys at the same position.
+ * Internally, when an insertion overwrites an existing key, the old key is
+ * marked as deleted (by setting \texttt{k->type = KEY\_TYPE\_deleted})---but
+ * until the btree node is fully rewritten, the old key still exists on disk.
+ * When a btree node is read, we mergesort all bsets it contains, and as part
+ * of the mergesort duplicate keys are found and older versions are dropped.
+ *
+ * \textbf{Deletion via whiteouts.} Deletion is not exposed as a primitive
+ * operation. Instead, deletion is performed by inserting a key of type
+ * \texttt{KEY\_TYPE\_deleted} (a whiteout). This is a direct consequence of
+ * the log-structured btree design: it is not possible to delete a key from a
+ * bset that has already been written to disk---we can only append new keys.
+ * Whiteouts are dropped when the btree node eventually fills up and is
+ * rewritten with all bsets merged.
+ *
+ * \textbf{Ordering always preserved.} The ordering of insertions and updates
+ * is always preserved, across unclean shutdowns and without any need for
+ * explicit flushes. This is critical for filesystem correctness. For example,
+ * creating a file requires two operations: creating the inode, then creating
+ * the directory entry. By doing these in the correct order, we guarantee that
+ * after an unclean shutdown we never have directory entries pointing to
+ * nonexistent inodes---we might leak inode references, but those can be
+ * garbage collected. See the \hyperref[sec:journal]{journal} section for the
+ * mechanism that provides this guarantee.
+ *
  * \subsubsection{Node structure}
  *
  * Btree nodes are log structured internally: new keys are appended rather
@@ -121,6 +149,15 @@
  * bsets appended by subsequent updates. Lookups merge results from all bsets.
  * When a node is split or compacted, all bsets are merged into a single sorted
  * set.
+ *
+ * Once a bset has been written out, it may also be sorted in memory with other
+ * written bsets---we do this periodically so that a given btree node has at
+ * most a few (typically three) bsets in memory: the one currently being
+ * inserted into (at most 8--16K), and the rest roughly forming a geometric
+ * progression in size. This in-memory resorting is one of the main ways
+ * bcachefs efficiently uses such large btree nodes, keeping lookup cost
+ * bounded even as the node accumulates updates. Sorting the entire node into
+ * a single bset is relatively infrequent.
  *
  * This log-structured format has two important properties: writes are
  * sequential (good for both SSDs and spinning disks), and a node can be
@@ -211,7 +248,17 @@
  *
  * \bchdoc{btree-node-cache}
  *
- * \subsubsection{Iterators}
+ * \bchdoc{btree-locking}
+ *
+ * \subsubsection{Auxiliary search trees}
+ *
+ * \bchdoc{auxiliary-search-trees}
+ *
+ * \subsubsection{Programmer interface}
+ *
+ * \bchdoc{btree-programmer-interface}
+ *
+ * \subsubsection{Iterator internals}
  *
  * \bchdoc{btree-iterators}
  *
@@ -241,6 +288,7 @@ void bch2_fs_btree_exit(struct bch_fs *c)
 	bch2_fs_btree_key_cache_exit(&c->btree.key_cache);
 	bch2_fs_btree_iter_exit(c);
 	bch2_fs_btree_interior_update_exit(c);
+	bch2_fs_btree_evicted_size_exit(c);
 	bch2_fs_btree_cache_exit(c);
 
 	if (c->btree.read_complete_wq)
@@ -287,14 +335,8 @@ int bch2_fs_btree_init(struct bch_fs *c)
 	try(bch2_fs_btree_iter_init(c));
 	try(bch2_fs_btree_key_cache_init(&c->btree.key_cache));
 
-	c->btree.read_errors_soft = (struct ratelimit_state)
-		RATELIMIT_STATE_INIT(btree_read_error_soft,
-				     DEFAULT_RATELIMIT_INTERVAL,
-				     DEFAULT_RATELIMIT_BURST);
-	c->btree.read_errors_hard = (struct ratelimit_state)
-		RATELIMIT_STATE_INIT(btree_read_error_hard,
-				     DEFAULT_RATELIMIT_INTERVAL,
-				     DEFAULT_RATELIMIT_BURST);
+	ratelimit_default_init(&c->btree.read_errors_soft);
+	ratelimit_default_init(&c->btree.read_errors_hard);
 
 	return 0;
 }
@@ -309,6 +351,7 @@ int bch2_fs_btree_init_rw(struct bch_fs *c)
 
 	try(bch2_fs_btree_interior_update_init(c));
 	try(bch2_fs_btree_write_buffer_init(c));
+	try(bch2_fs_btree_evicted_size_init(c));
 
 	return 0;
 }

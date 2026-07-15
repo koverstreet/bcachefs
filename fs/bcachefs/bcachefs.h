@@ -253,10 +253,6 @@ do {									\
 		"Disables rewriting of btree nodes during mark and sweep")\
 	BCH_DEBUG_PARAM(btree_shrinker_disabled,			\
 		"Disables the shrinker callback for the btree node cache")\
-	BCH_DEBUG_PARAM(verify_btree_ondisk,				\
-		"Reread btree nodes at various points to verify the "	\
-		"mergesort in the read path against modifications "	\
-		"done in memory")					\
 	BCH_DEBUG_PARAM(backpointers_no_use_write_buffer,		\
 		"Don't use the write buffer for backpointers, enabling "\
 		"extra runtime checks")					\
@@ -443,7 +439,6 @@ enum bch_dev_read_ref {
 	x(journal_write)				\
 	x(journal_discard)				\
 	x(discard_bucket)				\
-	x(discard_sectors_to_release)			\
 	x(discard_one_bucket_fast)			\
 	x(do_invalidates)				\
 	x(stripe_update_extents)			\
@@ -518,6 +513,15 @@ struct bch_dev {
 	/* Allocator: */
 	u64			alloc_cursor[3];
 
+	/*
+	 * Incremented by bch2_alloc_wake_dev() / _all() at every site that
+	 * wakes freelist_wait. Waiters on c->allocator.freelist_wait
+	 * snapshot the counters for the devices they need at park time and
+	 * compare on wake: if none have advanced, the wake didn't concern
+	 * this waiter and it re-parks without the full alloc retry.
+	 */
+	atomic_t		alloc_wake_counter;
+
 	unsigned		nr_open_buckets;
 	unsigned		nr_partial_buckets;
 	unsigned		nr_btree_reserve;
@@ -531,6 +535,7 @@ struct bch_dev {
 
 	struct work_struct	discard_fast_work;
 	darray_u64		discard_fast;
+	struct mutex		discard_fast_lock;
 
 	atomic64_t		rebalance_work;
 
@@ -801,9 +806,6 @@ struct bch_fs {
 	struct dentry		*async_obj_dir;
 	struct btree_debug	btree_debug[BTREE_ID_NR];
 #endif
-	struct btree		*verify_data;
-	struct btree_node	*verify_ondisk;
-	struct mutex		verify_lock;
 };
 
 /* Error tracking: */
@@ -977,9 +979,11 @@ static inline void bch2_log_msg_exit(struct bch_log_msg *msg)
 
 static inline struct bch_log_msg bch2_log_msg_init(struct bch_fs *c,
 						   unsigned loglevel,
-						   bool suppress)
+						   bool suppress,
+						   bool atomic)
 {
 	struct printbuf buf = PRINTBUF;
+	buf.atomic = atomic;
 	bch2_log_msg_start(c, &buf);
 	return (struct bch_log_msg) {
 		.c		= c,
@@ -1001,12 +1005,16 @@ enum kern_loglevels {
 
 DEFINE_CLASS(bch_log_msg, struct bch_log_msg,
 	     bch2_log_msg_exit(&_T),
-	     bch2_log_msg_init(c, LOGLEVEL_err, false),
+	     bch2_log_msg_init(c, LOGLEVEL_err, false, false),
 	     struct bch_fs *c)
 
 EXTEND_CLASS(bch_log_msg, _level,
-	     bch2_log_msg_init(c, loglevel, false),
+	     bch2_log_msg_init(c, loglevel, false, false),
 	     struct bch_fs *c, unsigned loglevel)
+
+EXTEND_CLASS(bch_log_msg, _atomic,
+	     bch2_log_msg_init(c, LOGLEVEL_err, false, true),
+	     struct bch_fs *c)
 
 /*
  * Open coded EXTEND_CLASS, because we need the constructor to be a macro for
@@ -1017,6 +1025,7 @@ typedef class_bch_log_msg_t class_bch_log_msg_ratelimited_t;
 
 static inline void class_bch_log_msg_ratelimited_destructor(class_bch_log_msg_t *p)
 { bch2_log_msg_exit(p); }
-#define class_bch_log_msg_ratelimited_constructor(_c)	bch2_log_msg_init(_c, 3, bch2_ratelimit(_c))
+#define class_bch_log_msg_ratelimited_constructor(_c)		\
+	bch2_log_msg_init(_c, 3, bch2_ratelimit(_c), false)
 
 #endif /* _BCACHEFS_H */

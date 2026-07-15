@@ -34,7 +34,8 @@ int bch2_invalidate_stripe_to_dev(struct btree_trans *trans,
 
 	struct bch_inode_opts opts;
 	bch2_inode_opts_get(c, &opts, false);
-	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, &s->k_i,
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, bkey_i_to_s(&s->k_i),
+					  s->k.u64s,
 					  SET_NEEDS_RECONCILE_opt_change, 0));
 
 	s64 sectors = 0;
@@ -49,8 +50,6 @@ int bch2_invalidate_stripe_to_dev(struct btree_trans *trans,
 	try(bch2_disk_accounting_mod(trans, &acc, &sectors, 1, false));
 
 	struct bkey_ptrs ptrs = bch2_bkey_ptrs(bkey_i_to_s(&s->k_i));
-
-	/* XXX: how much redundancy do we still have? check degraded flags */
 
 	unsigned nr_good = 0;
 
@@ -121,12 +120,24 @@ static bool should_cancel_stripe(struct bch_fs *c, struct ec_stripe_new *s, stru
 	if (!ca)
 		return true;
 
-	for (unsigned i = 0; i < s->new_stripe.key.v.nr_blocks; i++) {
-		if (!s->blocks[i])
-			continue;
+	struct bch_stripe *v = &s->new_stripe.key.v;
 
-		struct open_bucket *ob = c->allocator.open_buckets + s->blocks[i];
-		if (dev_and_region_matches(ob, ca, tail_cutoff))
+	for (unsigned i = 0; i < v->nr_blocks; i++) {
+		/* Freshly allocated block - check the open_bucket's device and region: */
+		if (s->blocks[i]) {
+			struct open_bucket *ob = c->allocator.open_buckets + s->blocks[i];
+			if (dev_and_region_matches(ob, ca, tail_cutoff))
+				return true;
+		}
+
+		/*
+		 * Reused block from an existing stripe: init_new_stripe_from_old()
+		 * copies the old ptr directly into new_stripe.key.v.ptrs[i] and
+		 * doesn't populate s->blocks[i], so we have to check the key's
+		 * ptrs explicitly for the reuse path.
+		 */
+		if (test_bit(i, s->blocks_allocated) &&
+		    v->ptrs[i].dev == ca->dev_idx)
 			return true;
 	}
 
@@ -171,6 +182,41 @@ static bool bch2_fs_ec_flush_done(struct bch_fs *c)
 void bch2_fs_ec_flush(struct bch_fs *c)
 {
 	wait_event(c->ec.stripe_new_wait, bch2_fs_ec_flush_done(c));
+}
+
+static bool bch2_fs_ec_flush_outstanding_done(struct bch_fs *c, u64 wait_seq)
+{
+	sched_annotate_sleep();
+
+	guard(mutex)(&c->ec.stripe_new_lock);
+	struct ec_stripe_new *s;
+	list_for_each_entry(s, &c->ec.stripe_new_list, list)
+		/*
+		 * seq == 0: stripe still has writes in flight (accumulating).
+		 * seq is assigned when STRIPE_REF_io hits zero, which is the
+		 * point at which the stripe is ready to commit. We only wait
+		 * for stripes that reached commit-ready before our snapshot
+		 * — accumulating stripes either complete after us (new seq >
+		 * wait_seq, skipped) or get cancelled via their io_refs,
+		 * which we shouldn't block on from under state_lock.
+		 */
+		if (s->seq && s->seq <= wait_seq)
+			return false;
+	return true;
+}
+
+/*
+ * Wait for all stripe_new entries that had transitioned to commit-ready
+ * (STRIPE_REF_io drained, seq assigned) at call time to finish committing.
+ * Accumulating-write stripes (seq == 0) are skipped — they must be cancelled
+ * by the caller's own teardown path (e.g. bch2_ec_stop_dev) before this call
+ * so their writers drop refs.
+ */
+void bch2_fs_ec_flush_outstanding(struct bch_fs *c)
+{
+	u64 wait_seq = atomic64_read(&c->ec.stripe_new_seq);
+	wait_event(c->ec.stripe_new_wait,
+		   bch2_fs_ec_flush_outstanding_done(c, wait_seq));
 }
 
 int bch2_stripes_read(struct bch_fs *c)

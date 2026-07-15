@@ -533,37 +533,67 @@ void rcu_pending_enqueue(struct rcu_pending *pending, struct rcu_head *obj)
 	__rcu_pending_enqueue(pending, obj, NULL, true);
 }
 
-static struct rcu_head *rcu_pending_pcpu_dequeue(struct rcu_pending_pcpu *p)
+static struct rcu_head *rcu_pending_pcpu_dequeue(struct rcu_pending_pcpu *p,
+						 bool (*try_claim)(struct rcu_head *))
 {
 	guard(spinlock_irq)(&p->lock);
-	darray_for_each(p->objs, objs)
-		if (objs->nr) {
-			struct rcu_head *ret = *genradix_ptr(&objs->objs, --objs->nr);
+
+	darray_for_each(p->objs, objs) {
+		for (size_t i = objs->nr; i > 0; i--) {
+			struct rcu_head *ret = *genradix_ptr(&objs->objs, i - 1);
+
+			if (try_claim && !try_claim(ret))
+				continue;
+
+			/* Shift later entries down to close the gap. */
+			for (size_t j = i - 1; j < objs->nr - 1; j++)
+				*genradix_ptr(&objs->objs, j) =
+					*genradix_ptr(&objs->objs, j + 1);
+
+			objs->nr--;
 			objs->cursor = NULL;
 			if (!objs->nr)
 				genradix_free(&objs->objs);
 			return ret;
 		}
+	}
 
-	static_array_for_each(p->lists, i)
-		if (i->head) {
-			struct rcu_head *ret = i->head;
+	static_array_for_each(p->lists, i) {
+		struct rcu_head *prev = NULL;
+		struct rcu_head *cur = i->head;
+
+		while (cur) {
 #ifdef __KERNEL__
-			i->head = ret->next;
+			struct rcu_head *next = cur->next;
 #else
-			i->head = (void *) ret->next.next;
+			struct rcu_head *next = (void *) cur->next.next;
 #endif
-			if (!i->head)
-				i->tail = NULL;
-			return ret;
+			if (!try_claim || try_claim(cur)) {
+				if (prev) {
+#ifdef __KERNEL__
+					prev->next = next;
+#else
+					prev->next.next = (void *) next;
+#endif
+				} else {
+					i->head = next;
+				}
+				if (i->tail == cur)
+					i->tail = prev;
+				return cur;
+			}
+
+			prev = cur;
+			cur = next;
 		}
+	}
 
 	return NULL;
 }
 
 struct rcu_head *rcu_pending_dequeue(struct rcu_pending *pending)
 {
-	return rcu_pending_pcpu_dequeue(raw_cpu_ptr(pending->p));
+	return rcu_pending_pcpu_dequeue(raw_cpu_ptr(pending->p), NULL);
 }
 
 struct rcu_head *rcu_pending_dequeue_from_all(struct rcu_pending *pending)
@@ -575,7 +605,44 @@ struct rcu_head *rcu_pending_dequeue_from_all(struct rcu_pending *pending)
 
 	int cpu;
 	for_each_possible_cpu(cpu) {
-		ret = rcu_pending_pcpu_dequeue(per_cpu_ptr(pending->p, cpu));
+		ret = rcu_pending_pcpu_dequeue(per_cpu_ptr(pending->p, cpu), NULL);
+		if (ret)
+			break;
+	}
+	return ret;
+}
+
+/**
+ * rcu_pending_dequeue_where - dequeue the first entry where @try_claim returns true
+ * @pending: the rcu_pending to scan
+ * @try_claim: predicate called with p->lock held; returns true if the caller
+ *             has claimed the entry (e.g. taken a lock on it) and it should be
+ *             dequeued. Must not sleep.
+ *
+ * Iterates the current CPU's pending lists in order (most recent radix-tree
+ * entries first, then oldstate lists). Returns the first claimed entry.
+ * Remaining entries stay queued.
+ */
+struct rcu_head *rcu_pending_dequeue_where(struct rcu_pending *pending,
+					   bool (*try_claim)(struct rcu_head *))
+{
+	return rcu_pending_pcpu_dequeue(raw_cpu_ptr(pending->p), try_claim);
+}
+
+/**
+ * rcu_pending_dequeue_from_all_where - scan all CPUs for an entry @try_claim accepts
+ */
+struct rcu_head *rcu_pending_dequeue_from_all_where(struct rcu_pending *pending,
+						    bool (*try_claim)(struct rcu_head *))
+{
+	struct rcu_head *ret = rcu_pending_dequeue_where(pending, try_claim);
+
+	if (ret)
+		return ret;
+
+	int cpu;
+	for_each_possible_cpu(cpu) {
+		ret = rcu_pending_pcpu_dequeue(per_cpu_ptr(pending->p, cpu), try_claim);
 		if (ret)
 			break;
 	}
@@ -639,6 +706,17 @@ void rcu_pending_exit(struct rcu_pending *pending)
  * @process:	Callback function invoked on objects once their RCU barriers
  *		have completed; if NULL, kvfree() is used.
  */
+static void rcu_pending_init_pcpu(void *_p, void *_pending, unsigned cpu)
+{
+	struct rcu_pending_pcpu *p = _p;
+
+	p->parent	= _pending;
+	p->cpu		= cpu;
+	spin_lock_init(&p->lock);
+	darray_init(&p->objs);
+	INIT_WORK(&p->work, rcu_pending_work);
+}
+
 int rcu_pending_init(struct rcu_pending *pending,
 		     struct srcu_struct *srcu,
 		     rcu_pending_process_fn process)
@@ -647,15 +725,7 @@ int rcu_pending_init(struct rcu_pending *pending,
 	if (!pending->p)
 		return -ENOMEM;
 
-	int cpu;
-	for_each_possible_cpu(cpu) {
-		struct rcu_pending_pcpu *p = per_cpu_ptr(pending->p, cpu);
-		p->parent	= pending;
-		p->cpu		= cpu;
-		spin_lock_init(&p->lock);
-		darray_init(&p->objs);
-		INIT_WORK(&p->work, rcu_pending_work);
-	}
+	bch2_alloc_percpu_init(pending->p, rcu_pending_init_pcpu, pending);
 
 	pending->srcu = srcu;
 	pending->process = process;

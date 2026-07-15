@@ -1,5 +1,116 @@
 // SPDX-License-Identifier: GPL-2.0
 
+/* DOC_LATEX(btree-programmer-interface)
+ *
+ * This section describes the btree interface from a programmer's perspective:
+ * how to look up keys, iterate, and perform updates.
+ *
+ * \paragraph{Btrees and keys}
+ *
+ * Keys are indexed in a small number of btrees: one for extents, another for
+ * inodes, another for directory entries, and so on. New btree types can be
+ * added for new features without on-disk format changes---many features were
+ * added this way (e.g.\ erasure coding stripes, backpointers, accounting).
+ *
+ * The btree interface is iteration-oriented rather than lookup-oriented.
+ * Lookup is not exposed as a primitive because most usage involves iterating
+ * from a given position. The fundamental operation is: position an iterator,
+ * then peek at or advance through keys.
+ *
+ * \paragraph{Transactions}
+ *
+ * All btree operations go through a transaction (\texttt{struct btree\_trans}).
+ * A transaction provides:
+ *
+ * \begin{itemize}
+ * \item Atomic multi-key updates across any combination of btrees
+ * \item Automatic lock management and deadlock avoidance
+ * \item Restart handling when locks are contended
+ * \end{itemize}
+ *
+ * Transactions are allocated with \texttt{bch2\_trans\_get()} and released with
+ * \texttt{bch2\_trans\_put()}. Within a transaction, iterators are created with
+ * \texttt{bch2\_trans\_iter\_init()} specifying the btree ID and starting
+ * position.
+ *
+ * \paragraph{Basic iteration}
+ *
+ * The core iteration pattern:
+ *
+ * \begin{verbatim}
+ *     struct btree_iter iter;
+ *     struct bkey_s_c k;
+ *
+ *     bch2_trans_iter_init(trans, &iter, BTREE_ID_extents,
+ *                          POS(inode, offset), 0);
+ *
+ *     while ((k = bch2_btree_iter_peek(&iter)).k) {
+ *         // process key
+ *         bch2_btree_iter_advance(&iter);
+ *     }
+ *
+ *     bch2_trans_iter_exit(trans, &iter);
+ * \end{verbatim}
+ *
+ * The convenience macro \texttt{for\_each\_btree\_key()} wraps this pattern:
+ *
+ * \begin{verbatim}
+ *     for_each_btree_key(trans, iter, BTREE_ID_extents,
+ *                        POS(inode, 0), 0, k, ret)
+ *         printk("extent at %llu:%llu\n",
+ *                k.k->p.inode, k.k->p.offset);
+ * \end{verbatim}
+ *
+ * \paragraph{Lookup}
+ *
+ * Lookup can be implemented via iteration: position an iterator, peek, and
+ * check if the returned key matches:
+ *
+ * \begin{verbatim}
+ *     bch2_trans_iter_init(trans, &iter, BTREE_ID_inodes,
+ *                          POS(inum, 0), 0);
+ *     k = bch2_btree_iter_peek_slot(&iter);
+ *     if (k.k && k.k->type == KEY_TYPE_inode)
+ *         // found it
+ * \end{verbatim}
+ *
+ * The \texttt{peek\_slot()} variant returns a key at exactly the requested
+ * position, synthesizing a deleted key if no key exists there. This is useful
+ * for checking whether a specific slot is occupied.
+ *
+ * \paragraph{Updates}
+ *
+ * Updates are staged in the transaction and committed atomically:
+ *
+ * \begin{verbatim}
+ *     struct bkey_i_inode *inode = ...;
+ *
+ *     ret = bch2_trans_update(trans, &iter, &inode->k_i, 0);
+ *     if (ret)
+ *         return ret;
+ *
+ *     ret = bch2_trans_commit(trans, NULL, NULL, 0);
+ * \end{verbatim}
+ *
+ * Multiple updates can be staged before a single commit, and they will all
+ * be applied atomically. Updates to different btrees within the same
+ * transaction are also atomic.
+ *
+ * \paragraph{Restarts}
+ *
+ * Transactions may need to restart due to lock contention or other conflicts.
+ * The standard pattern uses \texttt{lockrestart\_do()}:
+ *
+ * \begin{verbatim}
+ *     ret = lockrestart_do(trans,
+ *         do_something(trans) ?:
+ *         bch2_trans_commit(trans, NULL, NULL, 0));
+ * \end{verbatim}
+ *
+ * This automatically retries the operation if a restart is needed. All code
+ * within the retry block must be idempotent---it may execute multiple times.
+ */
+
 /* DOC(btree-iterators)
  *
  * A btree iterator (`struct btree_iter`) maintains a full path from the root
@@ -49,7 +160,7 @@
 #include "init/fs.h"
 
 #include "journal/journal.h"
-#include "journal/read.h"
+#include "journal/validate.h"
 
 #include "sb/counters.h"
 
@@ -98,14 +209,9 @@ static inline int btree_path_cmp(const struct btree_path *l,
 static inline struct bpos bkey_successor(struct btree_iter *iter, struct bpos p)
 {
 	/* Are we iterating over keys in all snapshots? */
-	if (iter->flags & BTREE_ITER_all_snapshots) {
-		p = bpos_successor(p);
-	} else {
-		p = bpos_nosnap_successor(p);
-		p.snapshot = iter->snapshot;
-	}
-
-	return p;
+	return iter->flags & BTREE_ITER_all_snapshots
+		? bpos_successor(p)
+		: bpos_with_snapshot(bpos_nosnap_successor(p), iter->snapshot);
 }
 
 static inline struct bpos bkey_predecessor(struct btree_iter *iter, struct bpos p)
@@ -442,11 +548,21 @@ static void __bch2_btree_path_fix_key_modified(struct btree_path *path,
 {
 	struct btree_path_level *l = &path->l[b->c.level];
 
-	if (where != bch2_btree_node_iter_peek_all(&l->iter, l->b))
-		return;
-
-	if (bkey_iter_pos_cmp(l->b, where, &path->pos) < 0)
+	if (where == bch2_btree_node_iter_peek_all(&l->iter, l->b) &&
+	    bkey_iter_pos_cmp(l->b, where, &path->pos) < 0) {
 		bch2_btree_node_iter_advance(&l->iter, l->b);
+		return;
+	}
+
+	/*
+	 * The caller just flipped @where's deleted-ness in place (mark
+	 * deleted for an overwrite, or same-position whiteout). That's
+	 * the tiebreaker in bkey_iter_cmp(), so any iter set entry whose
+	 * bset_pos shares a key value with @where may now be out of order
+	 * — and the breakage isn't limited to data[0]. Re-sort to restore
+	 * the iter's sort invariant.
+	 */
+	bch2_btree_node_iter_sort(&l->iter, l->b);
 }
 
 void bch2_btree_path_fix_key_modified(struct btree_trans *trans,
@@ -474,56 +590,58 @@ static void __bch2_btree_node_iter_fix(struct btree_path *path,
 	unsigned offset = __btree_node_key_to_offset(b, where);
 	int shift = new_u64s - clobber_u64s;
 	unsigned old_end = t->end_offset - shift;
-	unsigned orig_iter_pos = node_iter->data[0].k;
-	bool iter_current_key_modified =
-		orig_iter_pos >= offset &&
-		orig_iter_pos <= offset + clobber_u64s;
 
 	struct btree_node_iter_set *set = btree_node_iter_set_find(node_iter, old_end);
 	if (!set) {
-		/* didn't find the bset in the iterator - might have to readd it: */
+		/*
+		 * Bset isn't tracked by the iter. If the iter is positioned
+		 * at-or-before the new key, push the bset in. Either way, fall
+		 * through to the cross-bset rewind walk below: an insert into
+		 * an untracked bset can still violate the cross-bset rewind
+		 * invariant against a tracked bset (e.g. same bpos as a
+		 * whiteout in another bset that the iter is currently parked
+		 * on), and the rewind is what catches that.
+		 */
 		if (new_u64s &&
-		    bkey_iter_pos_cmp(b, where, &path->pos) >= 0) {
+		    bkey_iter_pos_cmp(b, where, &path->pos) >= 0)
 			bch2_btree_node_iter_push(node_iter, b, where, end);
-		} else {
-			/* Iterator is after key that changed */
-			return;
-		}
 	} else {
 		set->end = t->end_offset;
 
-		/* Iterator hasn't gotten to the key that changed yet: */
-		if (set->k < offset)
-			return;
+		/*
+		 * If the iter has reached or passed the change in this bset,
+		 * adjust set->k. If it hasn't (set->k < offset), leave set->k
+		 * alone — but still fall through to the rewind walk below in
+		 * case the change introduced a cross-bset inconsistency
+		 * against another bset this iter tracks.
+		 */
+		if (set->k >= offset) {
+			if (new_u64s &&
+			    bkey_iter_pos_cmp(b, where, &path->pos) >= 0) {
+				set->k = offset;
+			} else if (set->k < offset + clobber_u64s) {
+				set->k = offset + new_u64s;
+				if (set->k == set->end)
+					bch2_btree_node_iter_set_drop(node_iter, set);
+			} else {
+				/* Iterator is after key that changed */
+				set->k = (int) set->k + shift;
+			}
 
-		if (new_u64s &&
-		    bkey_iter_pos_cmp(b, where, &path->pos) >= 0) {
-			set->k = offset;
-		} else if (set->k < offset + clobber_u64s) {
-			set->k = offset + new_u64s;
-			if (set->k == set->end)
-				bch2_btree_node_iter_set_drop(node_iter, set);
-		} else {
-			/* Iterator is after key that changed */
-			set->k = (int) set->k + shift;
-			return;
+			bch2_btree_node_iter_sort(node_iter, b);
 		}
-
-		bch2_btree_node_iter_sort(node_iter, b);
 	}
 
-	if (node_iter->data[0].k != orig_iter_pos)
-		iter_current_key_modified = true;
-
 	/*
-	 * When a new key is added, and the node iterator now points to that
-	 * key, the iterator might have skipped past deleted keys that should
-	 * come after the key the iterator now points to. We have to rewind to
-	 * before those deleted keys - otherwise
-	 * bch2_btree_node_iter_prev_all() breaks:
+	 * Inserts/removes in interior nodes can leave a btree_node_iter
+	 * inconsistent: the modified key may now sit between the iter's
+	 * current key and a passed key in another bset. Multiple paths
+	 * can share an interior node, so the path doing the modification
+	 * isn't the only iter that needs adjusting. Always rewind to catch
+	 * passed keys (in any bset) that should now come after the iter's
+	 * current key — otherwise bch2_btree_node_iter_prev_all() breaks.
 	 */
 	if (!bch2_btree_node_iter_end(node_iter) &&
-	    iter_current_key_modified &&
 	    b->c.level) {
 		struct bkey_packed *k, *k2, *p;
 
@@ -1048,7 +1166,7 @@ static __always_inline int btree_path_down(struct btree_trans *trans,
 		return btree_node_gap_err(trans, path, &trans->btree_path_down);
 
 	b = bch2_btree_node_get(trans, path, &trans->btree_path_down,
-				level, lock_type, trace_ip);
+				level, lock_type, flags, trace_ip);
 	ret = PTR_ERR_OR_ZERO(b);
 	if (unlikely(ret))
 		return ret;
@@ -1080,6 +1198,14 @@ static int bch2_btree_path_traverse_all(struct btree_trans *trans)
 	if (trans->in_traverse_all)
 		return bch_err_throw(c, transaction_restart_in_traverse_all);
 
+	/*
+	 * XXX: when restart reason is transaction_restart_lock_waitlist_alloc,
+	 * we should wait for lock contention to drop (FIFO to drain) before
+	 * retrying, otherwise we'll just keep hammering the same full waitlist.
+	 * Currently there's no mechanism to hook back-off on a specific lock;
+	 * adding one is nontrivial. For now we just retry and rely on timing /
+	 * other waiters completing to give us room.
+	 */
 	trans->in_traverse_all = true;
 retry_all:
 	trans->restarted = 0;
@@ -1680,7 +1806,7 @@ void bch2_btree_path_to_text(struct printbuf *out, struct btree_trans *trans,
 	prt_newline(out);
 
 	prt_newline(out);
-	prt_printf(out, " ptodate %u locks_want %u", path->uptodate, path->locks_want);
+	prt_printf(out, "uptodate %u locks_want %u\n", path->uptodate, path->locks_want);
 	guard(printbuf_indent)(out);
 
 	for (unsigned l = 0; l < BTREE_MAX_DEPTH; l++) {
@@ -1933,11 +2059,13 @@ btree_path_idx_t bch2_path_get(struct btree_trans *trans,
 btree_path_idx_t bch2_path_get_unlocked_mut(struct btree_trans *trans,
 					    enum btree_id btree_id,
 					    unsigned level,
-					    struct bpos pos)
+					    struct bpos pos,
+					    bool cached)
 {
 	btree_path_idx_t path_idx = bch2_path_get(trans, btree_id, pos, level + 1, level,
 			     BTREE_ITER_nopreserve|
-			     BTREE_ITER_intent, _RET_IP_);
+			     BTREE_ITER_intent|
+			     (cached ? BTREE_ITER_cached : 0), _RET_IP_);
 	path_idx = bch2_btree_path_make_mut(trans, path_idx, true, _RET_IP_);
 
 	struct btree_path *path = trans->paths + path_idx;
@@ -2447,9 +2575,6 @@ static struct bkey_s_c __bch2_btree_iter_peek(struct btree_iter *iter, struct bp
 		if (likely(k.k)) {
 			break;
 		} else if (likely(!bpos_eq(l->b->key.k.p, SPOS_MAX))) {
-			if (btree_node_needs_merge(trans, l->b, 0))
-				bch2_btree_node_merge_async(trans->c, l->b);
-
 			/* Advance to next leaf node: */
 			search_key = bpos_successor(l->b->key.k.p);
 		} else {
@@ -2488,7 +2613,6 @@ struct bkey_s_c bch2_btree_iter_peek_max(struct btree_iter *iter, struct bpos en
 	struct btree_trans *trans = iter->trans;
 	struct bpos search_key = btree_iter_search_key(iter);
 	struct bkey_s_c k;
-	struct bpos iter_pos = iter->pos;
 	int ret;
 
 	bch2_trans_verify_not_unlocked_or_in_restart(trans);
@@ -2518,7 +2642,7 @@ struct bkey_s_c bch2_btree_iter_peek_max(struct btree_iter *iter, struct bpos en
 		if (iter->flags & BTREE_ITER_filter_snapshots) {
 			/*
 			 * We need to check against @end before FILTER_SNAPSHOTS because
-			 * if we get to a different inode that requested we might be
+			 * if we get to a different inode than requested we might be
 			 * seeing keys for a different snapshot tree that will all be
 			 * filtered out.
 			 *
@@ -2531,6 +2655,16 @@ struct bkey_s_c bch2_btree_iter_peek_max(struct btree_iter *iter, struct bpos en
 				     : k.k->p.inode > end.inode))
 				goto end;
 
+			/*
+			 * If we want an update path we want to do this up
+			 * front; also more efficient than letting
+			 * !bch2_snapshot_is_ancestor() skip these:
+			 */
+			if (k.k->p.snapshot < iter->snapshot) {
+				search_key = bpos_with_snapshot(k.k->p, iter->snapshot);
+				continue;
+			}
+
 			if (iter->update_path &&
 			    !bkey_eq(trans->paths[iter->update_path].pos, k.k->p)) {
 				bch2_path_put(trans, iter->update_path,
@@ -2541,24 +2675,18 @@ struct bkey_s_c bch2_btree_iter_peek_max(struct btree_iter *iter, struct bpos en
 			if ((iter->flags & BTREE_ITER_intent) &&
 			    !(iter->flags & BTREE_ITER_is_extents) &&
 			    !iter->update_path) {
-				struct bpos pos = k.k->p;
-
-				if (pos.snapshot < iter->snapshot) {
-					search_key = bpos_successor(k.k->p);
-					continue;
-				}
-
-				pos.snapshot = iter->snapshot;
-
 				/*
-				 * advance, same as on exit for iter->path, but only up
-				 * to snapshot
+				 * We may have to skip over keys in unrelated
+				 * snapshot branches before finding the key to
+				 * return; that will not be the update position
+				 * for iter->snapshot - cache that:
 				 */
 				__btree_path_get(trans, trans->paths + iter->path, iter->flags & BTREE_ITER_intent);
 				iter->update_path = iter->path;
 
 				iter->update_path = bch2_btree_path_set_pos(trans,
-							iter->update_path, pos,
+							iter->update_path,
+							bpos_with_snapshot(k.k->p, iter->snapshot),
 							iter->flags & BTREE_ITER_intent,
 							_THIS_IP_);
 				ret = bch2_btree_path_traverse(trans, iter->update_path, iter->flags);
@@ -2579,49 +2707,73 @@ struct bkey_s_c bch2_btree_iter_peek_max(struct btree_iter *iter, struct bpos en
 				continue;
 			}
 
-			if (!(iter->flags & BTREE_ITER_nofilter_whiteouts)) {
+			if (!(iter->flags & BTREE_ITER_nofilter_whiteouts) &&
+			    bkey_extent_whiteout(k.k)) {
 				/*
-				 * KEY_TYPE_extent_whiteout indicates that there
-				 * are no extents that overlap with this
-				 * whiteout - meaning bkey_start_pos() is
-				 * monotonically increasing when including
-				 * KEY_TYPE_extent_whiteout (not
-				 * KEY_TYPE_whiteout).
+				 * KEY_TYPE_extent_whiteout indicates that there are no extents that
+				 * overlap with this whiteout - meaning bkey_start_pos() is
+				 * monotonically increasing when including KEY_TYPE_extent_whiteout
+				 * (not KEY_TYPE_whiteout).
 				 *
-				 * Without this @end wouldn't be able to
-				 * terminate searches and we'd have to scan
-				 * through tons of whiteouts:
+				 * Without this @end wouldn't be able to terminate searches and we'd
+				 * have to scan through tons of whiteouts:
 				 */
 				if (k.k->type == KEY_TYPE_extent_whiteout &&
 				    bkey_ge(k.k->p, end))
 					goto end;
 
-				if (bkey_extent_whiteout(k.k)) {
-					search_key = bkey_successor(iter, k.k->p);
-					continue;
-				}
+				/*
+				 * Advance iter->pos incrementally, so that on transaction restart
+				 * we don't have to restart scanning over large numbers of whiteouts
+				 * from the beginning.
+				 *
+				 * Considerations:
+				 *
+				 * We currently require that iter->pos.snapshot == iter->snapshot,
+				 * so we can only update iter->pos when advancing to a new bkey, not
+				 * snapshot within a key.
+				 *
+				 * Additionally, advancing iter->pos means "we have checked that
+				 * there are no keys we will wish to return in the range that we are
+				 * advancing past". For non extent iterators, all keys (including
+				 * whiteouts) are monotonically increasing point positions - no
+				 * special considerations.
+				 *
+				 * But for extent iterators, callers use iter->pos to mean
+				 * "remaining range we are processing", meaning we cannot advance
+				 * iter->pos such that it straddles an extent we will subsequently
+				 * return - thus we only advance if we are seeing
+				 * KEY_TYPE_extent_whiteout.
+				 */
+				if (!(iter->flags & BTREE_ITER_is_extents) ||
+				    k.k->type == KEY_TYPE_extent_whiteout)
+					iter->pos = bpos_with_snapshot(k.k->p, iter->snapshot);
+
+				search_key = bkey_successor(iter, k.k->p);
+				continue;
 			}
 		}
-
-		/*
-		 * iter->pos should be mononotically increasing, and always be
-		 * equal to the key we just returned - except extents can
-		 * straddle iter->pos:
-		 */
-		if (!(iter->flags & BTREE_ITER_is_extents))
-			iter_pos = k.k->p;
-		else
-			iter_pos = bkey_max(iter->pos, bkey_start_pos(k.k));
-
-		if (unlikely(iter->flags & BTREE_ITER_all_snapshots	? bpos_gt(iter_pos, end) :
-			     iter->flags & BTREE_ITER_is_extents	? bkey_ge(iter_pos, end) :
-									  bkey_gt(iter_pos, end)))
-			goto end;
 
 		break;
 	}
 
-	iter->pos = iter_pos;
+	/*
+	 * iter->pos should be mononotically increasing, and always be
+	 * equal to the key we just returned - except extents can
+	 * straddle iter->pos:
+	 */
+	if (!(iter->flags & BTREE_ITER_is_extents))
+		iter->pos = k.k->p;
+	else
+		iter->pos = bkey_max(iter->pos, bkey_start_pos(k.k));
+
+	if (!(iter->flags & BTREE_ITER_all_snapshots))
+		iter->pos.snapshot = iter->snapshot;
+
+	if (unlikely(iter->flags & BTREE_ITER_all_snapshots	? bpos_gt(iter->pos, end) :
+		     iter->flags & BTREE_ITER_is_extents	? bkey_ge(iter->pos, end) :
+								  bkey_gt(iter->pos, end)))
+		goto end;
 
 	iter->path = bch2_btree_path_set_pos(trans, iter->path, k.k->p,
 				iter->flags & BTREE_ITER_intent,
@@ -2636,9 +2788,6 @@ out_no_locked:
 		else
 			btree_path_set_should_be_locked(trans, trans->paths + iter->update_path);
 	}
-
-	if (!(iter->flags & BTREE_ITER_all_snapshots))
-		iter->pos.snapshot = iter->snapshot;
 
 	ret = bch2_btree_iter_verify_ret(iter, k);
 	if (unlikely(ret)) {
@@ -3442,36 +3591,6 @@ void *__bch2_trans_kmalloc(struct btree_trans *trans, size_t size, unsigned long
 	return p;
 }
 
-static inline void check_srcu_held_too_long(struct btree_trans *trans)
-{
-	if (unlikely(trans->srcu_held && time_after(jiffies, trans->srcu_lock_time + HZ * 10))) {
-		CLASS(printbuf, buf)();
-
-		prt_printf(&buf, "btree trans held srcu lock (delaying memory reclaim) for %lu seconds\n",
-			   (jiffies - trans->srcu_lock_time) / HZ);
-		bch2_sb_recent_counters_to_text(&buf, &trans->c->counters);
-
-		WARN_RATELIMIT(true, "%s", buf.buf);
-	}
-}
-
-void bch2_trans_srcu_unlock(struct btree_trans *trans)
-{
-	if (trans->srcu_held) {
-		struct bch_fs *c = trans->c;
-		struct btree_path *path;
-		unsigned i;
-
-		trans_for_each_path(trans, path, i)
-			if (path->cached && !btree_node_locked(path, 0))
-				path->l[0].b = ERR_PTR(-BCH_ERR_no_btree_node_srcu_reset);
-
-		check_srcu_held_too_long(trans);
-		srcu_read_unlock(&c->btree.trans.barrier, trans->srcu_idx);
-		trans->srcu_held = false;
-	}
-}
-
 static void bch2_trans_srcu_lock(struct btree_trans *trans)
 {
 	if (!trans->srcu_held) {
@@ -3501,6 +3620,19 @@ u32 bch2_trans_begin(struct btree_trans *trans)
 
 	trans->restart_count++;
 	trans->mem_top			= 0;
+
+	/*
+	 * Long-lived trans (e.g. copygc) initialized before journal replay
+	 * finished hold a journal_keys ref and stay on the journal-overlay
+	 * iter path forever, reading stale post-replay journal_keys data.
+	 * Drop the ref + clear the flag once replay completes; subsequent
+	 * trans_begin calls see the flag already clear and skip cheaply.
+	 */
+	if (unlikely(trans->journal_replay_not_finished) &&
+	    test_bit(JOURNAL_replay_done, &trans->c->journal.flags)) {
+		bch2_journal_keys_put(trans->c);
+		trans->journal_replay_not_finished = false;
+	}
 
 	if (unlikely(trans->restarted == BCH_ERR_transaction_restart_mem_realloced)) {
 		unsigned new_bytes = trans->realloc_bytes_required;
@@ -3555,18 +3687,21 @@ u32 bch2_trans_begin(struct btree_trans *trans)
 		__bch2_time_stats_update(&btree_trans_stats(trans)->duration,
 					 trans->last_begin_time, now);
 
-	if (!trans->restarted &&
-	    (need_resched() ||
-	     time_after64(now, trans->last_begin_time + BTREE_TRANS_MAX_LOCK_HOLD_TIME_NS))) {
+	if (unlikely(trans->srcu_held &&
+		     time_after(jiffies, trans->srcu_lock_time + msecs_to_jiffies(10))))
+		bch2_trans_unlock_long(trans);
+
+	if (need_resched() ||
+	    time_after64(now, trans->last_begin_time_nonrestarted +
+			 BTREE_TRANS_MAX_LOCK_HOLD_TIME_NS)) {
 		bch2_trans_unlock(trans);
 		cond_resched();
 		now = local_clock();
 	}
-	trans->last_begin_time = now;
 
-	if (unlikely(trans->srcu_held &&
-		     time_after(jiffies, trans->srcu_lock_time + msecs_to_jiffies(10))))
-		bch2_trans_srcu_unlock(trans);
+	if (!trans->restarted)
+		trans->last_begin_time_nonrestarted = now;
+	trans->last_begin_time = now;
 
 	trans->last_begin_ip = _RET_IP_;
 
@@ -3662,7 +3797,6 @@ struct btree_trans *__bch2_trans_get(struct bch_fs *c, unsigned fn_idx)
 	struct btree_trans *trans = bch2_trans_alloc(c);
 
 	trans->c		= c;
-	trans->last_begin_time	= local_clock();
 	trans->fn_idx		= fn_idx;
 	trans->locking_wait.task = current;
 	trans->journal_replay_not_finished =
@@ -3702,6 +3836,10 @@ struct btree_trans *__bch2_trans_get(struct bch_fs *c, unsigned fn_idx)
 	trans->srcu_lock_time	= jiffies;
 	trans->srcu_held	= true;
 	trans_set_locked(trans, false);
+
+	u64 now = local_clock();
+	trans->last_begin_time_nonrestarted = now;
+	trans->last_begin_time = now;
 
 	closure_init_stack_release(&trans->ref);
 	return trans;
@@ -3743,6 +3881,12 @@ static void check_btree_paths_leaked(struct btree_trans *trans)
 static inline void check_btree_paths_leaked(struct btree_trans *trans) {}
 #endif
 
+static void trans_rcu_free(struct rcu_head *rcu)
+{
+	struct btree_trans *trans = container_of(rcu, struct btree_trans, rcu);
+	mempool_free(trans, &trans->c->btree.trans.pool);
+}
+
 void bch2_trans_put(struct btree_trans *trans)
 	__releases(&c->btree.trans.barrier)
 {
@@ -3751,18 +3895,13 @@ void bch2_trans_put(struct btree_trans *trans)
 	if (trans->restarted)
 		bch2_trans_in_restart_error(trans);
 
-	bch2_trans_unlock(trans);
+	bch2_trans_unlock_long(trans);
 
 	trans_for_each_update(trans, i)
 		__btree_path_put(trans, trans->paths + i->path, true);
 	trans->nr_updates	= 0;
 
 	check_btree_paths_leaked(trans);
-
-	if (trans->srcu_held) {
-		check_srcu_held_too_long(trans);
-		srcu_read_unlock(&c->btree.trans.barrier, trans->srcu_idx);
-	}
 
 	if (unlikely(trans->journal_replay_not_finished))
 		bch2_journal_keys_put(c);
@@ -3802,7 +3941,16 @@ void bch2_trans_put(struct btree_trans *trans)
 		list_del(&trans->list);
 		seqmutex_unlock(&c->btree.trans.lock);
 
-		mempool_free(trans, &c->btree.trans.pool);
+		/*
+		 * RCU-defer the mempool return: the cycle detector walks
+		 * wait_fifos under RCU without holding closure refs, so other
+		 * threads may be mid-access of this trans via a pointer they
+		 * read from a wait_fifo slot. Grace period ensures the memory
+		 * isn't reused for a different struct before those walks
+		 * finish; per-CPU cache reuse within a grace period is
+		 * identity-confusion (acceptable per probabilistic detection).
+		 */
+		call_rcu(&trans->rcu, trans_rcu_free);
 	}
 }
 
@@ -3946,6 +4094,8 @@ void bch2_fs_btree_iter_exit(struct bch_fs *c)
 		synchronize_srcu_expedited(&c->btree.trans.barrier);
 		cleanup_srcu_struct(&c->btree.trans.barrier);
 	}
+	/* Drain pending trans_rcu_free callbacks before the pool is gone. */
+	rcu_barrier();
 	mempool_exit(&c->btree.trans.malloc_pool);
 	mempool_exit(&c->btree.trans.pool);
 }

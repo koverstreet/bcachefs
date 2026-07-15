@@ -56,7 +56,8 @@ int bch2_btree_delete(struct btree_trans *, enum btree_id, struct bpos,
 		      enum btree_iter_update_trigger_flags);
 
 int bch2_btree_insert_nonextent(struct btree_trans *, enum btree_id,
-				struct bkey_i *, enum btree_iter_update_trigger_flags);
+				struct bkey_i *, unsigned,
+				enum btree_iter_update_trigger_flags);
 
 int bch2_btree_insert_trans(struct btree_trans *, enum btree_id, struct bkey_i *,
 			enum btree_iter_update_trigger_flags);
@@ -136,14 +137,28 @@ int bch2_bkey_get_empty_slot(struct btree_trans *, struct btree_iter *,
 			     enum btree_id, struct bpos, struct bpos);
 
 int __must_check bch2_trans_update_ip(struct btree_trans *, struct btree_iter *,
-				      struct bkey_i *, enum btree_iter_update_trigger_flags,
+				      struct bkey_i *, unsigned,
+				      enum btree_iter_update_trigger_flags,
 				      unsigned long);
+
+int bch2_trigger_get_mutable_new(struct btree_trans *,
+				 struct btree_trigger_op,
+				 unsigned needed_u64s,
+				 struct bkey_s *);
+
+static inline int __must_check
+bch2_trans_update_buf(struct btree_trans *trans, struct btree_iter *iter,
+		      struct bkey_i *k, unsigned k_buf_u64s,
+		      enum btree_iter_update_trigger_flags flags)
+{
+	return bch2_trans_update_ip(trans, iter, k, k_buf_u64s, flags, _THIS_IP_);
+}
 
 static inline int __must_check
 bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
 		  struct bkey_i *k, enum btree_iter_update_trigger_flags flags)
 {
-	return bch2_trans_update_ip(trans, iter, k, flags, _THIS_IP_);
+	return bch2_trans_update_ip(trans, iter, k, k->k.u64s, flags, _THIS_IP_);
 }
 
 static inline void *btree_trans_subbuf_base(struct btree_trans *trans,

@@ -7,12 +7,17 @@
 struct bch_stripe {
 	struct bch_val		v;
 	__le16			sectors;
+	/*
+	 * can_widen: how many additional data blocks this stripe could grow
+	 * into if reused at the current pool's wider target geometry.
+	 * 3 bits = 0..7, saturating - writers must clamp.
+	 */
 #if defined(__LITTLE_ENDIAN_BITFIELD)
 	__u8			algorithm:4;
 	__u8			needs_reconcile:1;
-	__u8			unused:3;
+	__u8			can_widen:3;
 #else
-	__u8			unused:3;
+	__u8			can_widen:3;
 	__u8			needs_reconcile:1;
 	__u8			algorithm:4;
 #endif

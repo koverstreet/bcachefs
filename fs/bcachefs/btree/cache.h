@@ -12,17 +12,18 @@ struct btree_iter;
 
 void bch2_recalc_btree_reserve(struct bch_fs *);
 
-void bch2_btree_node_to_freelist(struct bch_fs *, struct btree *);
+void bch2_btree_node_mem_free(struct bch_fs *, struct btree *);
 
-void __bch2_btree_node_hash_remove(struct bch_fs_btree_cache *, struct btree *);
-void bch2_btree_node_hash_remove(struct bch_fs_btree_cache *, struct btree *);
-
-int __bch2_btree_node_hash_insert(struct bch_fs_btree_cache *, struct btree *);
-int bch2_btree_node_hash_insert(struct bch_fs_btree_cache *, struct btree *,
-				unsigned, enum btree_id);
+int bch2_btree_node_transition_state(struct bch_fs_btree_cache *, struct btree *,
+				     enum btree_node_cache_state);
+int bch2_btree_node_transition_state_locked(struct bch_fs_btree_cache *, struct btree *,
+					    enum btree_node_cache_state);
 
 void bch2_node_pin(struct bch_fs *, struct btree *);
 void bch2_btree_cache_unpin(struct bch_fs *);
+
+void bch2_btree_node_set_dirty(struct bch_fs *, struct btree *);
+void bch2_btree_node_write_done_clean(struct bch_fs *, struct btree *);
 
 void bch2_btree_node_update_key_early(struct btree_trans *, enum btree_id, unsigned,
 				      struct bkey_s_c, struct bkey_i *);
@@ -30,13 +31,15 @@ void bch2_btree_node_update_key_early(struct btree_trans *, enum btree_id, unsig
 void bch2_btree_cache_cannibalize_unlock(struct btree_trans *);
 int bch2_btree_cache_cannibalize_lock(struct btree_trans *, struct closure *);
 
-void bch2_btree_node_data_free_locked(struct btree *);
+void bch2_btree_node_data_free(struct btree *);
 struct btree *__bch2_btree_node_mem_alloc(struct bch_fs *);
 struct btree *bch2_btree_node_mem_alloc(struct btree_trans *, bool);
 
 struct btree *bch2_btree_node_get(struct btree_trans *, struct btree_path *,
 				  const struct bkey_i *, unsigned,
-				  enum six_lock_type, unsigned long);
+				  enum six_lock_type,
+				  enum btree_iter_update_trigger_flags,
+				  unsigned long);
 
 struct btree *bch2_btree_node_get_noiter(struct btree_trans *, const struct bkey_i *,
 					 enum btree_id, unsigned, bool);
@@ -49,6 +52,40 @@ void bch2_btree_node_evict(struct btree_trans *, const struct bkey_i *);
 void bch2_fs_btree_cache_exit(struct bch_fs *);
 int bch2_fs_btree_cache_init(struct bch_fs *);
 void bch2_fs_btree_cache_init_early(struct bch_fs_btree_cache *);
+
+int bch2_fs_btree_evicted_size_init(struct bch_fs *);
+void bch2_fs_btree_evicted_size_exit(struct bch_fs *);
+
+static inline u64 btree_evicted_size_pack(u64 hash, u16 live_u64s)
+{
+	return ((hash & BTREE_EVICTED_SIZE_HASH_MASK) << 16) | live_u64s;
+}
+
+static inline void bch2_btree_evicted_size_record(struct bch_fs *c,
+						  u64 hash, u16 live_u64s)
+{
+	struct btree_evicted_size *e = &c->btree.evicted_size;
+
+	if (e->entries)
+		WRITE_ONCE(e->entries[hash & e->mask],
+			   btree_evicted_size_pack(hash, live_u64s));
+}
+
+static inline bool bch2_btree_evicted_size_lookup(struct bch_fs *c, u64 hash,
+						  u16 *out)
+{
+	struct btree_evicted_size *e = &c->btree.evicted_size;
+
+	if (!e->entries)
+		return false;
+
+	u64 entry = READ_ONCE(e->entries[hash & e->mask]);
+	if ((entry >> 16) != (hash & BTREE_EVICTED_SIZE_HASH_MASK))
+		return false;
+
+	*out = (u16) entry;
+	return true;
+}
 
 static inline u64 btree_ptr_hash_val(const struct bkey_i *k)
 {
@@ -77,6 +114,29 @@ static inline struct btree *btree_node_mem_ptr(const struct bkey_i *k)
 static inline bool btree_node_hashed(struct btree *b)
 {
 	return b->hash_val != 0;
+}
+
+static inline enum btree_node_cache_state btree_node_cache_state(struct btree *b)
+{
+	return b->cache_state;
+}
+
+/*
+ * The hashed (live) cache state derived from b's flag bits. A node belongs on
+ * live[].dirty whenever there's pending work — either BTREE_NODE_dirty (needs
+ * a write) or BTREE_NODE_write_in_flight (one is outstanding); otherwise it
+ * belongs on live[].clean.
+ *
+ * Use this anywhere you need to compute the right cache_state from the
+ * current bits — passing it to bch2_btree_node_transition_state_locked() is a
+ * no-op when the node is already in the right state, so callers don't need
+ * "do we need to transition?" conditionals.
+ */
+static inline enum btree_node_cache_state btree_node_live_state(const struct btree *b)
+{
+	return (btree_node_dirty(b) || btree_node_write_in_flight(b))
+		? BTREE_NODE_CACHE_DIRTY
+		: BTREE_NODE_CACHE_CLEAN;
 }
 
 #define for_each_cached_btree(_b, _c, _tbl, _iter, _pos)		\
@@ -110,9 +170,12 @@ static inline unsigned btree_blocks(const struct bch_fs *c)
 	return btree_sectors(c) >> c->block_bits;
 }
 
-#define BTREE_SPLIT_THRESHOLD(c)		(btree_max_u64s(c) * 2 / 3)
+#define BTREE_WRITE_IO_LIMIT(c)			64
+
+#define BTREE_SPLIT_THRESHOLD(c)		(btree_max_u64s(c) * 3 / 4)
 
 #define BTREE_FOREGROUND_MERGE_THRESHOLD(c)	(btree_max_u64s(c) * 1 / 3)
+#define BTREE_FOREGROUND_MERGE_HIGHER_THRESHOLD(c)	(btree_max_u64s(c) * 3 / 5)
 #define BTREE_FOREGROUND_MERGE_HYSTERESIS(c)			\
 	(BTREE_FOREGROUND_MERGE_THRESHOLD(c) +			\
 	 (BTREE_FOREGROUND_MERGE_THRESHOLD(c) >> 2))

@@ -34,6 +34,9 @@ void bch2_do_invalidates(struct bch_fs *);
 
 void bch2_dev_discards_exit(struct bch_dev *);
 int  bch2_dev_discards_init(struct bch_dev *);
+
+void bch2_fs_discards_exit(struct bch_fs *);
+int  bch2_fs_discards_init(struct bch_fs *);
 void bch2_fs_discards_init_early(struct bch_fs *);
 
 #endif /* _BCACHEFS_ALLOC_DISCARD_H */

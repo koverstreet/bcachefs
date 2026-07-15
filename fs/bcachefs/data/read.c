@@ -475,10 +475,8 @@ static inline struct bch_read_bio *bch2_rbio_free(struct bch_read_bio *rbio)
 {
 	BUG_ON(rbio->bounce && !rbio->split);
 
-	if (rbio->have_ioref) {
-		struct bch_dev *ca = bch2_dev_have_ref(rbio->c, rbio->pick.ptr.dev);
-		enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_io_read);
-	}
+	if (rbio->ca)
+		enumerated_ref_put(&rbio->ca->io_ref[READ], BCH_DEV_READ_REF_io_read);
 
 	if (rbio->split) {
 		struct bch_read_bio *parent = rbio->parent;
@@ -568,7 +566,9 @@ static noinline int maybe_poison_extent(struct btree_trans *trans, struct bch_re
 	bkey_reassemble(new, k);
 	try(bch2_bkey_extent_flags_set(c, new, flags|BIT_ULL(BCH_EXTENT_FLAG_poisoned)));
 	try(bch2_trans_update(trans, &iter, new, BTREE_UPDATE_internal_snapshot_node));
-	try(bch2_trans_commit(trans, NULL, NULL, 0));
+
+	CLASS(disk_reservation, res)(c);
+	try(bch2_trans_commit(trans, &res.r, NULL, 0));
 
 	/*
 	 * Propagate key change back to data update path, in particular so it
@@ -626,7 +626,6 @@ static noinline int bch2_read_retry_nodecode(struct btree_trans *trans,
 	if (ret)
 		rbio->ret = ret;
 
-	BUG_ON(atomic_read(&rbio->bio.__bi_remaining) != 1);
 	return ret;
 }
 
@@ -883,7 +882,7 @@ static int bch2_rbio_decrypt(struct bch_fs *c, struct bch_read_bio *rbio,
 static int __bch2_read_endio_work(struct bch_read_bio *rbio)
 {
 	struct bch_fs *c	= rbio->c;
-	struct bch_dev *ca = rbio->have_ioref ? bch2_dev_have_ref(c, rbio->pick.ptr.dev) : NULL;
+	struct bch_dev *ca = rbio->ca;
 	struct bch_read_bio *parent	= bch2_rbio_parent(rbio);
 	struct bio *src			= &rbio->bio;
 	struct bio *dst			= &parent->bio;
@@ -1018,7 +1017,7 @@ static void bch2_read_endio(struct bio *bio)
 	struct bch_read_bio *rbio =
 		container_of(bio, struct bch_read_bio, bio);
 	struct bch_fs *c	= rbio->c;
-	struct bch_dev *ca = rbio->have_ioref ? bch2_dev_have_ref(c, rbio->pick.ptr.dev) : NULL;
+	struct bch_dev *ca = rbio->ca;
 	struct workqueue_struct *wq = NULL;
 	enum rbio_context context = RBIO_CONTEXT_NULL;
 
@@ -1221,7 +1220,7 @@ static inline struct bch_read_bio *read_extent_rbio_alloc(struct btree_trans *tr
 	rbio->bvec_iter		= iter;
 	rbio->offset_into_extent= offset_into_extent;
 	rbio->flags		= flags;
-	rbio->have_ioref	= ca != NULL;
+	rbio->ca		= ca;
 	rbio->narrow_crcs	= narrow_crcs;
 	rbio->ret		= 0;
 	rbio->context		= 0;
@@ -1445,10 +1444,6 @@ int __bch2_read_extent(struct btree_trans *trans,
 					     bch_err_throw(c, data_read_ptr_stale_dirty));
 	}
 
-	if (!(flags & BCH_READ_last_fragment) ||
-	    bio_flagged(&orig->bio, BIO_CHAIN))
-		flags |= BCH_READ_must_clone;
-
 	bool narrow_crcs = !orig->data_update &&
 		!(flags & BCH_READ_in_retry) &&
 		can_narrow_crc(pick.crc);
@@ -1499,7 +1494,7 @@ int __bch2_read_extent(struct btree_trans *trans,
 				       bounce, read_full, narrow_crcs);
 
 	if (likely(!rbio->pick.do_ec_reconstruct)) {
-		if (unlikely(!rbio->have_ioref)) {
+		if (unlikely(!rbio->ca)) {
 			ret = bch2_rbio_error(rbio,
 				bch_err_throw(c, data_read_retry_device_offline));
 			goto out;
@@ -1629,6 +1624,8 @@ int bch2_read(struct btree_trans *trans, struct bch_read_bio *rbio,
 
 		if (bvec_iter.bi_size == bytes)
 			flags |= BCH_READ_last_fragment;
+		else
+			flags |= BCH_READ_must_clone;
 
 		ret = __bch2_read_extent(trans, rbio, bvec_iter, iter.pos,
 					 data_btree, k,
@@ -1702,7 +1699,7 @@ static void __bch2_read_bio_to_text(struct printbuf *out,
 	prt_printf(out, "promote:\t%u\n",	rbio->promote);
 	prt_printf(out, "bounce:\t%u\n",	rbio->bounce);
 	prt_printf(out, "split:\t%u\n",		rbio->split);
-	prt_printf(out, "have_ioref:\t%u\n",	rbio->have_ioref);
+	prt_printf(out, "have_ioref:\t%u\n",	rbio->ca != NULL);
 	prt_printf(out, "narrow_crcs:\t%u\n",	rbio->narrow_crcs);
 	prt_printf(out, "context:\t%u\n",	rbio->context);
 

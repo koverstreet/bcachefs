@@ -34,19 +34,27 @@ static int bch2_set_nr_journal_buckets_iter(struct bch_dev *ca, unsigned nr,
 		return bch_err_throw(c, ENOMEM_set_nr_journal_buckets);
 
 	for (nr_got = 0; nr_got < nr_want; nr_got++) {
-		ob[nr_got] = bch2_bucket_alloc(c, ca, watermark,
-					       BCH_DATA_journal, cl);
-		ret = PTR_ERR_OR_ZERO(ob[nr_got]);
+		CLASS(btree_trans, trans)(c);
 
-		if (ret == -BCH_ERR_bucket_alloc_blocked)
-			ret = bch_err_throw(c, freelist_empty);
-		if (ret == -BCH_ERR_freelist_empty) /* don't if we're actually out of buckets */
-			closure_wake_up(&c->allocator.freelist_wait);
+		ret = lockrestart_do(trans, ({
+			struct alloc_request *req __free(alloc_request_put) =
+				alloc_request_get(trans,
+						  0, false, NULL, 1, 0, watermark, 0,
+						  !nr_got ? cl : 0);
+			int ret2 = PTR_ERR_OR_ZERO(req) ?:
+			(req->ca = ca,
+			 PTR_ERR_OR_ZERO(ob[nr_got] = bch2_bucket_alloc_trans(trans, req)));
 
+			if (bch2_err_matches(ret2, BCH_ERR_operation_blocked)) {
+				bch2_wait_on_allocator(trans, req, ret2, cl);
+				ret2 = bch_err_throw(c, transaction_restart_nested);
+			}
+
+			ret2;
+		}));
 		if (ret)
 			break;
 
-		CLASS(btree_trans, trans)(c);
 		ret = bch2_trans_mark_metadata_bucket(trans, ca,
 					ob[nr_got]->bucket, BCH_DATA_journal,
 					ca->mi.bucket_size, BTREE_TRIGGER_transactional);
@@ -144,6 +152,7 @@ static int bch2_set_nr_journal_buckets_loop(struct bch_fs *c, struct bch_dev *ca
 		return 0;
 
 	while (!ret && ja->nr < nr) {
+
 		/*
 		 * note: journal buckets aren't really counted as _sectors_ used yet, so
 		 * we don't need the disk reservation to avoid the BUG_ON() in buckets.c
@@ -160,10 +169,6 @@ static int bch2_set_nr_journal_buckets_loop(struct bch_fs *c, struct bch_dev *ca
 						bucket_to_sector(ca, nr - ja->nr), 1, 0));
 
 		ret = bch2_set_nr_journal_buckets_iter(ca, nr, new_fs, watermark, &cl);
-		if (bch2_err_matches(ret, BCH_ERR_operation_blocked))
-			ret = 0; /* wait and retry */
-
-		bch2_wait_on_allocator(c, NULL, ret, &cl);
 	}
 
 	return ret;
@@ -322,14 +327,11 @@ static bool bch2_journal_writing_to_device(struct journal *j, unsigned dev_idx)
 
 	guard(spinlock)(&j->lock);
 
-	for (u64 seq = journal_last_unwritten_seq(j);
-	     seq <= journal_cur_seq(j);
-	     seq++) {
-		struct journal_buf *buf = journal_seq_to_buf(j, seq);
-
+	struct journal_buf *buf;
+	u64 seq;
+	fifo_for_each_entry_ptr(buf, &j->in_flight, seq)
 		if (bch2_bkey_has_device_c(c, bkey_i_to_s_c(&buf->key), dev_idx))
 			return true;
-	}
 
 	return false;
 }
@@ -356,7 +358,7 @@ void bch2_fs_journal_stop(struct journal *j)
 	 */
 	__bch2_journal_meta(j);
 
-	bch2_journal_quiesce(j);
+	bch2_journal_shutdown_quiesce(j);
 	cancel_delayed_work_sync(&j->write_work);
 
 	WARN(!bch2_journal_error(j) &&
@@ -426,9 +428,18 @@ int bch2_fs_journal_start(struct journal *j, struct journal_start_info info)
 	j->pin.back		= cur_seq;
 	atomic64_set(&j->seq, cur_seq - 1);
 
+	/*
+	 * Align the in_flight FIFO with seq numbering: front == seq_ondisk + 1
+	 * == cur_seq initially (empty fifo), so fifo_entry(in_flight, seq)
+	 * indexes by seq once entries start pushing.
+	 */
+	j->in_flight.front = j->in_flight.back = cur_seq;
+
 	u64 seq;
-	fifo_for_each_entry_ptr(p, &j->pin, seq)
+	fifo_for_each_entry_ptr(p, &j->pin, seq) {
 		journal_pin_list_init(p, 1);
+		p->unreplayed = true;
+	}
 
 	genradix_for_each(&c->journal_entries, iter, _i) {
 		i = *_i;
@@ -502,10 +513,7 @@ void bch2_dev_journal_exit(struct bch_dev *ca)
 {
 	struct journal_device *ja = &ca->journal;
 
-	for (unsigned i = 0; i < ARRAY_SIZE(ja->bio); i++) {
-		kvfree(ja->bio[i]);
-		ja->bio[i] = NULL;
-	}
+	bioset_exit(&ja->bio_set);
 
 	kfree(ja->buckets);
 	kfree(ja->bucket_seq);
@@ -543,27 +551,16 @@ int bch2_dev_journal_init(struct bch_dev *ca, struct bch_sb *sb)
 	if (!ja->bucket_seq)
 		return bch_err_throw(c, ENOMEM_dev_journal_init);
 
-	unsigned nr_bvecs = DIV_ROUND_UP(JOURNAL_ENTRY_SIZE_MAX, PAGE_SIZE);
-
-	for (unsigned i = 0; i < ARRAY_SIZE(ja->bio); i++) {
-		/*
-		 * kvzalloc() is not what we want to be using here:
-		 * JOURNAL_ENTRY_SIZE_MAX is probably quite a bit bigger than it
-		 * needs to be.
-		 *
-		 * But changing that will require performance testing -
-		 * performance can be sensitive to anything that affects journal
-		 * pipelining.
-		 */
-		ja->bio[i] = kvzalloc(sizeof(struct bio) + sizeof(struct bio_vec) * nr_bvecs,
-				      GFP_KERNEL);
-		if (!ja->bio[i])
-			return bch_err_throw(c, ENOMEM_dev_journal_init);
-
-		ja->bio[i]->ca = ca;
-		ja->bio[i]->buf_idx = i;
-		bio_init(&ja->bio[i]->bio, NULL, bio_inline_vecs(&ja->bio[i]->bio), nr_bvecs, 0);
-	}
+	/*
+	 * Pool size is just the mempool reserve for forward progress under
+	 * memory pressure; JOURNAL_STATE_BUF_NR matches the reservation
+	 * fastpath ring (the effective parallel-write ceiling for hot-path
+	 * allocations).
+	 */
+	if (bioset_init(&ja->bio_set, JOURNAL_STATE_BUF_NR,
+			offsetof(struct journal_bio, bio),
+			BIOSET_NEED_BVECS))
+		return bch_err_throw(c, ENOMEM_dev_journal_init);
 
 	ja->buckets = kcalloc(ja->nr, sizeof(u64), GFP_KERNEL);
 	if (!ja->buckets)
@@ -596,8 +593,19 @@ void bch2_fs_journal_exit(struct journal *j)
 	darray_exit(&j->early_journal_entries);
 	darray_exit(&j->rewind_ranges);
 
-	for (unsigned i = 0; i < ARRAY_SIZE(j->buf); i++)
-		kvfree(j->buf[i].data);
+	/*
+	 * Any bufs still in the in_flight fifo are leftover on error paths
+	 * (normal shutdown drains them).
+	 */
+	{
+		struct journal_buf *buf;
+		u64 seq;
+
+		fifo_for_each_entry_ptr(buf, &j->in_flight, seq)
+			kvfree(buf->data);
+	}
+	free_fifo(&j->in_flight);
+
 	kvfree(j->free_buf);
 	free_fifo(&j->pin);
 }
@@ -631,8 +639,23 @@ int bch2_fs_journal_init(struct journal *j)
 	if (!j->free_buf)
 		return bch_err_throw(c, ENOMEM_journal_buf);
 
-	for (unsigned i = 0; i < ARRAY_SIZE(j->buf); i++)
-		j->buf[i].idx = i;
+	/*
+	 * in_flight holds one entry per seq in (seq_ondisk, cur_seq]. Size is
+	 * an upper bound on in-flight journal writes; starts at 256, which is
+	 * well above the 16-slot cap of the prior static-array layout. If
+	 * workloads saturate this, journal_entry_open() returns ENOMEM and
+	 * the existing retry path throttles via completion backpressure.
+	 *
+	 * Open-coded instead of init_fifo() because bch2_fs_journal_start()
+	 * already set front/back to the correct seq-aligned value, and
+	 * init_fifo() would unconditionally reset them to 0.
+	 */
+	j->in_flight.size = 256;
+	j->in_flight.mask = 255;
+	j->in_flight.data = kvmalloc_array(256, sizeof(*j->in_flight.data),
+					   GFP_KERNEL);
+	if (!j->in_flight.data)
+		return bch_err_throw(c, ENOMEM_journal_buf);
 
 	j->wq = alloc_workqueue("bcachefs_journal",
 				WQ_HIGHPRI|WQ_FREEZABLE|WQ_UNBOUND|WQ_MEM_RECLAIM, 512);

@@ -19,6 +19,11 @@ void rcu_pending_enqueue(struct rcu_pending *pending, struct rcu_head *obj);
 struct rcu_head *rcu_pending_dequeue(struct rcu_pending *pending);
 struct rcu_head *rcu_pending_dequeue_from_all(struct rcu_pending *pending);
 
+struct rcu_head *rcu_pending_dequeue_where(struct rcu_pending *pending,
+					   bool (*try_claim)(struct rcu_head *));
+struct rcu_head *rcu_pending_dequeue_from_all_where(struct rcu_pending *pending,
+						    bool (*try_claim)(struct rcu_head *));
+
 void rcu_pending_exit(struct rcu_pending *pending);
 int rcu_pending_init(struct rcu_pending *pending,
 		     struct srcu_struct *srcu,

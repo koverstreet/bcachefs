@@ -12,9 +12,18 @@
 
 #include "btree/cache.h"
 #include "btree/iter.h"
+#include "btree/locking_types.h"
 #include "util/six.h"
 
 void bch2_btree_lock_init(struct btree_bkey_cached_common *, enum six_lock_init_flags, gfp_t gfp);
+
+DECLARE_PER_CPU(struct lock_graph, bch2_lock_graph);
+
+void bch2_lock_graph_init_one(struct lock_graph *);
+void bch2_lock_graph_exit_one(struct lock_graph *);
+
+int bch2_lock_graph_init(void);
+void bch2_lock_graph_exit(void);
 
 void bch2_trans_unlock_write(struct btree_trans *);
 
@@ -197,13 +206,23 @@ bch2_btree_node_unlock_write_inlined(struct btree_trans *trans, struct btree_pat
 	__bch2_btree_node_unlock_write(trans, b);
 }
 
-int bch2_six_check_for_deadlock(struct six_lock *lock, void *p);
+int bch2_six_check_for_deadlock(struct six_lock *lock, struct six_lock_waiter *);
 
 /* lock: */
 
 static inline void trans_set_locked(struct btree_trans *trans, bool try)
 {
 	if (!trans->locked) {
+		/*
+		 * Pin to CPU while btree locks are held: keeps cache footprint
+		 * hot, and per-CPU cursors (e.g. inode allocation) stable
+		 * across transaction restarts. Released in trans_set_unlocked,
+		 * so any wait that goes through bch2_trans_unlock(_long)
+		 * happens with migration enabled - including the cond_resched
+		 * in bch2_trans_begin and the freezer-visible window during
+		 * suspend.
+		 */
+		migrate_disable();
 		lock_acquire_exclusive(&trans->dep_map, 0, try, NULL, _THIS_IP_);
 		trans->locked = true;
 		trans->last_unlock_ip = 0;
@@ -222,6 +241,8 @@ static inline void trans_set_unlocked(struct btree_trans *trans)
 
 		if (!trans->pf_memalloc_nofs)
 			current->flags &= ~PF_MEMALLOC_NOFS;
+
+		migrate_enable();
 	}
 }
 
@@ -234,9 +255,12 @@ static inline int __btree_node_lock_nopath(struct btree_trans *trans,
 	trans->lock_may_not_fail = lock_may_not_fail;
 	trans->lock_must_abort	= false;
 	trans->locking		= b;
+	trans->locking_wait.trans_start_time = trans->last_begin_time_nonrestarted;
 
 	int ret = six_lock_ip_waiter(&b->lock, type, &trans->locking_wait,
-				     bch2_six_check_for_deadlock, trans, ip);
+				     bch2_six_check_for_deadlock, ip);
+	if (unlikely(ret == -ENOMEM))
+		ret = btree_trans_restart(trans, BCH_ERR_transaction_restart_lock_waitlist_alloc);
 	WRITE_ONCE(trans->locking, NULL);
 	WRITE_ONCE(trans->locking_wait.start_time, 0);
 
@@ -268,6 +292,14 @@ static inline void btree_node_lock_nopath_nofail(struct btree_trans *trans,
 	int ret = __btree_node_lock_nopath(trans, b, type, true, _THIS_IP_);
 
 	BUG_ON(ret);
+}
+
+static inline void bch2_btree_node_unlock_with_path(struct btree_trans *trans,
+						    btree_path_idx_t path_idx,
+						    unsigned level)
+{
+	btree_node_unlock(trans, trans->paths + path_idx, level);
+	bch2_path_put(trans, path_idx, true);
 }
 
 /*
@@ -313,6 +345,40 @@ static inline int btree_node_lock(struct btree_trans *trans,
 	}
 
 	return ret;
+}
+
+/*
+ * Lock @b when the caller doesn't already have a path for it: create a
+ * temporary unlocked path, take the lock, then record the lock on the path
+ * so the cycle detector can find us as the holder.
+ *
+ * Caller releases via bch2_btree_node_unlock_with_path().
+ *
+ * May return a transaction_restart; wrap in lockrestart_do().
+ */
+static inline int __must_check
+bch2_btree_node_lock_with_path(struct btree_trans *trans,
+			       struct btree_bkey_cached_common *b,
+			       enum six_lock_type type,
+			       btree_path_idx_t *path_idx_out)
+{
+	btree_path_idx_t path_idx = bch2_path_get_unlocked_mut(trans,
+				b->btree_id, b->level, btree_node_pos(b), b->cached);
+
+	struct btree_path *path = trans->paths + path_idx;
+	int ret = btree_node_lock(trans, path, b, b->level, type, _THIS_IP_);
+	if (ret) {
+		bch2_path_put(trans, path_idx, true);
+		return ret;
+	}
+
+	mark_btree_node_locked(trans, path, b->level,
+			       (enum btree_node_locked_type) type);
+	path->l[b->level].lock_seq	= six_lock_seq(&b->lock);
+	path->l[b->level].b		= (struct btree *) b;
+
+	*path_idx_out = path_idx;
+	return 0;
 }
 
 int __bch2_btree_node_lock_write(struct btree_trans *, struct btree_path *,
