@@ -48,6 +48,14 @@ static const char * const bch2_btree_update_modes[] = {
 	NULL
 };
 
+static unsigned btree_alloc_target(struct bch_fs *c, unsigned target)
+{
+	target = target ?: c->opts.metadata_target ?: c->opts.foreground_target;
+	return target && bch2_target_has_non_shrinking_dev(c, BCH_DATA_btree, target)
+		? target
+		: 0;
+}
+
 static void bch2_btree_update_to_text(struct printbuf *, struct btree_update *);
 
 static int bch2_btree_insert_node(struct btree_update *, struct btree_trans *,
@@ -1479,17 +1487,16 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 		goto err;
 
 	struct bch_devs_list devs_have = (struct bch_devs_list) { 0 };
+	unsigned alloc_target = btree_alloc_target(c, target);
 	req = alloc_request_get(trans,
-				target ?:
-				c->opts.metadata_target ?:
-				c->opts.foreground_target,
-				false,
-				&devs_have,
-				as->disk_res.nr_replicas,
-				as->disk_res.nr_replicas,
-				watermark,
-				write_flags,
-				NULL);
+					      alloc_target,
+					      false,
+					      &devs_have,
+					      as->disk_res.nr_replicas,
+					      as->disk_res.nr_replicas,
+					      watermark,
+					      write_flags,
+					      NULL);
 	ret = PTR_ERR_OR_ZERO(req);
 	if (ret)
 		goto err;

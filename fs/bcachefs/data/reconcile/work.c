@@ -348,14 +348,23 @@ static struct bkey_s_c next_reconcile_entry(struct btree_trans *trans,
 	if (work_pos->btree == BTREE_ID_reconcile_scan) {
 		buf->nr = 0;
 
-		int ret = for_each_btree_key_max(trans, iter, work_pos->btree, work_pos->pos, end,
-				   flags, k, ({
-			bkey_reassemble(&darray_top(*buf), k);
-			return bkey_i_to_s_c(&darray_top(*buf));
-			0;
-		}));
+		/*
+		 * Do not return out of a for_each_btree_key_* body here: we want
+		 * the iterator fully dropped before reconcile starts mutating the
+		 * extent that this work item points at. Keeping the reconcile_scan
+		 * path pinned across the later move/rewrite can deadlock against
+		 * alloc/freespace updates from the same transaction.
+		 */
+		CLASS(btree_iter, iter)(trans, work_pos->btree, work_pos->pos, flags);
+		struct bkey_s_c k = bch2_btree_iter_peek(&iter);
 
-		return ret ? bkey_s_c_err(ret) : bkey_s_c_null;
+		if (bkey_err(k))
+			return bkey_s_c_err(bkey_err(k));
+		if (!k.k || bpos_gt(k.k->p, end))
+			return bkey_s_c_null;
+
+		bkey_reassemble(&darray_top(*buf), k);
+		return bkey_i_to_s_c(&darray_top(*buf));
 	}
 
 	if (unlikely(!buf->nr)) {
@@ -458,7 +467,7 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 			guard(rcu)();
 
 			bkey_for_each_ptr(ptrs, ptr) {
-				if (bch2_dev_bad_or_evacuating(c, ptr->dev))
+				if (bch2_ptr_bad_or_evacuating_rcu(c, ptr))
 					data_opts->ptrs_kill |= ptr_bit;
 				ptr_bit <<= 1;
 			}
@@ -472,7 +481,7 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 						if (d < 0)
 							return d;
 
-						if (bch2_dev_bad_or_evacuating(c, p.ptr.dev) ||
+						if (bch2_ptr_bad_or_evacuating(c, &p.ptr) ||
 						    (!p.ptr.cached &&
 						     d && durability.total - d >= r->data_replicas)) {
 							data_opts->ptrs_kill |= ptr_bit;
@@ -507,7 +516,7 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 				if (d < 0)
 					return d;
 
-				if (bch2_dev_bad_or_evacuating(c, p.ptr.dev) ||
+				if (bch2_ptr_bad_or_evacuating(c, &p.ptr) ||
 				    (!p.ptr.cached &&
 				     d && durability.online - d >= r->data_replicas)) {
 					data_opts->ptrs_kill |= ptr_bit;
@@ -651,10 +660,17 @@ static int check_reconcile_pending_err(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 
-	 if (!bch2_err_matches(err, BCH_ERR_data_update_fail_no_rw_devs) &&
-	     !bch2_err_matches(err, BCH_ERR_insufficient_devices) &&
-	     !bch2_err_matches(err, ENOSPC))
-		 return err;
+	/*
+	 * Reconcile can park transient allocation failures on the pending list
+	 * and retry after space becomes available. The allocator's internal
+	 * no_buckets_found code is the same class of "try again later" failure
+	 * as ENOSPC, but it bypasses the errno-based match.
+	 */
+	if (!bch2_err_matches(err, BCH_ERR_data_update_fail_no_rw_devs) &&
+	    !bch2_err_matches(err, BCH_ERR_insufficient_devices) &&
+	    !bch2_err_matches(err, BCH_ERR_freelist_empty) &&
+	    !bch2_err_matches(err, ENOSPC))
+		return err;
 
 	event_add_trace(c, reconcile_set_pending, k.k->size, buf, ({
 		prt_printf(&buf, "%s\n", bch2_err_str(err));
@@ -849,13 +865,17 @@ static int do_reconcile_extent(struct moving_context *ctxt,
 	struct bch_fs *c = trans->c;
 	struct bbpos data_pos = rb_work_to_data_pos(work.pos);
 
-	/* We require holding an intent lock when calling
-	 * bch2_stripe_handle_tryget(), to avoid racing with the stripe trigger
-	 * deleting the stripe */
-	enum btree_iter_update_trigger_flags flags = data_pos.btree == BTREE_ID_stripes
-		? BTREE_ITER_intent : 0;
+	/*
+	 * Reconcile always mutates the key it is looking at, either by updating
+	 * reconcile state or by queueing a move. Start with an intent iterator
+	 * so we do not pay one transaction restart_upgrade per extent just to
+	 * upgrade the lock during commit. Stripe keys also require intent before
+	 * bch2_stripe_handle_tryget() can safely race with stripe deletion.
+	 */
+	enum btree_iter_update_trigger_flags flags =
+		BTREE_ITER_all_snapshots|BTREE_ITER_intent;
 
-	CLASS(btree_iter, iter)(trans, data_pos.btree, data_pos.pos, BTREE_ITER_all_snapshots|flags);
+	CLASS(btree_iter, iter)(trans, data_pos.btree, data_pos.pos, flags);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 	if (!k.k)
 		return 0;
@@ -899,11 +919,13 @@ static int do_reconcile_extent_phys(struct moving_context *ctxt,
 	if (bch2_data_update_in_flight(c, &pos, BCH_DATA_UPDATE_reconcile))
 		return 0;
 
-	/* We require holding an intent lock when calling
-	 * bch2_stripe_handle_tryget(), to avoid racing with the stripe trigger
-	 * deleting the stripe */
-	enum btree_iter_update_trigger_flags flags = bp.v->btree_id == BTREE_ID_stripes
-		? BTREE_ITER_intent : 0;
+	/*
+	 * Phys reconcile reaches the owning extent through a backpointer and
+	 * then updates that extent in the same transaction. Take the extent
+	 * iterator in intent mode up front to avoid restart_upgrade churn when
+	 * many adjacent extents are being reprocessed after shrink.
+	 */
+	enum btree_iter_update_trigger_flags flags = BTREE_ITER_intent;
 
 	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k = bkey_try(bch2_backpointer_get_key(trans, bp, &iter, flags, last_flushed));
@@ -1039,12 +1061,27 @@ static int do_reconcile_scan_bps(struct moving_context *ctxt,
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
 	struct bch_fs_reconcile *r = &c->reconcile;
+	struct bpos start = POS(s.dev, 0);
+	struct bch_dev *ca;
 
-	r->scan_start	= BBPOS(BTREE_ID_backpointers, POS(s.dev, 0));
+	/*
+	 * Shrink only needs reconcile work for the tail that will be truncated.
+	 * Scanning the whole device requeues metadata below the retained region,
+	 * which can churn btree rewrites for tens of seconds before the resize
+	 * worker ever gets to commit the smaller size.
+	 */
+	scoped_guard(rcu) {
+		ca = bch2_dev_rcu_noerror(c, s.dev);
+		if (ca && bch2_dev_is_shrinking(ca))
+			start = bucket_pos_to_bp_start(ca,
+					POS(s.dev, bch2_dev_resize_target(ca)));
+	}
+
+	r->scan_start	= BBPOS(BTREE_ID_backpointers, start);
 	r->scan_end	= BBPOS(BTREE_ID_backpointers, POS(s.dev, U64_MAX));
 
 	return backpointer_scan_for_each(trans, iter, BTREE_ID_backpointers,
-					 POS(s.dev, 0), POS(s.dev, U64_MAX),
+					 start, POS(s.dev, U64_MAX),
 				  last_flushed, NULL, bp, ({
 		ctxt->stats->pos = BBPOS(BTREE_ID_backpointers, iter.pos);
 
@@ -1280,10 +1317,10 @@ static void reconcile_wait(struct bch_fs *c)
 
 	r->wait_iotime_end		= now + (min_member_capacity >> 6);
 
-	if (r->running) {
+	if (READ_ONCE(r->running)) {
 		r->wait_iotime_start	= now;
 		r->wait_wallclock_start	= ktime_get_real_ns();
-		r->running		= false;
+		WRITE_ONCE(r->running, false);
 	}
 
 	bch2_kthread_io_clock_wait_once(clock, r->wait_iotime_end, MAX_SCHEDULE_TIMEOUT);
@@ -1405,6 +1442,15 @@ static CLOSURE_CALLBACK(do_reconcile_phys_thread)
 		    !k.k ||
 		    k.k->p.inode != thr->dev)
 			break;
+
+		/*
+		 * Drop any cached search paths from next_reconcile_entry() before
+		 * we start the actual move work: otherwise reconcile_scan or
+		 * backpointer paths looked up to choose the work item can stay
+		 * pinned in this transaction and deadlock against alloc/freespace
+		 * updates during btree node rewrites.
+		 */
+		bch2_trans_begin(trans);
 
 		int ret = lockrestart_do(trans,
 			do_reconcile_extent_phys(&ctxt, &snapshot_io_opts,
@@ -1552,7 +1598,7 @@ static int do_reconcile_phase_iter(struct reconcile_pass *p, u32 kick,
 	while (!bch2_move_ratelimit(ctxt) &&
 	       !test_bit(BCH_FS_going_ro, &c->flags) &&
 	       bch2_reconcile_enabled(c) &&
-	       kick == r->kick) {
+	       kick == atomic_read(&r->kick)) {
 		bch2_trans_begin(trans);
 
 		struct bkey_s_c k = next_reconcile_entry(trans, p->work, &r->work_pos,
@@ -1641,8 +1687,9 @@ static int do_reconcile(struct moving_context *ctxt)
 	struct bch_fs *c = trans->c;
 	struct bch_fs_reconcile *r = &c->reconcile;
 	u64 sectors_scanned = 0;
-	u32 kick = r->kick;
+	u32 kick = atomic_read(&r->kick);
 	u32 copygc_run_count = c->copygc.run_count;
+	bool pass_complete = false;
 	int ret = 0;
 
 	CLASS(darray_reconcile_work, work)();
@@ -1693,7 +1740,7 @@ static int do_reconcile(struct moving_context *ctxt)
 		 * uses this latest value to decide whether anyone is still
 		 * asking for more work.
 		 */
-		kick = r->kick;
+		kick = atomic_read(&r->kick);
 
 		for (r->phase = 0; r->phase < ARRAY_SIZE(reconcile_phases); r->phase++) {
 			reconcile_phase_start(c);
@@ -1714,7 +1761,7 @@ static int do_reconcile(struct moving_context *ctxt)
 
 			work.nr = 0;
 
-			if (kick != r->kick ||
+			if (kick != atomic_read(&r->kick) ||
 			    test_bit(BCH_FS_going_ro, &c->flags) ||
 			    bch2_move_ratelimit(ctxt))
 				break;
@@ -1732,13 +1779,27 @@ out:
 		try(bch2_clear_reconcile_needs_scan(trans,
 				pending_cookie.k.p, pending_cookie.v.cookie));
 
+	/*
+	 * A completed kick means reconcile drained every phase for the current
+	 * request generation without being superseded by a newer wakeup.
+	 * Shrink uses this as the point where all scan-generated downstream
+	 * work has been attempted before it decides a tail is still impossible
+	 * to evacuate.
+	 */
+	if (!ret &&
+	    pass_complete &&
+	    kick == atomic_read(&r->kick)) {
+		atomic_set(&r->completed_kick, kick);
+		wake_up_all(&r->wait);
+	}
+
 	bch2_move_stats_exit(&r->work_stats, c);
 
 	if (!ret &&
 	    !kthread_should_stop() &&
 	    !atomic64_read(&r->work_stats.sectors_seen) &&
 	    !sectors_scanned &&
-	    kick == r->kick) {
+	    kick == atomic_read(&r->kick)) {
 		bch2_moving_ctxt_flush_all(ctxt);
 		bch2_trans_unlock_long(trans);
 		reconcile_wait(c);
@@ -1952,6 +2013,10 @@ void bch2_fs_reconcile_exit(struct bch_fs *c)
 int bch2_fs_reconcile_init(struct bch_fs *c)
 {
 	struct bch_fs_reconcile *r = &c->reconcile;
+
+	atomic_set(&r->kick, 0);
+	init_waitqueue_head(&r->wait);
+	atomic_set(&r->completed_kick, 0);
 
 	mutex_init(&r->scans_in_flight_lock);
 	try(rhashtable_init(&r->scans_in_flight, &reconcile_scan_in_flight_params));

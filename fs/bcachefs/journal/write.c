@@ -23,8 +23,17 @@
 
 #include "sb/clean.h"
 #include "sb/counters.h"
+#include "sb/members.h"
 
 #include <linux/ioprio.h>
+
+static unsigned journal_alloc_target(struct bch_fs *c)
+{
+	unsigned target = c->opts.metadata_target ?: c->opts.foreground_target;
+	return target && bch2_target_has_non_shrinking_dev(c, BCH_DATA_journal, target)
+		? target
+		: 0;
+}
 
 static void journal_advance_devs_to_next_bucket(struct journal *j,
 						struct dev_alloc_list *devs,
@@ -116,8 +125,7 @@ static int journal_write_alloc(struct journal *j, struct journal_buf *w,
 	struct bch_devs_mask devs;
 	struct dev_alloc_list devs_sorted;
 	unsigned sectors = vstruct_sectors(w->data, c->block_bits);
-	unsigned target = c->opts.metadata_target ?:
-		c->opts.foreground_target;
+	unsigned target = journal_alloc_target(c);
 	unsigned replicas_want = READ_ONCE(c->opts.metadata_replicas);
 	bool advance_done = false;
 

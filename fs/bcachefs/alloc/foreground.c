@@ -274,7 +274,8 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c,
 	if (unlikely(is_superblock_bucket(c, ca, bucket)))
 		return NULL;
 
-	if (unlikely(bch2_bucket_nouse(ca, bucket))) {
+	if (unlikely(bch2_dev_is_shrinking(ca) &&
+		     bucket >= bch2_dev_resize_target(ca))) {
 		req->counters.skipped_nouse++;
 		return NULL;
 	}
@@ -1041,20 +1042,21 @@ static int bucket_alloc_set_partial(struct bch_fs *c,
  * @ec:		if true, we're shutting down erasure coding and killing all ec
  *		open_buckets
  *		otherwise, return true
+ * @tail_cutoff: if != 0 only drop buckets after the cutoff
  * Returns: true if we should kill this open_bucket
  *
  * We're killing open_buckets because we're shutting down a device, erasure
  * coding, or the entire filesystem - check if this open_bucket matches:
  */
 static bool should_drop_bucket(struct open_bucket *ob, struct bch_fs *c,
-			       struct bch_dev *ca, bool ec)
+			       struct bch_dev *ca, bool ec, u64 tail_cutoff)
 {
 	struct bch_fs_allocator *a = &c->allocator;
 
 	if (ec) {
 		return ob->ec != NULL;
 	} else if (ca) {
-		bool drop = ob->dev == ca->dev_idx;
+		bool drop = dev_and_region_matches(ob, ca, tail_cutoff);
 
 		if (!drop && ob->ec) {
 			guard(mutex)(&ob->ec->lock);
@@ -1065,7 +1067,7 @@ static bool should_drop_bucket(struct open_bucket *ob, struct bch_fs *c,
 					continue;
 
 				struct open_bucket *ob2 = a->open_buckets + ob->ec->blocks[i];
-				drop |= ob2->dev == ca->dev_idx;
+				drop |= dev_and_region_matches(ob2, ca, tail_cutoff);
 			}
 		}
 
@@ -1076,7 +1078,7 @@ static bool should_drop_bucket(struct open_bucket *ob, struct bch_fs *c,
 }
 
 static void bch2_writepoint_stop(struct bch_fs *c, struct bch_dev *ca,
-				 bool ec, struct write_point *wp)
+				 bool ec, struct write_point *wp, u64 tail_cutoff)
 {
 	struct open_buckets ptrs = { .nr = 0 };
 	struct open_bucket *ob;
@@ -1084,26 +1086,27 @@ static void bch2_writepoint_stop(struct bch_fs *c, struct bch_dev *ca,
 
 	guard(mutex)(&wp->lock);
 	open_bucket_for_each(c, &wp->ptrs, ob, i)
-		if (should_drop_bucket(ob, c, ca, ec))
+		if (should_drop_bucket(ob, c, ca, ec, tail_cutoff))
 			bch2_open_bucket_put(c, ob);
 		else
 			ob_push(c, &ptrs, ob);
 	wp->ptrs = ptrs;
 }
 
+/* stop open buckets on @ca, if tail_cutoff isn't zero, only after the cutoff */
 void bch2_open_buckets_stop(struct bch_fs *c, struct bch_dev *ca,
-			    bool ec)
+			    bool ec, u64 tail_cutoff)
 {
 	struct bch_fs_allocator *a = &c->allocator;
 	unsigned i;
 
-	/* Next, close write points that point to this device... */
+	/* Next, close write points that point to this device or the to-be-shrunk region... */
 	for (i = 0; i < ARRAY_SIZE(a->write_points); i++)
-		bch2_writepoint_stop(c, ca, ec, &a->write_points[i]);
+		bch2_writepoint_stop(c, ca, ec, &a->write_points[i], tail_cutoff);
 
-	bch2_writepoint_stop(c, ca, ec, &c->copygc.write_point);
-	bch2_writepoint_stop(c, ca, ec, &a->reconcile_write_point);
-	bch2_writepoint_stop(c, ca, ec, &a->btree_write_point);
+	bch2_writepoint_stop(c, ca, ec, &c->copygc.write_point, tail_cutoff);
+	bch2_writepoint_stop(c, ca, ec, &a->reconcile_write_point, tail_cutoff);
+	bch2_writepoint_stop(c, ca, ec, &a->btree_write_point, tail_cutoff);
 
 	scoped_guard(mutex, &c->btree.reserve_cache.lock)
 		while (c->btree.reserve_cache.nr) {
@@ -1119,7 +1122,7 @@ void bch2_open_buckets_stop(struct bch_fs *c, struct bch_dev *ca,
 			struct open_bucket *ob =
 				a->open_buckets + a->open_buckets_partial[i];
 
-			if (should_drop_bucket(ob, c, ca, ec)) {
+			if (should_drop_bucket(ob, c, ca, ec, tail_cutoff)) {
 				--a->open_buckets_partial_nr;
 				swap(a->open_buckets_partial[i],
 				     a->open_buckets_partial[a->open_buckets_partial_nr]);
@@ -1137,7 +1140,7 @@ void bch2_open_buckets_stop(struct bch_fs *c, struct bch_dev *ca,
 			}
 		}
 
-	bch2_ec_stop_dev(c, ca);
+	bch2_ec_stop_dev_cutoff(c, ca, tail_cutoff);
 }
 
 static inline struct hlist_head *writepoint_hash(struct bch_fs_allocator *a,
