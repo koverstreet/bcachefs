@@ -1456,7 +1456,7 @@ void bch2_dev_resize_threads_stop(struct bch_fs *c)
 		bch2_dev_resize_thread_stop(ca);
 }
 
-static int bch2_dev_resize_update_target(struct bch_fs *c, struct bch_dev *ca,
+static int bch2_dev_resize_validate_target(struct bch_fs *c, struct bch_dev *ca,
 					 u64 target_nbuckets, struct printbuf *err)
 {
 	lockdep_assert_held(&c->state_lock);
@@ -1470,8 +1470,7 @@ static int bch2_dev_resize_update_target(struct bch_fs *c, struct bch_dev *ca,
 		return bch_err_throw(c, device_size_too_big);
 	}
 
-	if (target_nbuckets &&
-	    target_nbuckets < old_nbuckets &&
+	if (target_nbuckets < old_nbuckets &&
 	    target_nbuckets < ca->mi.first_bucket + BCH_MIN_NR_NBUCKETS) {
 		prt_printf(err, "New device size too small (%llu smaller than min %llu)\n",
 			   target_nbuckets,
@@ -1488,6 +1487,13 @@ static int bch2_dev_resize_update_target(struct bch_fs *c, struct bch_dev *ca,
 			   get_capacity(ca->disk_sb.bdev->bd_disk));
 		return bch_err_throw(c, device_size_too_small);
 	}
+
+	return 0;
+}
+
+static int bch2_dev_resize_set_target(struct bch_fs *c, struct bch_dev *ca, u64 target_nbuckets)
+{
+	lockdep_assert_held(&c->state_lock);
 
 	/* commit target_nbuckets */
 	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
@@ -1867,7 +1873,7 @@ static int bch2_dev_shrink_clear_target(struct bch_fs *c, struct bch_dev *ca,
 		    !bch2_dev_is_shrinking(ca))
 			return -EAGAIN;
 
-		try(bch2_dev_resize_update_target(c, ca, 0, err));
+		try(bch2_dev_resize_set_target(c, ca, 0));
 	}
 
 	/* allocations are now no longer blocked after the cutoff, so there may now be more usable space  */
@@ -2163,7 +2169,8 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 new_nbuckets, stru
 
 		try(bch2_dev_resize_thread_start(ca));
 
-		try(bch2_dev_resize_update_target(c, ca, target_nbuckets, err));
+		try(bch2_dev_resize_validate_target(c, ca, target_nbuckets, err));
+		try(bch2_dev_resize_set_target(c, ca, target_nbuckets));
 	}
 
 	int ret = bch2_dev_resize_kick(ca);
