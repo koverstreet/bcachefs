@@ -12,11 +12,14 @@
 #include "btree/update.h"
 #include "btree/write_buffer.h"
 
+#include "data/checksum.h"
 #include "data/compress.h"
 #include "data/copygc.h"
 #include "data/ec/create.h"
 #include "data/ec/trigger.h"
+#include "data/extents.h"
 #include "data/move.h"
+#include "data/read.h"
 #include "data/reconcile/work.h"
 #include "data/write.h"
 
@@ -762,6 +765,191 @@ static int do_retry_stripes(struct moving_context *ctxt,
 	return 0;
 }
 
+/* Completion callback for synchronous reconcile checksum reads */
+static void reconcile_rechecksum_endio(struct bio *bio)
+{
+	complete(bio->bi_private);
+}
+
+/*
+ * Metadata-only checksum reconcile: when the only thing wrong with an
+ * extent is its checksum type, we can read the data, verify the old
+ * checksum, compute the new checksum, and update the btree — without
+ * rewriting the data on disk.
+ *
+ * Returns 0 on success, -errno on failure, 1 if we should fall through
+ * to the full data rewrite path.
+ */
+static int reconcile_rechecksum_extent(struct btree_trans *trans,
+				       struct btree_iter *iter,
+				       struct bkey_s_c k,
+				       unsigned new_csum_type)
+{
+	struct bch_fs *c = trans->c;
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
+	int ret;
+
+	/* Don't handle encrypted extents here */
+	if (bch2_csum_type_is_encryption(new_csum_type))
+		return 1;
+
+	/*
+	 * Find the CRC info for computing the nonce and new checksum.
+	 */
+	struct bch_extent_crc_unpacked first_crc = {};
+	bool found = false;
+
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		if (p.ptr.cached)
+			continue;
+		if (bch2_csum_type_is_encryption(p.crc.csum_type))
+			return 1;
+		if (!found) {
+			first_crc = p.crc;
+			found = true;
+		}
+	}
+
+	if (!found)
+		return 1;
+
+	unsigned sectors = first_crc.compressed_size;
+	unsigned bytes = sectors << 9;
+
+	/* Allocate bio and pages for the read */
+	struct bio *bio = bio_alloc_bioset(NULL, DIV_ROUND_UP(bytes, PAGE_SIZE),
+					   REQ_OP_READ, GFP_KERNEL, &c->bio_read);
+	if (!bio)
+		return -ENOMEM;
+
+	unsigned remaining = bytes;
+	while (remaining) {
+		struct page *page = alloc_page(GFP_KERNEL);
+		if (!page) {
+			bio_free_pages(bio);
+			bio_put(bio);
+			return -ENOMEM;
+		}
+		unsigned len = min_t(unsigned, remaining, PAGE_SIZE);
+		__bio_add_page(bio, page, len, 0);
+		remaining -= len;
+	}
+
+	/* Save key state before dropping locks for I/O */
+	struct bkey_buf saved_k __cleanup(bch2_bkey_buf_exit);
+	bch2_bkey_buf_init(&saved_k);
+	bch2_bkey_buf_reassemble(&saved_k, k);
+
+	/*
+	 * Issue synchronous read via the read path with nodecode.
+	 * This gives us: device selection, checksum verification,
+	 * retry on error — but skips decompress/decrypt, keeping
+	 * raw on-disk data (compressed stays compressed).
+	 */
+	DECLARE_COMPLETION_ONSTACK(done);
+	bio->bi_private = &done;
+
+	struct bch_read_bio *rbio = rbio_init(bio, c,
+					      (struct bch_inode_opts) { 0 },
+					      reconcile_rechecksum_endio);
+	rbio->data_pos = bkey_start_pos(k.k);
+	rbio->nodecode = true;
+
+	/* Drop btree locks for blocking I/O */
+	bch2_trans_unlock_long(trans);
+
+	__bch2_read_extent(trans, rbio, bio->bi_iter,
+			   bkey_start_pos(k.k),
+			   iter->btree_id, k, 0, NULL,
+			   BCH_READ_last_fragment, -1);
+
+	wait_for_completion(&done);
+
+	if (rbio->ret) {
+		/*
+		 * Read failed or old checksum bad — the read path
+		 * already handled retries from other replicas.
+		 * Fall through to full rewrite which handles errors.
+		 */
+		ret = 1;
+		goto out_free;
+	}
+
+	/*
+	 * The read path verified the old checksum.
+	 * Now compute the new one against the raw on-disk data.
+	 */
+	struct nonce nonce = extent_nonce(saved_k.k->k.bversion, first_crc);
+	struct bch_csum new_csum = bch2_checksum_bio(c, new_csum_type,
+						     nonce, bio);
+
+	/* Relock and verify the key hasn't changed */
+	ret = bch2_trans_relock(trans);
+	if (ret)
+		goto out_free;
+
+	struct bkey_s_c cur_k = bch2_btree_iter_peek_slot(iter);
+	if (bkey_err(cur_k)) {
+		ret = bkey_err(cur_k);
+		goto out_free;
+	}
+	if (!bkey_and_val_eq(bkey_i_to_s_c(saved_k.k), cur_k)) {
+		ret = 0; /* key changed, skip */
+		goto out_free;
+	}
+
+	/*
+	 * Rebuild the key with updated CRC entries.
+	 * Use ptr_decoded_append to handle any CRC entry size.
+	 */
+	struct bkey_i *new = bch2_trans_kmalloc(trans,
+			bkey_bytes(k.k) + sizeof(struct bch_extent_crc128));
+	if (IS_ERR(new)) {
+		ret = PTR_ERR(new);
+		goto out_free;
+	}
+
+	bkey_init(&new->k);
+	new->k.p = cur_k.k->p;
+	new->k.size = cur_k.k->size;
+	new->k.type = cur_k.k->type;
+	new->k.bversion = cur_k.k->bversion;
+
+	ptrs = bch2_bkey_ptrs_c(cur_k);
+	bkey_for_each_ptr_decode(cur_k.k, ptrs, p, entry) {
+		if (!p.ptr.cached) {
+			p.crc.csum_type = new_csum_type;
+			p.crc.csum = new_csum;
+		}
+		bch2_extent_ptr_decoded_append(c, new, &p);
+	}
+
+	/* Copy over non-ptr/crc entries (reconcile, flags, etc.) */
+	ptrs = bch2_bkey_ptrs_c(cur_k);
+	bkey_extent_entry_for_each(ptrs, entry) {
+		if (!extent_entry_is_crc(entry) &&
+		    !extent_entry_is_ptr(entry) &&
+		    extent_entry_type(entry) != BCH_EXTENT_ENTRY_stripe_ptr)
+			__extent_entry_insert(c, new,
+				bkey_val_end(bkey_i_to_s(new)),
+				(union bch_extent_entry *) entry);
+	}
+
+	ret = bch2_trans_update(trans, iter, new,
+				BTREE_UPDATE_internal_snapshot_node);
+	if (ret)
+		goto out_free;
+
+	ret = bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
+
+out_free:
+	bio_free_pages(bio);
+	bio_put(bio);
+	return ret;
+}
+
 static int __do_reconcile_extent(struct moving_context *ctxt,
 				 struct per_snapshot_io_opts *snapshot_io_opts,
 				 struct bch_inode_opts *opts,
@@ -794,6 +982,26 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 	int ret = reconcile_set_data_opts(trans, iter, level, k, opts, data_opts);
 	if (ret <= 0)
 		return ret;
+
+	const struct bch_extent_reconcile *r = bch2_bkey_reconcile_opts(c, k);
+
+	/*
+	 * Checksum-only reconcile: if the only thing wrong is the
+	 * checksum type, do a metadata-only update (read + recompute
+	 * checksum + btree update, no data write).
+	 */
+	if (r && r->need_rb == BIT(BCH_RECONCILE_data_checksum)) {
+		unsigned csum_type = bch2_data_checksum_type_rb(c, *r);
+
+		ret = reconcile_rechecksum_extent(trans, iter, k, csum_type);
+		if (ret == 0) {
+			trans->restart_count = restart_count;
+			return 0;
+		}
+		if (ret != 1)
+			return ret;
+		/* ret == 1: fall through to full rewrite */
+	}
 
 	if (work.btree == BTREE_ID_reconcile_pending) {
 		int ret = bch2_can_do_data_update(trans, opts, data_opts, k, NULL);

@@ -923,7 +923,17 @@ static int __bch2_read_endio_work(struct bch_read_bio *rbio)
 	if (unlikely(rbio->narrow_crcs) && csum_good)
 		bch2_rbio_narrow_crcs(rbio);
 
-	if (likely(!parent->data_update)) {
+	if (unlikely(parent->nodecode)) {
+		/*
+		 * Checksum verified above; skip decompress/decrypt.
+		 * Copy raw on-disk data from bounce buffer if bounced.
+		 */
+		if (rbio->bounce) {
+			struct bvec_iter src_iter = src->bi_iter;
+
+			bio_copy_data_iter(dst, &dst_iter, src, &src_iter);
+		}
+	} else if (likely(!parent->data_update)) {
 		/* Adjust crc to point to subset of data we want: */
 		crc.offset     += rbio->offset_into_extent;
 		crc.live_size	= bvec_iter_sectors(rbio->bvec_iter);
