@@ -209,14 +209,35 @@ fsck_err:
 void bch2_dirent_to_text(struct printbuf *out, struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bkey_s_c_dirent d = bkey_s_c_to_dirent(k);
+
+	/* We may be called on unvalidated keys: */
+	if (k.k->u64s <= BKEY_U64s ||
+	    bkey_val_u64s(k.k) * sizeof(u64) < sizeof(struct bch_dirent)) {
+		prt_str(out, "(invalid, dirent value truncated)");
+		return;
+	}
+
 	struct qstr d_name = bch2_dirent_get_name(d);
+
+	if (d_name.len > bkey_val_bytes(k.k) ||
+	    d_name.name - (const u8 *) d.v + d_name.len > bkey_val_bytes(k.k)) {
+		prt_str(out, "(invalid, dirent name overruns value)");
+		return;
+	}
 
 	prt_bytes(out, d_name.name, d_name.len);
 
 	if (d.v->d_casefold) {
 		prt_str(out, " (casefold ");
-		struct qstr d_name = bch2_dirent_get_lookup_name(d);
-		prt_bytes(out, d_name.name, d_name.len);
+		struct qstr d_lookup_name = bch2_dirent_get_lookup_name(d);
+
+		if (d_lookup_name.len > bkey_val_bytes(k.k) ||
+		    d_lookup_name.name - (const u8 *) d.v + d_lookup_name.len >
+		    bkey_val_bytes(k.k)) {
+			prt_str(out, "(invalid, lookup name overruns value)");
+		} else {
+			prt_bytes(out, d_lookup_name.name, d_lookup_name.len);
+		}
 		prt_char(out, ')');
 	}
 
