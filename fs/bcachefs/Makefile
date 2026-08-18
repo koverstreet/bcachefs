@@ -132,6 +132,7 @@ endif
 
 ifndef BCACHEFS_DKMS
 	obj-$(CONFIG_MEAN_AND_VARIANCE_UNIT_TEST)   += util/mean_and_variance_test.o
+	bcachefs-$(CONFIG_DIRENT_UNIT_TEST)      += fs/dirent_test.o
 endif
 
 ifdef BCACHEFS_DKMS
