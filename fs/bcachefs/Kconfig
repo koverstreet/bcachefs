@@ -93,3 +93,12 @@ config MEAN_AND_VARIANCE_UNIT_TEST
 	help
 	  This option enables the kunit tests for mean_and_variance module.
 	  If unsure, say N.
+
+config BACKPOINTERS_UNIT_TEST
+	tristate "backpointer unit tests" if !KUNIT_ALL_TESTS
+	depends on KUNIT
+	depends on BCACHEFS_FS
+	default KUNIT_ALL_TESTS
+	help
+	  This option enables the kunit tests for the backpointers module.
+	  If unsure, say N.

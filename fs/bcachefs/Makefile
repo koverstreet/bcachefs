@@ -132,6 +132,7 @@ endif
 
 ifndef BCACHEFS_DKMS
 	obj-$(CONFIG_MEAN_AND_VARIANCE_UNIT_TEST)   += util/mean_and_variance_test.o
+	bcachefs-$(CONFIG_BACKPOINTERS_UNIT_TEST) += alloc/backpointers_test.o
 endif
 
 ifdef BCACHEFS_DKMS
