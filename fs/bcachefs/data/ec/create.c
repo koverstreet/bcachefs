@@ -718,8 +718,24 @@ static void ec_stripe_create_work_fn(struct work_struct *work)
 
 void bch2_ec_stripe_create_start(struct bch_fs *c, struct ec_stripe_new *s)
 {
-	enumerated_ref_get(&c->writes, BCH_WRITE_REF_stripe_create);
-	queue_work(c->ec.stripe_create_wq, &s->work);
+	/*
+	 * Use tryget to avoid incrementing a dying write ref during
+	 * shutdown.  enumerated_ref_stop_async() in bch2_fs_read_only()
+	 * kills the write ref before bch2_fs_ec_stop() cancels
+	 * in-flight stripes; an unconditional _get here would prevent
+	 * the ref from draining, deadlocking unmount.
+	 *
+	 * If writes are being stopped, set the error and run the
+	 * cleanup path directly -- ec_stripe_create() handles s->err
+	 * and releases all resources (open buckets, disk reservations,
+	 * stripe buffers).
+	 */
+	if (enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_stripe_create)) {
+		queue_work(c->ec.stripe_create_wq, &s->work);
+	} else {
+		s->err = -BCH_ERR_erofs_no_writes;
+		ec_stripe_create(s);
+	}
 }
 
 void bch2_ec_bucket_cancel(struct bch_fs *c, struct open_bucket *ob, int err)
