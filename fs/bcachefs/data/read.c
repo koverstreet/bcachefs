@@ -1451,6 +1451,11 @@ int __bch2_read_extent(struct btree_trans *trans,
 	if (narrow_crcs && (flags & BCH_READ_user_mapped))
 		flags |= BCH_READ_must_bounce;
 
+	/* EC reconstruct reads with encryption must bounce */
+	if (pick.do_ec_reconstruct &&
+	    bch2_csum_type_is_encryption(pick.crc.csum_type))
+		flags |= BCH_READ_must_bounce;
+
 
 	if (likely(!orig->data_update)) {
 		/* Check we're not trying to read more than we have in this extent: */
