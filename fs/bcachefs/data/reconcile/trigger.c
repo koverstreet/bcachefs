@@ -499,7 +499,7 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 		incompressible	|= p.crc.compression_type == BCH_COMPRESSION_TYPE_incompressible;
 		unwritten	|= p.ptr.unwritten;
 
-		bool evacuating = bch2_dev_bad_or_evacuating(c, p.ptr.dev) && !p.has_ec;
+		bool evacuating = bch2_ptr_bad_or_evacuating(c, &p.ptr) && !p.has_ec;
 
 		if (!poisoned &&
 		    !btree &&
@@ -725,6 +725,16 @@ static int new_needs_rb_allowed(struct btree_trans *trans,
 	}
 
 	/*
+	 * Shrink/evacuation can mark an extent under-replicated as soon as one
+	 * pointer falls onto a bad/evacuating location, before the device scan
+	 * has rewritten the reconcile entry. That's a transient physical-state
+	 * change, not a missing io-opts propagation cookie.
+	 */
+	if ((new_need_rb & BIT(BCH_RECONCILE_data_replicas)) &&
+	    bch2_bkey_has_ptr_bad_or_evacuating(c, k))
+		return 0;
+
+	/*
 	 * Either the extent data or the extent io options (from
 	 * bch_extent_reconcile) should match the io_opts from the
 	 * inode/filesystem, unless
@@ -746,7 +756,14 @@ static int new_needs_rb_allowed(struct btree_trans *trans,
 	if (ret)
 		return min(ret, 0);
 
-	if (new_need_rb == BIT(BCH_RECONCILE_data_replicas)) {
+	/*
+	 * Device scans can add evacuation/rereplicate work on top of existing
+	 * reconcile state, e.g. an extent that was already waiting on
+	 * erasure-code conversion. While that scan cookie is pending, tolerate
+	 * missing data_replicas/hipri state even if other reconcile bits are
+	 * also set; the scan will rewrite the full reconcile entry.
+	 */
+	if (new_need_rb & BIT(BCH_RECONCILE_data_replicas)) {
 		ret = check_dev_reconcile_scan_cookie(trans, k, s ? &s->dev_cookie : NULL);
 		if (ret)
 			return min(ret, 0);

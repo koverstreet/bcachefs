@@ -259,6 +259,49 @@ static inline bool bch2_dev_bad_or_evacuating(struct bch_fs *c, unsigned dev)
 	return bch2_dev_bad_or_evacuating_rcu(c, dev);
 }
 
+static inline u64 bch2_dev_resize_target(const struct bch_dev *ca)
+{
+	u64 target = READ_ONCE(ca->mi.target_nbuckets);
+
+	return target ?: READ_ONCE(ca->mi.nbuckets);
+}
+
+static inline bool bch2_dev_resize_pending(const struct bch_dev *ca)
+{
+	return bch2_dev_resize_target(ca) != READ_ONCE(ca->mi.nbuckets);
+}
+
+static inline bool bch2_dev_is_shrinking(const struct bch_dev *ca)
+{
+	return bch2_dev_resize_target(ca) < READ_ONCE(ca->mi.nbuckets);
+}
+
+static inline bool bch2_dev_is_growing(const struct bch_dev *ca)
+{
+	return bch2_dev_resize_target(ca) > READ_ONCE(ca->mi.nbuckets);
+}
+
+static inline bool bch2_ptr_bad_or_evacuating_rcu(struct bch_fs *c, const struct bch_extent_ptr *ptr)
+{
+	struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
+	u64 resize_target;
+
+	if (!ca || bch2_dev_bad_or_evacuating_rcu(c, ptr->dev))
+		return true;
+
+	resize_target = bch2_dev_resize_target(ca);
+
+	return resize_target < READ_ONCE(ca->mi.nbuckets) &&
+		ptr->offset >= resize_target * ca->mi.bucket_size;
+}
+
+static inline bool bch2_ptr_bad_or_evacuating(struct bch_fs *c, const struct bch_extent_ptr *ptr)
+{
+	guard(rcu)();
+	return bch2_ptr_bad_or_evacuating_rcu(c, ptr);
+}
+
+
 int bch2_dev_missing_bkey_msg(struct bch_fs *, struct bkey_s_c, unsigned, struct printbuf *out);
 int bch2_dev_missing_bkey(struct bch_fs *, struct bkey_s_c, unsigned);
 
@@ -406,12 +449,13 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 		.durability	= BCH_MEMBER_DURABILITY(mi)
 			? BCH_MEMBER_DURABILITY(mi) - 1
 			: 1,
-		.freespace_initialized = BCH_MEMBER_FREESPACE_INITIALIZED(mi),
+		.freespace_initialized	= BCH_MEMBER_FREESPACE_INITIALIZED(mi),
 		.resize_on_mount	= BCH_MEMBER_RESIZE_ON_MOUNT(mi),
 		.rotational		= BCH_MEMBER_ROTATIONAL(mi),
 		.valid			= bch2_member_alive(mi),
 		.btree_bitmap_shift	= mi->btree_bitmap_shift,
 		.btree_allocated_bitmap = le64_to_cpu(mi->btree_allocated_bitmap),
+		.target_nbuckets	= le64_to_cpu(mi->target_nbuckets),
 	};
 }
 

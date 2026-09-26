@@ -115,7 +115,7 @@ int bch2_dev_remove_stripes(struct bch_fs *c, unsigned dev_idx,
 
 /* startup/shutdown */
 
-static bool should_cancel_stripe(struct bch_fs *c, struct ec_stripe_new *s, struct bch_dev *ca)
+static bool should_cancel_stripe(struct bch_fs *c, struct ec_stripe_new *s, struct bch_dev *ca, u64 tail_cutoff)
 {
 	if (!ca)
 		return true;
@@ -123,10 +123,10 @@ static bool should_cancel_stripe(struct bch_fs *c, struct ec_stripe_new *s, stru
 	struct bch_stripe *v = &s->new_stripe.key.v;
 
 	for (unsigned i = 0; i < v->nr_blocks; i++) {
-		/* Freshly allocated block - check the open_bucket's device: */
+		/* Freshly allocated block - check the open_bucket's device and region: */
 		if (s->blocks[i]) {
 			struct open_bucket *ob = c->allocator.open_buckets + s->blocks[i];
-			if (ob->dev == ca->dev_idx)
+			if (dev_and_region_matches(ob, ca, tail_cutoff))
 				return true;
 		}
 
@@ -144,26 +144,31 @@ static bool should_cancel_stripe(struct bch_fs *c, struct ec_stripe_new *s, stru
 	return false;
 }
 
-static void __bch2_ec_stop(struct bch_fs *c, struct bch_dev *ca)
+static void __bch2_ec_stop(struct bch_fs *c, struct bch_dev *ca, u64 tail_cutoff)
 {
 	struct ec_stripe_head *h;
 
 	guard(mutex)(&c->ec.stripe_head_lock);
 	list_for_each_entry(h, &c->ec.stripe_head_list, list) {
 		guard(mutex)(&h->lock);
-		if (h->s && should_cancel_stripe(c, h->s, ca))
+		if (h->s && should_cancel_stripe(c, h->s, ca, tail_cutoff))
 			bch2_ec_stripe_new_cancel(c, h, -BCH_ERR_erofs_no_writes);
 	}
 }
 
+void bch2_ec_stop_dev_cutoff(struct bch_fs *c, struct bch_dev *ca, u64 tail_cutoff)
+{
+	__bch2_ec_stop(c, ca, tail_cutoff);
+}
+
 void bch2_ec_stop_dev(struct bch_fs *c, struct bch_dev *ca)
 {
-	__bch2_ec_stop(c, ca);
+	__bch2_ec_stop(c, ca, 0);
 }
 
 void bch2_fs_ec_stop(struct bch_fs *c)
 {
-	__bch2_ec_stop(c, NULL);
+	__bch2_ec_stop(c, NULL, 0);
 }
 
 static bool bch2_fs_ec_flush_done(struct bch_fs *c)

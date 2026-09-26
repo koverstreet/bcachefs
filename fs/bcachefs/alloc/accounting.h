@@ -316,6 +316,9 @@ int bch2_gc_accounting_done(struct bch_fs *);
 
 int bch2_accounting_read(struct bch_fs *);
 
+
+int bch2_dev_truncate_accounting(struct bch_fs *, struct bch_dev *, u64, u64);
+
 int bch2_dev_usage_remove(struct bch_fs *, struct bch_dev *);
 int bch2_dev_usage_init(struct bch_dev *, bool);
 
