@@ -1,3 +1,15 @@
+=====================================================================
+  THIS REPOSITORY IS ARCHIVED
+
+  bcachefs development has moved to:
+
+      https://github.com/koverstreet/bcachefs-tools
+
+  The kernel code is there too, under fs/. Please file issues and
+  pull requests against bcachefs-tools - the recently active issues
+  from this repository have been moved there.
+=====================================================================
+
 Linux kernel
 ============
 
