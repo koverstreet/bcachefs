@@ -898,10 +898,27 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 
 	try(__bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_evacuating, flags, err));
 
-	ret = fast_device_removal
-		? bch2_dev_data_drop_by_backpointers(c, ca, flags, err)
-		: (bch2_dev_data_drop(c, ca->dev_idx, flags, err) ?:
-		   bch2_dev_remove_stripes(c, ca->dev_idx, flags, err));
+	if (fast_device_removal) {
+		ret = bch2_dev_data_drop_by_backpointers(c, ca, flags, err);
+		/*
+		 * The fast backpointer-scan path may fail to converge when
+		 * stripe reshaping races with the scan: bch2_stripe_repair()
+		 * returns -stripe_needs_block_evacuate when there are not
+		 * enough devices for the stripe's geometry, which defers the
+		 * reshape and can keep the device's data alive past all 10
+		 * iterations.  Fall back to the explicit stripe-walk path
+		 * which invalidates each stripe independently of reconcile
+		 * convergence.  User data and metadata were already handled
+		 * by the fast path, so only stripes need the fallback.
+		 */
+		if (ret == -BCH_ERR_remove_by_backpointer_did_not_terminate) {
+			printbuf_reset(err);
+			ret = bch2_dev_remove_stripes(c, ca->dev_idx, flags, err);
+		}
+	} else {
+		ret = bch2_dev_data_drop(c, ca->dev_idx, flags, err) ?:
+		      bch2_dev_remove_stripes(c, ca->dev_idx, flags, err);
+	}
 	if (ret)
 		goto err;
 
